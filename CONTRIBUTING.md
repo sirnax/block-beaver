@@ -18,4 +18,4 @@ Use a small fixture repository or a temporary directory for tests that write `.b
 - Add a changelog entry for user visible changes.
 - Expect maintainers to review the code and CI checks before merging. A passing check is not approval to merge.
 
-The project will choose a license before accepting outside contributions. If you plan to contribute before then, discuss licensing with the maintainer first.
+By submitting a contribution, you agree to license it under [Apache-2.0](LICENSE). Make sure you have the right to contribute any code or assets you submit.

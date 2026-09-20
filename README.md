@@ -4,7 +4,7 @@ Block Studio is a local architecture workspace for JavaScript, TypeScript, and R
 
 The project is in an early development stage. Its graph is an aid to review, not a complete static analysis or an automatic migration system. See the [roadmap](Block-Studio-PLAN.md) and [release checklist](docs/PUBLIC_RELEASE_CHECKLIST.md).
 
-Public release preparation is in progress. A license has not been selected yet, so this repository is not currently offered as open source. The `private` setting in `package.json` prevents accidental npm publication.
+Block Studio is licensed under [Apache-2.0](LICENSE). Public release preparation is in progress; the GitHub repository remains private for now. The `private` setting in `package.json` prevents accidental npm publication.
 
 This is a standalone project. The TeaCake repository is a read-only test case; its existing generated manifest index and block map are recognized by an optional adapter. No TeaCake code or data is required to scan another application.
 

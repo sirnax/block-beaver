@@ -4,7 +4,7 @@ This is the review gate before changing repository visibility or advertising a f
 
 ## Repository content
 
-- [ ] Choose a license and add a `LICENSE` file plus package metadata. Do not treat the repository as open source until this is done.
+- [x] Choose Apache-2.0 and add a `LICENSE` file plus package metadata.
 - [ ] Review every tracked file and every reachable Git commit for secrets, personal paths, private source, and third party material. Rotate any exposed secret before rewriting history.
 - [ ] Check that the TeaCake reference remains read only and no TeaCake source or proprietary assets were copied here.
 - [ ] Confirm README commands, support route, conduct contact, and security reporting route work for an outside contributor.

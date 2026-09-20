@@ -6,7 +6,7 @@ These settings live on GitHub and cannot be enforced by files in this repository
 
 1. Set the description to: “Local architecture workspace for JavaScript, TypeScript, and React repositories.” Add relevant topics such as `developer-tools`, `typescript`, and `architecture`.
 2. Keep Issues enabled. Enable Discussions if maintainers can answer usage questions there. Enable “Automatically delete head branches.”
-3. Add a license file after choosing the license. GitHub visibility does not grant others permission to use or contribute code without a license.
+3. Confirm GitHub detects the [Apache-2.0 license](../LICENSE) once the license commit is pushed.
 4. Inspect every commit and Git blob for credentials, private data, copied third party material, and personal paths. Rotate and remove any discovered secret from history before public release.
 
 ## Actions and security
@@ -30,6 +30,6 @@ The `CODEOWNERS` file names `@sirnax`. Enable code owner review only if the main
 ## Release
 
 1. Complete [the public release checklist](PUBLIC_RELEASE_CHECKLIST.md).
-2. Choose and add a license. Set a release tag only after the chosen license and changelog are committed.
+2. Set a release tag only after the license and changelog are committed and the first CI run passes.
 3. Make the repository public only after a final review of history, settings, and the first CI run.
 4. Publish release notes from `CHANGELOG.md`, documenting supported Node versions and known limitations.

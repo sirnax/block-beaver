@@ -4,6 +4,7 @@ All notable user visible changes are recorded here. Releases follow semantic ver
 
 ## Unreleased
 
+- License the project under Apache-2.0.
 - Prepare public contribution, support, security, CI, and release processes.
 - Restrict local HTTP requests to loopback hosts and matching browser origins.
 

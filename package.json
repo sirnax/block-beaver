@@ -3,7 +3,7 @@
   "version": "0.1.0",
   "description": "Local architecture workspace for JavaScript, TypeScript, and React repositories",
   "private": true,
-  "license": "UNLICENSED",
+  "license": "Apache-2.0",
   "repository": { "type": "git", "url": "https://github.com/sirnax/block-bot-dev.git" },
   "bin": { "block-studio": "bin/block-studio.mjs" },
   "type": "module",
