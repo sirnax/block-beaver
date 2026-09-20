@@ -16,7 +16,7 @@ const print = (value) => process.stdout.write(JSON.stringify(value, null, 2) + '
 
 try {
   if (!command || command === 'help') {
-    process.stdout.write('Block Studio\n  scan [--root PATH] [--full true]\n  inspect ID [--root PATH]\n  search QUERY [--root PATH] [--kind KIND]\n  kit COMMAND INPUT.json [--root TEACAKE_PATH]\n  agent --exec PATH --scope file1,file2 [--root PATH]\n  plan ROADMAP_ID --scope file1,file2 [--root PATH] [--title TITLE]\n  propose ROADMAP_ID PROPOSAL.json [--root PATH]\n  repair ROADMAP_ID SLICE_ID PROPOSAL.json [--root PATH]\n  check ROADMAP_ID SLICE_ID [--root PATH]\n  review ROADMAP_ID SLICE_ID [--root PATH]\n  approve ROADMAP_ID SLICE_ID [--root PATH]\n  reject ROADMAP_ID SLICE_ID --reason TEXT [--root PATH]\n  resume ROADMAP_ID [--root PATH]\n');
+    process.stdout.write('Block Beaver\n  scan [--root PATH] [--full true]\n  inspect ID [--root PATH]\n  search QUERY [--root PATH] [--kind KIND]\n  kit COMMAND INPUT.json [--root TEACAKE_PATH]\n  agent --exec PATH --scope file1,file2 [--root PATH]\n  plan ROADMAP_ID --scope file1,file2 [--root PATH] [--title TITLE]\n  propose ROADMAP_ID PROPOSAL.json [--root PATH]\n  repair ROADMAP_ID SLICE_ID PROPOSAL.json [--root PATH]\n  check ROADMAP_ID SLICE_ID [--root PATH]\n  review ROADMAP_ID SLICE_ID [--root PATH]\n  approve ROADMAP_ID SLICE_ID [--root PATH]\n  reject ROADMAP_ID SLICE_ID --reason TEXT [--root PATH]\n  resume ROADMAP_ID [--root PATH]\n');
     process.exit(0);
   }
   if (command === 'resume') { print(await resume(root, positional[0])); process.exit(0); }

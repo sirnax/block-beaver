@@ -1,19 +1,19 @@
-# Block Studio
+# Block Beaver
 
-<p align="center"><img src="docs/assets/block-studio-banner.svg" alt="Block Studio: a source graph connects a file, observed pieces, a block, and source evidence" width="100%"></p>
+<p align="center"><img src="docs/assets/block-beaver-hero.png" alt="A beaver builds a dam from blocks marked with code and graph connections" width="100%"></p>
 
 <p align="center">
-  <a href="https://github.com/sirnax/block-bot-dev/actions/workflows/ci.yml"><img alt="GitHub Actions checks" src="https://img.shields.io/badge/CI-GitHub%20Actions-28728d"></a>
+  <a href="https://github.com/sirnax/block-beaver/actions/workflows/ci.yml"><img alt="GitHub Actions checks" src="https://img.shields.io/badge/CI-GitHub%20Actions-28728d"></a>
   <a href="LICENSE"><img alt="Apache-2.0 license" src="https://img.shields.io/badge/license-Apache--2.0-28728d"></a>
   <a href="package.json"><img alt="Node.js 22 or newer" src="https://img.shields.io/badge/node-22%2B-28728d"></a>
-  <a href="https://github.com/sirnax/block-bot-dev/issues"><img alt="Report an issue" src="https://img.shields.io/badge/issues-report%20a%20bug-d1985b"></a>
+  <a href="https://github.com/sirnax/block-beaver/issues"><img alt="Report an issue" src="https://img.shields.io/badge/issues-report%20a%20bug-d1985b"></a>
 </p>
 
-Block Studio makes the shape of a codebase visible. Scan a JavaScript, TypeScript, or React repository, follow each observed relationship to its source line, and turn a candidate feature into a reviewed block proposal. It runs locally and keeps code changes inside bounded Git worktrees.
+Block Beaver makes the shape of a codebase visible. Scan a JavaScript, TypeScript, or React repository, follow each observed relationship to its source line, and turn a candidate feature into a reviewed block proposal. It runs locally and keeps code changes inside bounded Git worktrees.
 
 **[Get started](#quick-start)** · **[How it works](#how-it-works)** · **[CLI and workflow](#propose-a-block)** · **[Plan](Block-Studio-PLAN.md)** · **[Contribute](CONTRIBUTING.md)**
 
-> **Early development.** The graph is an aid to review, not a complete static analysis. The GitHub repository is private while public release preparation continues. Block Studio is [Apache-2.0 licensed](LICENSE); `package.json` remains private to prevent accidental npm publication.
+> **Early development.** The graph is an aid to review, not a complete static analysis. The GitHub repository is private while public release preparation continues. Block Beaver is [Apache-2.0 licensed](LICENSE); `package.json` remains private to prevent accidental npm publication.
 
 ## Why use it?
 
@@ -32,12 +32,12 @@ npm ci
 npm start
 ```
 
-Open **http://127.0.0.1:4173**, enter an absolute path to a project, and select **Scan project**. The console binds to localhost and offers read and preview operations. Set `BLOCK_STUDIO_REPO=/path/to/project` to prefill the path.
+Open **http://127.0.0.1:4173**, enter an absolute path to a project, and select **Scan project**. The console binds to localhost and offers read and preview operations. Set `BLOCK_BEAVER_REPO=/path/to/project` to prefill the path.
 
 For a terminal first look:
 
 ```sh
-node bin/block-studio.mjs scan --root /path/to/project
+node bin/block-beaver.mjs scan --root /path/to/project
 ```
 
 ## How it works
@@ -50,16 +50,16 @@ flowchart LR
   D --> E[Review and decide]
 ```
 
-Scanning does not change the target repository. Creating a roadmap opts that repository into `.blocks/` records. A proposal cannot advance after failed checks or source drift. [Read the original plan](Block-Studio-PLAN.md) for the intended stages and boundaries.
+Scanning does not change the target repository. Creating a roadmap opts that repository into `.blocks/` records. A proposal cannot advance after failed checks or source drift. [Read the original plan](Block-Studio-PLAN.md), written under the working title “Block Studio,” for the intended stages and boundaries.
 
 ## Explore from the CLI
 
 ```sh
-node bin/block-studio.mjs scan --root /path/to/project
-node bin/block-studio.mjs search Button --root /path/to/project
-node bin/block-studio.mjs inspect 'symbol:src/Button.tsx#Button' --root /path/to/project
+node bin/block-beaver.mjs scan --root /path/to/project
+node bin/block-beaver.mjs search Button --root /path/to/project
+node bin/block-beaver.mjs inspect 'symbol:src/Button.tsx#Button' --root /path/to/project
 # Optional TeaCake adapter: delegate a read-only query to its own dev kit
-node bin/block-studio.mjs kit list_blocks --root /path/to/teacake
+node bin/block-beaver.mjs kit list_blocks --root /path/to/teacake
 ```
 
 `scan --full true` prints the complete normalized graph. The graph has `schemaVersion`, a source fingerprint, nodes (`file`, `function`, `component`, `hook`, `class`, and optional `block`), and typed edges. Every edge includes `evidence.file`, `line`, `column`, and source text. The scanner reads JS, JSX, TS, TSX, MJS, CJS, MTS, and CTS; it ignores build output, dependencies, Git metadata, and `.blocks/`.
@@ -68,17 +68,17 @@ The scanner host accepts language plugins with `accepts`, `parse`, `declarations
 
 ## Propose a block
 
-A target repository opts in when you create a roadmap. The scope is an explicit list of scanned source files. Block Studio writes its roadmap, proposals, checks and ordered event log to that repository's `.blocks/roadmaps/` directory. It never writes to TeaCake during the scans described above.
+A target repository opts in when you create a roadmap. The scope is an explicit list of scanned source files. Block Beaver writes its roadmap, proposals, checks and ordered event log to that repository's `.blocks/roadmaps/` directory. It never writes to TeaCake during the scans described above.
 
 ```sh
-node bin/block-studio.mjs plan account-card --root /path/to/project --scope src/account/Card.tsx,src/account/data.ts
-node bin/block-studio.mjs propose account-card /path/to/proposal.json --root /path/to/project
-node bin/block-studio.mjs check account-card account-card --root /path/to/project
-node bin/block-studio.mjs review account-card account-card --root /path/to/project
-node bin/block-studio.mjs approve account-card account-card --root /path/to/project
+node bin/block-beaver.mjs plan account-card --root /path/to/project --scope src/account/Card.tsx,src/account/data.ts
+node bin/block-beaver.mjs propose account-card /path/to/proposal.json --root /path/to/project
+node bin/block-beaver.mjs check account-card account-card --root /path/to/project
+node bin/block-beaver.mjs review account-card account-card --root /path/to/project
+node bin/block-beaver.mjs approve account-card account-card --root /path/to/project
 # After a failed check, repair within the same file boundary, then check again:
-node bin/block-studio.mjs repair account-card account-card /path/to/revised-proposal.json --root /path/to/project
-node bin/block-studio.mjs resume account-card --root /path/to/project
+node bin/block-beaver.mjs repair account-card account-card /path/to/revised-proposal.json --root /path/to/project
+node bin/block-beaver.mjs resume account-card --root /path/to/project
 ```
 
 A proposal JSON may contain the fields below. `patches` are optional, complete replacement file contents. Each patch's `baseHash` must match the hash from `scan --full true` for that source path.
@@ -110,12 +110,12 @@ The console can preview a candidate block from a folder and download its JSON pr
 
 ## Agent and worker interfaces
 
-An agent adapter is any local executable that accepts one JSON request on stdin and returns one JSON response on stdout. Run it with `node bin/block-studio.mjs agent --exec /path/to/adapter --scope src/one.ts,src/two.ts --root /path/to/project`. The request includes protocol version 1, the bounded source contents and hashes, graph nodes and edges for that scope, and the scan fingerprint. The response contains `{"protocol":1,"proposals":[...]}`. Block Studio validates each proposed boundary and patch path before returning it; `agent` does not save or apply anything. A proposal is passed through the ordinary `propose`, `check`, `review`, and `approve` operations.
+An agent adapter is any local executable that accepts one JSON request on stdin and returns one JSON response on stdout. Run it with `node bin/block-beaver.mjs agent --exec /path/to/adapter --scope src/one.ts,src/two.ts --root /path/to/project`. The request includes protocol version 1, the bounded source contents and hashes, graph nodes and edges for that scope, and the scan fingerprint. The response contains `{"protocol":1,"proposals":[...]}`. Block Beaver validates each proposed boundary and patch path before returning it; `agent` does not save or apply anything. A proposal is passed through the ordinary `propose`, `check`, `review`, and `approve` operations.
 
 For a separate code-changing process, start the authenticated worker with an explicit repository path and a strong token:
 
 ```sh
-BLOCK_STUDIO_REPO=/path/to/project BLOCK_STUDIO_TOKEN=replace-with-a-random-secret npm run worker
+BLOCK_BEAVER_REPO=/path/to/project BLOCK_BEAVER_TOKEN=replace-with-a-random-secret npm run worker
 ```
 
 It binds to `127.0.0.1:4174` and requires `Authorization: Bearer <token>` on every request. POST JSON to `/scan`, `/inspect`, `/search`, `/suggest`, `/plan`, `/propose`, `/repair`, `/check`, `/review`, `/approve`, `/reject`, or `/resume`. The worker rescans before source-dependent operations. The visual server on port 4173 has no mutation endpoints and never receives the worker token. Both servers are intended for trusted local use; do not expose either port through a proxy or tunnel. Scan only repositories you are authorized to read, and review verification commands before running them because they execute in a worktree.
@@ -132,8 +132,8 @@ It binds to `127.0.0.1:4174` and requires `Authorization: Bearer <token>` on eve
 
 ```sh
 npm run check
-node bin/block-studio.mjs scan --root /path/to/teacake
-node bin/block-studio.mjs scan --root /path/to/another/js-app
+node bin/block-beaver.mjs scan --root /path/to/teacake
+node bin/block-beaver.mjs scan --root /path/to/another/js-app
 ```
 
 The focused tests cover source evidence, React rendering links, candidate boundaries, worktree approval, ledger replay, and source drift. The original implementation plan is in [Block-Studio-PLAN.md](Block-Studio-PLAN.md).

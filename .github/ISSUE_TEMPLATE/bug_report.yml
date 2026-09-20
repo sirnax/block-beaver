@@ -1,5 +1,5 @@
 name: Bug report
-description: Report a reproducible Block Studio defect.
+description: Report a reproducible Block Beaver defect.
 labels: [bug]
 body:
   - type: markdown
@@ -22,7 +22,7 @@ body:
   - type: input
     id: version
     attributes:
-      label: Block Studio version or commit
+      label: Block Beaver version or commit
     validations:
       required: true
   - type: input

@@ -67,11 +67,59 @@ a:focus-visible {
 .site-header nav a:hover,.text-link:hover,footer a:hover {
   text-decoration:underline
 }
+.masthead {
+  position:relative;
+  overflow:hidden;
+  border-radius:20px;
+  background:#164b6b
+}
 .masthead img {
   display:block;
   width:100%;
-  height:auto;
-  border-radius:20px
+  height:auto
+}
+.hero-copy {
+  position:absolute;
+  inset:0 auto 0 0;
+  display:flex;
+  flex-direction:column;
+  align-items:flex-start;
+  justify-content:center;
+  width:53%;
+  padding:clamp(30px,5vw,70px);
+  color:#f7fafb
+}
+.hero-kicker {
+  color:#a8d9df;
+  font-size:12px;
+  font-weight:700;
+  letter-spacing:.16em
+}
+.hero-copy h1 {
+  margin:19px 0 13px;
+  font-size:clamp(31px,4.3vw,58px);
+  line-height:1.04;
+  letter-spacing:-.055em
+}
+.hero-copy p {
+  max-width:440px;
+  margin:0;
+  color:#d4e8ed;
+  font-size:clamp(14px,1.3vw,18px);
+  line-height:1.55
+}
+.hero-copy a {
+  margin-top:23px;
+  padding:11px 17px;
+  border-radius:8px;
+  background:#f4dfbd;
+  color:#174862;
+  font-size:14px;
+  font-weight:700;
+  text-decoration:none
+}
+.hero-copy a:hover {
+  background:#fff0d4
 }
 .badges {
   display:flex;
@@ -91,7 +139,7 @@ a:focus-visible {
   align-items:start;
   padding-block:65px 70px
 }
-.intro h1 {
+.intro h2 {
   font-size:clamp(36px,4.1vw,62px);
   line-height:1.06;
   letter-spacing:-.065em;
@@ -212,8 +260,26 @@ footer a {
     gap:20px;
     flex-wrap:wrap
   }
-  .masthead img {
+  .masthead {
+    display:flex;
+    flex-direction:column;
     border-radius:13px
+  }
+  .masthead img {
+    height:240px;
+    object-fit:cover;
+    object-position:75% center
+  }
+  .hero-copy {
+    position:static;
+    width:100%;
+    padding:27px 24px 30px
+  }
+  .hero-copy h1 {
+    font-size:clamp(32px,8vw,48px)
+  }
+  .hero-copy p {
+    font-size:16px
   }
   .intro,.start {
     grid-template-columns:1fr;

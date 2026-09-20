@@ -21,7 +21,7 @@ const readJson = async (path) => JSON.parse(await readFile(path, 'utf8'));
 const writeJson = async (path, value) => writeFile(path, JSON.stringify(value, null, 2) + '\n');
 const hash = (value) => createHash('sha256').update(value).digest('hex').slice(0, 16);
 const worktreeAt = (root, roadmapId, sliceId) => join(rootDir(root), 'worktrees', sliceName(roadmapId), sliceName(sliceId));
-const branchFor = (roadmapId, sliceId) => `block-studio/${sliceName(roadmapId)}/${sliceName(sliceId)}`;
+const branchFor = (roadmapId, sliceId) => `block-beaver/${sliceName(roadmapId)}/${sliceName(sliceId)}`;
 async function prepareWorktree(root, roadmapId, sliceId, proposal) {
   const worktree = worktreeAt(root, roadmapId, sliceId);
   try { await stat(worktree); }
@@ -38,7 +38,7 @@ async function prepareWorktree(root, roadmapId, sliceId, proposal) {
 }
 async function runVerification(worktree, commands) {
   const checks = [];
-  const { BLOCK_STUDIO_TOKEN: _workerToken, ...safeEnvironment } = process.env;
+  const { BLOCK_BEAVER_TOKEN: _workerToken, BLOCK_STUDIO_TOKEN: _oldWorkerToken, ...safeEnvironment } = process.env;
   for (const command of commands || []) {
     const args = Array.isArray(command) ? command : command.trim().split(/\s+/);
     if (!args.length || args.some((arg) => !arg || /[;&|`$<>]/.test(arg))) {

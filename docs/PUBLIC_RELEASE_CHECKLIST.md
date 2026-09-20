@@ -8,7 +8,7 @@ This is the review gate before changing repository visibility or advertising a f
 - [ ] Review every tracked file and every reachable Git commit for secrets, personal paths, private source, and third party material. Rotate any exposed secret before rewriting history.
 - [ ] Check that the TeaCake reference remains read only and no TeaCake source or proprietary assets were copied here.
 - [ ] Confirm README commands, support route, conduct contact, and security reporting route work for an outside contributor.
-- [ ] Decide whether the current `block-bot-dev` GitHub repository name should be retained or renamed to `block-studio`; update repository links and templates together if renamed.
+- [x] Rename the GitHub repository to `block-beaver` and verify its links, badges, templates, and clone instructions.
 
 ## Quality and security
 

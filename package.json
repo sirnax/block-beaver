@@ -1,11 +1,11 @@
 {
-  "name": "block-studio",
+  "name": "block-beaver",
   "version": "0.1.0",
   "description": "Local architecture workspace for JavaScript, TypeScript, and React repositories",
   "private": true,
   "license": "Apache-2.0",
-  "repository": { "type": "git", "url": "https://github.com/sirnax/block-bot-dev.git" },
-  "bin": { "block-studio": "bin/block-studio.mjs" },
+  "repository": { "type": "git", "url": "https://github.com/sirnax/block-beaver.git" },
+  "bin": { "block-beaver": "bin/block-beaver.mjs" },
   "type": "module",
   "scripts": {
     "start": "node server.mjs",
@@ -13,7 +13,7 @@
     "worker": "node worker.mjs",
     "test": "node --test",
     "check": "node scripts/check.mjs",
-    "scan": "node bin/block-studio.mjs scan"
+    "scan": "node bin/block-beaver.mjs scan"
   },
   "engines": { "node": ">=22" },
   "dependencies": { "typescript": "^5.9.3" }
