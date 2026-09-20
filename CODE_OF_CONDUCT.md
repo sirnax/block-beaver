@@ -1,6 +1,6 @@
 # Code of conduct
 
-We want Block Studio discussions and contributions to be respectful and useful to people with different backgrounds and levels of experience.
+We want Block Beaver discussions and contributions to be respectful and useful to people with different backgrounds and levels of experience.
 
 ## Expected behavior
 

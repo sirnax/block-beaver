@@ -8,11 +8,12 @@ import { makeProposal, suggestBoundaries } from './src/contracts.mjs';
 import { createRoadmap, propose, repair, checkSlice, review, approve, reject, resume } from './src/workflow.mjs';
 import { isLocalBrowserRequest, securityHeaders } from './src/http-security.mjs';
 
-const root = resolve(process.env.BLOCK_STUDIO_REPO || '');
-const token = process.env.BLOCK_STUDIO_TOKEN || '';
-const port = Number(process.env.BLOCK_STUDIO_WORKER_PORT || 4174);
-if (!process.env.BLOCK_STUDIO_REPO) throw new Error('Set BLOCK_STUDIO_REPO to an explicit repository path.');
-if (token.length < 16) throw new Error('Set BLOCK_STUDIO_TOKEN to at least 16 characters.');
+const repoPath = process.env.BLOCK_BEAVER_REPO || process.env.BLOCK_STUDIO_REPO;
+const root = resolve(repoPath || '');
+const token = process.env.BLOCK_BEAVER_TOKEN || process.env.BLOCK_STUDIO_TOKEN || '';
+const port = Number(process.env.BLOCK_BEAVER_WORKER_PORT || process.env.BLOCK_STUDIO_WORKER_PORT || 4174);
+if (!repoPath) throw new Error('Set BLOCK_BEAVER_REPO to an explicit repository path.');
+if (token.length < 16) throw new Error('Set BLOCK_BEAVER_TOKEN to at least 16 characters.');
 const authorized = (header) => {
   const supplied = header?.startsWith('Bearer ') ? header.slice(7) : '';
   const a = Buffer.from(token), b = Buffer.from(supplied);
@@ -50,4 +51,4 @@ createServer(async (request, response) => {
   if (request.method !== 'POST') return send(response, 405, { error: 'Use POST.' });
   try { return send(response, 200, await dispatch(new URL(request.url, 'http://localhost').pathname.slice(1), await body(request))); }
   catch (error) { return send(response, 400, { error: error.message }); }
-}).listen(port, '127.0.0.1', () => console.log(`Block Studio worker on 127.0.0.1:${port}`));
+}).listen(port, '127.0.0.1', () => console.log(`Block Beaver worker on 127.0.0.1:${port}`));

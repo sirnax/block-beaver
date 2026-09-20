@@ -10,7 +10,7 @@ import { makeProposal, suggestBoundaries, connectionProposal } from '../src/cont
 import { runAgentAdapter } from '../src/agent.mjs';
 
 test('scanner maps TypeScript, React and import relationships to source evidence', async () => {
-  const root = await mkdtemp(join(tmpdir(), 'block-studio-scan-'));
+  const root = await mkdtemp(join(tmpdir(), 'block-beaver-scan-'));
   try {
     await mkdir(join(root, 'src', 'feature'), { recursive: true });
     await writeFile(join(root, 'src', 'feature', 'math.ts'), 'export function add(a: number, b: number) { return a + b }\n');

@@ -10,7 +10,7 @@ import { resume } from './src/workflow.mjs';
 import { isLocalBrowserRequest, securityHeaders } from './src/http-security.mjs';
 
 const appRoot = dirname(fileURLToPath(import.meta.url));
-const initialRoot = resolve(process.env.BLOCK_STUDIO_REPO || process.cwd());
+const initialRoot = resolve(process.env.BLOCK_BEAVER_REPO || process.env.BLOCK_STUDIO_REPO || process.cwd());
 const types = { '.html': 'text/html', '.css': 'text/css', '.js': 'text/javascript', '.mjs': 'text/javascript', '.json': 'application/json', '.svg': 'image/svg+xml' };
 const port = Number(process.env.PORT || 4173);
 let graph = null;
@@ -70,4 +70,4 @@ createServer(async (request, response) => {
     if (request.url?.startsWith('/api/')) return json(response, 400, { error: error.message });
     response.writeHead(404).end('Not found');
   }
-}).listen(port, '127.0.0.1', () => console.log(`Block Studio http://127.0.0.1:${port}`));
+}).listen(port, '127.0.0.1', () => console.log(`Block Beaver http://127.0.0.1:${port}`));

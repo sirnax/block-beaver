@@ -3,7 +3,7 @@ import { createHash } from 'node:crypto';
 export const idPattern = /^[a-z][a-z0-9]*(-[a-z0-9]+)*$/;
 const isObject = (value) => value !== null && typeof value === 'object' && !Array.isArray(value);
 
-/** Independent Block Studio contract. Existing registries are checked by their own adapter. */
+/** Independent Block Beaver contract. Existing registries are checked by their own adapter. */
 export function validateBlock(manifest, graph, { existing = [] } = {}) {
   const errors = [];
   const issue = (path, message) => errors.push({ path, message });

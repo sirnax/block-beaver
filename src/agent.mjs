@@ -17,7 +17,7 @@ export async function runAgentAdapter(executable, { graph, scope, operation = 'p
   }
   const request = { protocol: 1, operation, root: graph.root, fingerprint: graph.fingerprint, scope, sources, graph: { nodes: graph.nodes.filter((node) => scope.includes(node.path)), edges: graph.edges.filter((edge) => scope.includes(edge.evidence.file)) }, context };
   const output = await new Promise((resolve, reject) => {
-    const { BLOCK_STUDIO_TOKEN: _workerToken, ...safeEnvironment } = process.env;
+    const { BLOCK_BEAVER_TOKEN: _workerToken, BLOCK_STUDIO_TOKEN: _oldWorkerToken, ...safeEnvironment } = process.env;
     const child = spawn(executable, [], { cwd: graph.root, env: safeEnvironment, stdio: ['pipe', 'pipe', 'pipe'] });
     let stdout = '', stderr = '';
     const timer = setTimeout(() => child.kill('SIGTERM'), 120_000);

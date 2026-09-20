@@ -9,7 +9,7 @@ import { makeProposal } from '../src/contracts.mjs';
 import { createRoadmap, propose, repair, checkSlice, review, approve, reject, resume } from '../src/workflow.mjs';
 
 test('roadmap replays approvals and rejects stale source', async () => {
-  const root = await mkdtemp(join(tmpdir(), 'block-studio-flow-'));
+  const root = await mkdtemp(join(tmpdir(), 'block-beaver-flow-'));
   try {
     await mkdir(join(root, 'src'));
     await writeFile(join(root, '.gitignore'), '.blocks/\n');

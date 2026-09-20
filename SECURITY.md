@@ -1,6 +1,6 @@
 # Security policy
 
-Block Studio reads local source code and can run project supplied verification commands in a Git worktree. The optional worker can create roadmap files and worktrees. Treat a scanned repository and its verification commands as trusted local input.
+Block Beaver reads local source code and can run project supplied verification commands in a Git worktree. The optional worker can create roadmap files and worktrees. Treat a scanned repository and its verification commands as trusted local input.
 
 ## Report a vulnerability
 

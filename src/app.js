@@ -137,7 +137,7 @@ function folderDetail(folder) {
     const response = await fetch('/api/proposal', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(candidate) });
     const result = await response.json();
     state.proposal = result;
-    $('#proposal-result').innerHTML = `${result.check.valid ? '<p class="detail-desc">Valid Block Studio manifest. Review it before adoption.</p>' : `<p class="detail-desc">${result.check.errors.map((error) => esc(`${error.path}: ${error.message}`)).join('<br>')}</p>`}<pre>${esc(JSON.stringify(result.manifest, null, 2))}</pre><button id="download-proposal" type="button">Download proposal</button>`;
+    $('#proposal-result').innerHTML = `${result.check.valid ? '<p class="detail-desc">Valid Block Beaver manifest. Review it before adoption.</p>' : `<p class="detail-desc">${result.check.errors.map((error) => esc(`${error.path}: ${error.message}`)).join('<br>')}</p>`}<pre>${esc(JSON.stringify(result.manifest, null, 2))}</pre><button id="download-proposal" type="button">Download proposal</button>`;
     $('#download-proposal').addEventListener('click', () => {
       const blob = new Blob([JSON.stringify(result, null, 2) + '\n'], { type: 'application/json' });
       const link = document.createElement('a'); link.href = URL.createObjectURL(blob); link.download = `${result.manifest.id || 'block'}.proposal.json`; link.click(); URL.revokeObjectURL(link.href);

@@ -1,10 +1,10 @@
 # GitHub repository setup
 
-These settings live on GitHub and cannot be enforced by files in this repository alone. Apply them to `sirnax/block-bot-dev` during public release preparation. The default branch is `main`.
+These settings live on GitHub and cannot be enforced by files in this repository alone. Verify them on the private `sirnax/block-beaver` repository before public release. The default branch is `main`.
 
 ## General
 
-1. Set the description to: “Local architecture workspace for JavaScript, TypeScript, and React repositories.” Add relevant topics such as `developer-tools`, `typescript`, and `architecture`.
+1. Set the description to: “Block Beaver: a local architecture workspace for JavaScript, TypeScript, and React repositories.” Add relevant topics such as `developer-tools`, `typescript`, and `architecture`.
 2. Keep Issues enabled. Enable Discussions if maintainers can answer usage questions there. Enable “Automatically delete head branches.”
 3. Confirm GitHub detects the [Apache-2.0 license](../LICENSE) once the license commit is pushed.
 4. Inspect every commit and Git blob for credentials, private data, copied third party material, and personal paths. Rotate and remove any discovered secret from history before public release.
