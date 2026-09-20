@@ -1,15 +1,20 @@
 {
   "name": "block-studio",
   "version": "0.1.0",
+  "description": "Local architecture workspace for JavaScript, TypeScript, and React repositories",
   "private": true,
+  "license": "UNLICENSED",
+  "repository": { "type": "git", "url": "https://github.com/sirnax/block-bot-dev.git" },
+  "bin": { "block-studio": "bin/block-studio.mjs" },
   "type": "module",
   "scripts": {
     "start": "node server.mjs",
     "dev": "node server.mjs",
     "worker": "node worker.mjs",
     "test": "node --test",
+    "check": "node scripts/check.mjs",
     "scan": "node bin/block-studio.mjs scan"
   },
-  "engines": { "node": ">=20" },
+  "engines": { "node": ">=22" },
   "dependencies": { "typescript": "^5.9.3" }
 }

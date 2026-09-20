@@ -2,11 +2,15 @@
 
 Block Studio is a local architecture workspace for JavaScript, TypeScript, and React repositories. It scans source without changing it, builds a graph of files and observed pieces, and gives each relationship a source location. A browser console explores that graph. A CLI records bounded block migration proposals and decisions.
 
+The project is in an early development stage. Its graph is an aid to review, not a complete static analysis or an automatic migration system. See the [roadmap](Block-Studio-PLAN.md) and [release checklist](docs/PUBLIC_RELEASE_CHECKLIST.md).
+
+Public release preparation is in progress. A license has not been selected yet, so this repository is not currently offered as open source. The `private` setting in `package.json` prevents accidental npm publication.
+
 This is a standalone project. The TeaCake repository is a read-only test case; its existing generated manifest index and block map are recognized by an optional adapter. No TeaCake code or data is required to scan another application.
 
 ## Run
 
-Requires Node.js 20 or newer. Install dependencies with `npm install`, then:
+Requires Node.js 22 or newer and Git for migration worktrees. Install dependencies with `npm ci`, then:
 
 ```sh
 npm start
@@ -78,7 +82,7 @@ For a separate code-changing process, start the authenticated worker with an exp
 BLOCK_STUDIO_REPO=/path/to/project BLOCK_STUDIO_TOKEN=replace-with-a-random-secret npm run worker
 ```
 
-It binds to `127.0.0.1:4174` and requires `Authorization: Bearer <token>` on every request. POST JSON to `/scan`, `/inspect`, `/search`, `/suggest`, `/plan`, `/propose`, `/repair`, `/check`, `/review`, `/approve`, `/reject`, or `/resume`. The worker rescans before source-dependent operations. The visual server on port 4173 has no mutation endpoints and never receives the worker token.
+It binds to `127.0.0.1:4174` and requires `Authorization: Bearer <token>` on every request. POST JSON to `/scan`, `/inspect`, `/search`, `/suggest`, `/plan`, `/propose`, `/repair`, `/check`, `/review`, `/approve`, `/reject`, or `/resume`. The worker rescans before source-dependent operations. The visual server on port 4173 has no mutation endpoints and never receives the worker token. Both servers are intended for trusted local use; do not expose either port through a proxy or tunnel. Scan only repositories you are authorized to read, and review verification commands before running them because they execute in a worktree.
 
 ## Contracts and boundaries
 
@@ -91,9 +95,13 @@ It binds to `127.0.0.1:4174` and requires `Authorization: Bearer <token>` on eve
 ## Verify
 
 ```sh
-npm test
+npm run check
 node bin/block-studio.mjs scan --root /path/to/teacake
 node bin/block-studio.mjs scan --root /path/to/another/js-app
 ```
 
 The focused tests cover source evidence, React rendering links, candidate boundaries, worktree approval, ledger replay, and source drift. The original implementation plan is in [Block-Studio-PLAN.md](Block-Studio-PLAN.md).
+
+## Contribute and get help
+
+Read [CONTRIBUTING.md](CONTRIBUTING.md) before opening a pull request. Use the issue templates for bugs and feature ideas. For a security issue, follow [SECURITY.md](SECURITY.md) and avoid public issues. [SUPPORT.md](SUPPORT.md) explains where to ask usage questions. Changes are recorded in [CHANGELOG.md](CHANGELOG.md).

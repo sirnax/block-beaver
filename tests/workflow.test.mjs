@@ -18,6 +18,7 @@ test('roadmap replays approvals and rejects stale source', async () => {
     execFileSync('git', ['-C', root, 'add', '.']);
     execFileSync('git', ['-C', root, '-c', 'user.name=Test', '-c', 'user.email=test@example.com', 'commit', '-qm', 'initial']);
     const graph = await scanRepository(root);
+    await assert.rejects(checkSlice(root, 'first-feature', '../outside', graph), /Slice ID/);
     await createRoadmap(root, 'first-feature', graph, { scope: ['src/feature.ts'] });
     const candidate = makeProposal({ id: 'feature', name: 'Feature', description: 'A test feature.', rationale: 'One cohesive feature.', files: ['src/feature.ts'], patches: [{ path: 'src/feature.ts', baseHash: graph.hashes['src/feature.ts'], content: 'export function feature() { return 42 }\n' }] }, graph);
     assert.equal((await propose(root, 'first-feature', candidate, graph)).accepted, true);

@@ -1,0 +1,24 @@
+# Public release checklist
+
+This is the review gate before changing repository visibility or advertising a first release.
+
+## Repository content
+
+- [ ] Choose a license and add a `LICENSE` file plus package metadata. Do not treat the repository as open source until this is done.
+- [ ] Review every tracked file and every reachable Git commit for secrets, personal paths, private source, and third party material. Rotate any exposed secret before rewriting history.
+- [ ] Check that the TeaCake reference remains read only and no TeaCake source or proprietary assets were copied here.
+- [ ] Confirm README commands, support route, conduct contact, and security reporting route work for an outside contributor.
+- [ ] Decide whether the current `block-bot-dev` GitHub repository name should be retained or renamed to `block-studio`; update repository links and templates together if renamed.
+
+## Quality and security
+
+- [ ] Run `npm ci --ignore-scripts` and `npm run check` on supported Node versions through GitHub Actions.
+- [ ] Run the dependency audit online and resolve high or critical findings.
+- [ ] Smoke test the visual console and worker on a clean local fixture, including rejected foreign Host and Origin headers and missing worker tokens.
+- [ ] Review verification command execution and agent adapter trust instructions in `SECURITY.md`.
+
+## GitHub configuration
+
+- [ ] Apply [GitHub setup](GITHUB_SETUP.md), including dependency alerts, private vulnerability reporting, and an active `master` ruleset.
+- [ ] Confirm required checks and one outside contributor pull request path work.
+- [ ] Decide and record the first release version, tag, and known limitations.

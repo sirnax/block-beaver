@@ -8,6 +8,10 @@ import ts from 'typescript';
 
 const exec = promisify(execFile);
 const safeName = (id) => /^[a-z][a-z0-9-]*$/.test(id);
+const sliceName = (id) => {
+  if (!safeName(id)) throw new Error('Slice ID must be kebab-case.');
+  return id;
+};
 const rootDir = (root) => join(resolve(root), '.blocks');
 const roadmapDir = (root, id) => {
   if (!safeName(id)) throw new Error('Roadmap ID must be kebab-case.');
@@ -16,8 +20,8 @@ const roadmapDir = (root, id) => {
 const readJson = async (path) => JSON.parse(await readFile(path, 'utf8'));
 const writeJson = async (path, value) => writeFile(path, JSON.stringify(value, null, 2) + '\n');
 const hash = (value) => createHash('sha256').update(value).digest('hex').slice(0, 16);
-const worktreeAt = (root, roadmapId, sliceId) => join(rootDir(root), 'worktrees', roadmapId, sliceId);
-const branchFor = (roadmapId, sliceId) => `block-studio/${roadmapId}/${sliceId}`;
+const worktreeAt = (root, roadmapId, sliceId) => join(rootDir(root), 'worktrees', sliceName(roadmapId), sliceName(sliceId));
+const branchFor = (roadmapId, sliceId) => `block-studio/${sliceName(roadmapId)}/${sliceName(sliceId)}`;
 async function prepareWorktree(root, roadmapId, sliceId, proposal) {
   const worktree = worktreeAt(root, roadmapId, sliceId);
   try { await stat(worktree); }
@@ -80,6 +84,7 @@ export async function propose(root, roadmapId, proposal, graph) {
   const roadmap = await readJson(join(dir, 'roadmap.json'));
   const { manifest } = proposal;
   if (!safeName(manifest?.id)) throw new Error('Proposal needs a kebab-case block ID.');
+  if (!Array.isArray(manifest.files)) throw new Error('Proposal needs implementation files.');
   if (!manifest.files.every((file) => roadmap.scope.includes(file))) throw new Error('Proposal exceeds the roadmap scope.');
   for (const patch of proposal.patches || []) if (!roadmap.scope.includes(patch.path)) throw new Error(`Patch exceeds the roadmap scope: ${patch.path}`);
   const check = validateBlock(manifest, graph);
@@ -95,6 +100,7 @@ export async function propose(root, roadmapId, proposal, graph) {
 }
 
 export async function repair(root, roadmapId, sliceId, candidate, graph) {
+  sliceName(sliceId);
   const state = await resume(root, roadmapId);
   if (!['proposed', 'failed', 'checked'].includes(state.slices[sliceId]?.status)) throw new Error('Only a pending or failed slice may be repaired.');
   const path = join(roadmapDir(root, roadmapId), `${sliceId}.proposal.json`);
@@ -111,6 +117,7 @@ export async function repair(root, roadmapId, sliceId, candidate, graph) {
 }
 
 export async function checkSlice(root, roadmapId, sliceId, graph, { recordEvent = true, prepare = true } = {}) {
+  sliceName(sliceId);
   const dir = roadmapDir(root, roadmapId);
   const proposal = await readJson(join(dir, `${sliceId}.proposal.json`));
   const validation = validateBlock(proposal.manifest, graph);
@@ -140,6 +147,7 @@ export async function checkSlice(root, roadmapId, sliceId, graph, { recordEvent 
 }
 
 export async function review(root, roadmapId, sliceId, graph) {
+  sliceName(sliceId);
   const dir = roadmapDir(root, roadmapId);
   const proposal = await readJson(join(dir, `${sliceId}.proposal.json`));
   const check = await checkSlice(root, roadmapId, sliceId, graph, { recordEvent: false, prepare: false });
@@ -148,6 +156,7 @@ export async function review(root, roadmapId, sliceId, graph) {
 }
 
 export async function reject(root, roadmapId, sliceId, reason) {
+  sliceName(sliceId);
   if (!reason?.trim()) throw new Error('A rejection reason is required.');
   const state = await resume(root, roadmapId);
   if (!state.slices[sliceId] || state.slices[sliceId].status === 'approved') throw new Error('Only a pending or failed slice may be rejected.');
@@ -156,6 +165,7 @@ export async function reject(root, roadmapId, sliceId, reason) {
 }
 
 export async function approve(root, roadmapId, sliceId, graph) {
+  sliceName(sliceId);
   const state = await resume(root, roadmapId);
   if (state.slices[sliceId]?.status !== 'checked') throw new Error('Run passing checks in the isolated worktree before approval.');
   const check = await checkSlice(root, roadmapId, sliceId, graph, { recordEvent: false, prepare: false });

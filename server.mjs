@@ -7,6 +7,7 @@ import { attachTeacakeRegistry, attachLocalRegistry } from './src/adapter.mjs';
 import { inspect, search } from './src/graph.mjs';
 import { suggestBoundaries, makeProposal, connectionProposal } from './src/contracts.mjs';
 import { resume } from './src/workflow.mjs';
+import { isLocalBrowserRequest, securityHeaders } from './src/http-security.mjs';
 
 const appRoot = dirname(fileURLToPath(import.meta.url));
 const initialRoot = resolve(process.env.BLOCK_STUDIO_REPO || process.cwd());
@@ -22,6 +23,8 @@ async function body(request) {
 
 createServer(async (request, response) => {
   try {
+    for (const [name, value] of Object.entries(securityHeaders)) response.setHeader(name, value);
+    if (!isLocalBrowserRequest(request.headers)) return json(response, 403, { error: 'Local browser request required.' });
     const url = new URL(request.url, 'http://localhost');
     if (url.pathname === '/api/meta') return json(response, 200, { root: initialRoot, hasGraph: !!graph });
     if (url.pathname === '/api/scan' && request.method === 'POST') {

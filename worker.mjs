@@ -6,6 +6,7 @@ import { attachLocalRegistry, attachTeacakeRegistry } from './src/adapter.mjs';
 import { inspect, search } from './src/graph.mjs';
 import { makeProposal, suggestBoundaries } from './src/contracts.mjs';
 import { createRoadmap, propose, repair, checkSlice, review, approve, reject, resume } from './src/workflow.mjs';
+import { isLocalBrowserRequest, securityHeaders } from './src/http-security.mjs';
 
 const root = resolve(process.env.BLOCK_STUDIO_REPO || '');
 const token = process.env.BLOCK_STUDIO_TOKEN || '';
@@ -43,6 +44,8 @@ export async function dispatch(action, input = {}) {
 }
 
 createServer(async (request, response) => {
+  for (const [name, value] of Object.entries(securityHeaders)) response.setHeader(name, value);
+  if (!isLocalBrowserRequest(request.headers)) return send(response, 403, { error: 'Local request required.' });
   if (!authorized(request.headers.authorization)) return send(response, 401, { error: 'Bearer token required.' });
   if (request.method !== 'POST') return send(response, 405, { error: 'Use POST.' });
   try { return send(response, 200, await dispatch(new URL(request.url, 'http://localhost').pathname.slice(1), await body(request))); }

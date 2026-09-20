@@ -1,0 +1,33 @@
+name: Bug report
+description: Report a reproducible Block Studio defect.
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: Please remove private code, paths, and secrets before posting. Security issues belong in a private advisory.
+  - type: textarea
+    id: problem
+    attributes:
+      label: What happened?
+      description: Include the behavior you expected and what actually occurred.
+    validations:
+      required: true
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: Steps to reproduce
+      description: A minimal public fixture or example is especially helpful.
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: Block Studio version or commit
+    validations:
+      required: true
+  - type: input
+    id: environment
+    attributes:
+      label: Node version and operating system
+    validations:
+      required: true

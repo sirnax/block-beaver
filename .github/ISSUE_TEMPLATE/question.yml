@@ -1,0 +1,11 @@
+name: Question or documentation
+description: Ask about setup, usage, or missing documentation.
+labels: [question]
+body:
+  - type: textarea
+    id: question
+    attributes:
+      label: Question
+      description: Share a minimal public example if useful. Remove private code and secrets.
+    validations:
+      required: true
