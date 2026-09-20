@@ -17,7 +17,7 @@ Block Beaver makes the shape of a codebase visible. Scan a JavaScript, TypeScrip
 
 **[Project page](https://sirnax.github.io/block-beaver/)** · **[Get started](#quick-start)** · **[How it works](#how-it-works)** · **[CLI and workflow](#propose-a-block)** · **[Plan](Block-Studio-PLAN.md)** · **[Contribute](CONTRIBUTING.md)**
 
-> **v0.1.0 is an early release.** The graph is an aid to review, not a complete static analysis. Block Beaver is [Apache-2.0 licensed](LICENSE). The npm package is marked private, so install it from source.
+> **This is an early release.** The graph is an aid to review, not a complete static analysis. Block Beaver is [Apache-2.0 licensed](LICENSE). The npm package is marked private, so install it from source.
 
 ## Supported environments
 

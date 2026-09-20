@@ -4,7 +4,9 @@ All notable user visible changes are recorded here. Releases follow semantic ver
 
 ## Unreleased
 
+## 0.1.1 — 2026-09-20
 
+- Remove a separate file metadata check before reading local console assets, closing the file system race reported by CodeQL.
 
 ## 0.1.0 — 2026-09-20
 
