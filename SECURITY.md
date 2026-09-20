@@ -6,11 +6,11 @@ Block Beaver reads local source code and can run project supplied verification c
 
 Do not open a public issue for a vulnerability. Use the repository's **Report a vulnerability** option under **Security → Advisories** on GitHub. Include the affected version or commit, steps to reproduce, the impact, and a suggested fix if available. Do not include secrets or private source code in the report. The maintainer will acknowledge and triage reports through the advisory thread.
 
-If private vulnerability reporting is not enabled yet, contact the maintainer through the private contact method on their GitHub profile. Public release is gated on enabling private vulnerability reporting.
+If the reporting option is unavailable, contact the maintainer through the private contact method on their GitHub profile.
 
 ## Supported versions
 
-Until the first stable release, security fixes target the latest commit on the default branch. Earlier commits and development snapshots are not maintained separately.
+Security fixes target the latest `0.1.x` release and the `main` branch. Earlier development snapshots are not maintained separately.
 
 ## Local use boundary
 

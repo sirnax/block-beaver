@@ -5,6 +5,7 @@
   "private": true,
   "license": "Apache-2.0",
   "repository": { "type": "git", "url": "https://github.com/sirnax/block-beaver.git" },
+  "homepage": "https://sirnax.github.io/block-beaver/",
   "bin": { "block-beaver": "bin/block-beaver.mjs" },
   "type": "module",
   "scripts": {

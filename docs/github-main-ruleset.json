@@ -31,7 +31,11 @@
           { "context": "Check (Node 22)" },
           { "context": "Check (Node 24)" },
           { "context": "Check (Node 26)" },
-          { "context": "Dependency audit" }
+          { "context": "Platform (macos-latest)" },
+          { "context": "Platform (windows-latest)" },
+          { "context": "Dependency audit" },
+          { "context": "Gitleaks" },
+          { "context": "Analyze (JavaScript and TypeScript)" }
         ]
       }
     }

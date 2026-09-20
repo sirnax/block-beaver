@@ -41,7 +41,7 @@ test('roadmap replays approvals and rejects stale source', async () => {
     assert.equal((await resume(root, 'changed-feature')).slices.changed.status, 'rejected');
 
     await createRoadmap(root, 'failing-feature', changedGraph, { scope: ['src/feature.ts'] });
-    const failing = makeProposal({ id: 'failing', name: 'Failing', description: 'A failing check.', rationale: 'Exercise failed verification.', files: ['src/feature.ts'], verification: ['false'] }, changedGraph);
+    const failing = makeProposal({ id: 'failing', name: 'Failing', description: 'A failing check.', rationale: 'Exercise failed verification.', files: ['src/feature.ts'], verification: ['block-beaver-missing-check'] }, changedGraph);
     await propose(root, 'failing-feature', failing, changedGraph);
     const failedCheck = await checkSlice(root, 'failing-feature', 'failing', changedGraph);
     assert.equal(failedCheck.pass, false);

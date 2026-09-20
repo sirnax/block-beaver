@@ -15,4 +15,4 @@ async function sourceFiles(directory) {
 for (const path of ['server.mjs', 'worker.mjs', ...await sourceFiles('bin'), ...await sourceFiles('src'), ...await sourceFiles('scripts'), ...await sourceFiles('tests')]) {
   execFileSync(process.execPath, ['--check', path], { stdio: 'inherit' });
 }
-execFileSync('npm', ['test'], { stdio: 'inherit' });
+execFileSync(process.platform === 'win32' ? 'npm.cmd' : 'npm', ['test'], { stdio: 'inherit' });
