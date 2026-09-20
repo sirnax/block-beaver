@@ -1,6 +1,6 @@
 # GitHub repository setup
 
-These settings live on GitHub and cannot be enforced by files in this repository alone. Apply them to `sirnax/block-bot-dev` before making it public. The default branch is `main`.
+These settings live on GitHub and cannot be enforced by files in this repository alone. Apply them to `sirnax/block-bot-dev` during public release preparation. The default branch is `main`.
 
 ## General
 
@@ -12,8 +12,8 @@ These settings live on GitHub and cannot be enforced by files in this repository
 ## Actions and security
 
 1. In **Settings → Actions → General**, set workflow permissions to **Read repository contents**. Allow actions pinned to a full commit SHA; the CI workflow uses pinned `actions/checkout` and `actions/setup-node` releases.
-2. In **Settings → Security → Advanced Security**, enable dependency graph, Dependabot alerts, Dependabot security updates, and private vulnerability reporting. Enable CodeQL default setup for JavaScript and TypeScript if offered for the repository.
-3. Confirm the private vulnerability link in the issue template works for a non-maintainer before changing visibility.
+2. In **Settings → Security → Advanced Security**, enable dependency graph, Dependabot alerts, and Dependabot security updates. Once the repository is public, enable private vulnerability reporting and CodeQL default setup for JavaScript and TypeScript if offered.
+3. Confirm the private vulnerability link in the issue template works for a non-maintainer before advertising the public release.
 4. Review the first full CI run. The required status checks below must have run at least once before they can be selected in a ruleset.
 
 ## Protect `main`
@@ -33,3 +33,7 @@ The `CODEOWNERS` file names `@sirnax`. Enable code owner review only if the main
 2. Set a release tag only after the license and changelog are committed and the first CI run passes.
 3. Make the repository public only after a final review of history, settings, and the first CI run.
 4. Publish release notes from `CHANGELOG.md`, documenting supported Node versions and known limitations.
+
+## Project page
+
+The standalone landing page is [docs/index.html](index.html), with local CSS and artwork under `docs/assets/`. Once the repository is ready for a public website, choose **Settings → Pages → Deploy from a branch → `main` → `/docs`**, then verify the published links and add its URL to the repository's website field. GitHub Pages sites may be publicly accessible even when their repository is private, so keep Pages disabled until publishing the site is intentional.

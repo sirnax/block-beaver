@@ -1,22 +1,58 @@
 # Block Studio
 
-Block Studio is a local architecture workspace for JavaScript, TypeScript, and React repositories. It scans source without changing it, builds a graph of files and observed pieces, and gives each relationship a source location. A browser console explores that graph. A CLI records bounded block migration proposals and decisions.
+<p align="center"><img src="docs/assets/block-studio-banner.svg" alt="Block Studio: a source graph connects a file, observed pieces, a block, and source evidence" width="100%"></p>
 
-The project is in an early development stage. Its graph is an aid to review, not a complete static analysis or an automatic migration system. See the [roadmap](Block-Studio-PLAN.md) and [release checklist](docs/PUBLIC_RELEASE_CHECKLIST.md).
+<p align="center">
+  <a href="https://github.com/sirnax/block-bot-dev/actions/workflows/ci.yml"><img alt="GitHub Actions checks" src="https://img.shields.io/badge/CI-GitHub%20Actions-28728d"></a>
+  <a href="LICENSE"><img alt="Apache-2.0 license" src="https://img.shields.io/badge/license-Apache--2.0-28728d"></a>
+  <a href="package.json"><img alt="Node.js 22 or newer" src="https://img.shields.io/badge/node-22%2B-28728d"></a>
+  <a href="https://github.com/sirnax/block-bot-dev/issues"><img alt="Report an issue" src="https://img.shields.io/badge/issues-report%20a%20bug-d1985b"></a>
+</p>
 
-Block Studio is licensed under [Apache-2.0](LICENSE). Public release preparation is in progress; the GitHub repository remains private for now. The `private` setting in `package.json` prevents accidental npm publication.
+Block Studio makes the shape of a codebase visible. Scan a JavaScript, TypeScript, or React repository, follow each observed relationship to its source line, and turn a candidate feature into a reviewed block proposal. It runs locally and keeps code changes inside bounded Git worktrees.
 
-This is a standalone project. The TeaCake repository is a read-only test case; its existing generated manifest index and block map are recognized by an optional adapter. No TeaCake code or data is required to scan another application.
+**[Get started](#quick-start)** · **[How it works](#how-it-works)** · **[CLI and workflow](#propose-a-block)** · **[Plan](Block-Studio-PLAN.md)** · **[Contribute](CONTRIBUTING.md)**
 
-## Run
+> **Early development.** The graph is an aid to review, not a complete static analysis. The GitHub repository is private while public release preparation continues. Block Studio is [Apache-2.0 licensed](LICENSE); `package.json` remains private to prevent accidental npm publication.
 
-Requires Node.js 22 or newer and Git for migration worktrees. Install dependencies with `npm ci`, then:
+## Why use it?
+
+| See the code | Draw a boundary | Keep the record |
+| --- | --- | --- |
+| Files, functions, components, hooks, and their evidenced connections appear in one graph. | Propose a cohesive feature with a declared file scope, dependencies, and verification commands. | Checks run in an isolated worktree; reviews, decisions, and failures stay in an ordered roadmap ledger. |
+
+The visual console explores and previews. The CLI and optional authenticated worker handle roadmap operations. TeaCake is a read-only reference and optional adapter; no TeaCake files are required for another project.
+
+## Quick start
+
+Requires **Node.js 22+**. Install dependencies, then launch the local console:
 
 ```sh
+npm ci
 npm start
 ```
 
-Open `http://127.0.0.1:4173`. The console starts with the current working directory in the repository field. Enter any absolute project path and select **Scan project**. You can also set `BLOCK_STUDIO_REPO=/path/to/project` before starting the server. The server binds to localhost and exposes only read and preview operations.
+Open **http://127.0.0.1:4173**, enter an absolute path to a project, and select **Scan project**. The console binds to localhost and offers read and preview operations. Set `BLOCK_STUDIO_REPO=/path/to/project` to prefill the path.
+
+For a terminal first look:
+
+```sh
+node bin/block-studio.mjs scan --root /path/to/project
+```
+
+## How it works
+
+```mermaid
+flowchart LR
+  A[Scan source] --> B[Explore evidenced graph]
+  B --> C[Propose bounded block]
+  C --> D[Check in Git worktree]
+  D --> E[Review and decide]
+```
+
+Scanning does not change the target repository. Creating a roadmap opts that repository into `.blocks/` records. A proposal cannot advance after failed checks or source drift. [Read the original plan](Block-Studio-PLAN.md) for the intended stages and boundaries.
+
+## Explore from the CLI
 
 ```sh
 node bin/block-studio.mjs scan --root /path/to/project
@@ -105,3 +141,5 @@ The focused tests cover source evidence, React rendering links, candidate bounda
 ## Contribute and get help
 
 Read [CONTRIBUTING.md](CONTRIBUTING.md) before opening a pull request. Use the issue templates for bugs and feature ideas. For a security issue, follow [SECURITY.md](SECURITY.md) and avoid public issues. [SUPPORT.md](SUPPORT.md) explains where to ask usage questions. Changes are recorded in [CHANGELOG.md](CHANGELOG.md).
+
+A standalone [project page](docs/index.html) is prepared for GitHub Pages and will remain unpublished until public access is intentional.
