@@ -59,14 +59,15 @@ export async function attachTeacakeRegistry(graph) {
     const raw = html.match(/<script type="application\/json" id="block-map-data">([\s\S]*?)<\/script>/)?.[1];
     if (raw) {
       const map = JSON.parse(raw);
+      const mapLine = html.slice(0, html.indexOf('<script type="application/json" id="block-map-data">')).split('\n').length;
       for (const [from, to, kind] of map.links || []) {
         const source = `block:${from}`, target = `block:${to}`;
-        if (blockIds.has(source) && blockIds.has(target)) graph.edges.push({ from: source, to: target, kind, evidence: { file: 'docs/blocks/block-map.html', line: 378, column: 1, text: `${from} ${kind} ${to}` } });
+        if (blockIds.has(source) && blockIds.has(target)) graph.edges.push({ from: source, to: target, kind, evidence: { file: 'docs/blocks/block-map.html', line: mapLine, column: 1, text: `${from} ${kind} ${to}` } });
       }
       graph.history = map.history || [];
     }
   } catch { /* The manifest index alone is enough. */ }
-  graph.summary.blocks = manifests.length;
+  graph.summary.blocks = graph.nodes.filter((node) => node.kind === 'block').length;
   graph.summary.relationships = graph.edges.length;
   graph.adapter = 'teacake';
   return graph;

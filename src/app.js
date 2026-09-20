@@ -3,11 +3,13 @@ const esc = (value) => String(value ?? '').replace(/[&<>"']/g, (char) => ({ '&':
 const state = { graph: null, view: 'map', selected: null, kind: 'all', query: '', suggestions: [], proposal: null, roadmaps: [] };
 const kinds = { all: ['All pieces', '#6995a8'], component: ['Components', '#c27f6f'], hook: ['Hooks', '#987bad'], function: ['Functions', '#6999a4'], class: ['Classes', '#78938a'], file: ['Files', '#d1985b'], block: ['Blocks', '#4e83a7'] };
 let toastTimer;
+let replayTimer;
 function toast(message) { const el = $('#toast'); el.textContent = message; el.classList.add('show'); clearTimeout(toastTimer); toastTimer = setTimeout(() => el.classList.remove('show'), 3000); }
 function number(value) { return Number(value || 0).toLocaleString(); }
 function nodeById(id) { return state.graph?.nodes.find((node) => node.id === id); }
 function relations(id) { return { incoming: state.graph.edges.filter((edge) => edge.to === id), outgoing: state.graph.edges.filter((edge) => edge.from === id) }; }
 function setView(view) {
+  if (view !== 'roadmap' && replayTimer) { clearInterval(replayTimer); replayTimer = null; }
   state.view = view;
   document.querySelectorAll('.nav-item').forEach((button) => button.classList.toggle('selected', button.dataset.view === view));
   document.querySelectorAll('.view').forEach((el) => el.classList.toggle('active', el.id === `${view}-view`));
@@ -55,6 +57,7 @@ function renderBlocks() {
 }
 function renderRoadmap() {
   if (!state.graph) return;
+  if (replayTimer) { clearInterval(replayTimer); replayTimer = null; }
   const candidates = state.suggestions.filter((entry) => !state.query || `${entry.folder} ${entry.reason}`.toLowerCase().includes(state.query));
   $('#result-count').textContent = `${candidates.length} candidates`;
   $('#roadmap-content').innerHTML = `${candidates.map((entry) => `<button class="item" data-folder="${esc(entry.folder)}" type="button"><span class="item-glyph">▱</span><span class="item-body"><strong>${esc(entry.folder)}</strong><small>${esc(entry.reason)}</small></span><span class="item-meta">score ${entry.score}</span></button>`).join('') || '<div class="empty-list">No candidates yet. Scan a project with related files.</div>'}<div class="ledger-heading">Recorded roadmaps</div>${state.roadmaps.map((roadmap) => `<button class="item" data-roadmap="${esc(roadmap.id)}" type="button"><span class="item-glyph">⌁</span><span class="item-body"><strong>${esc(roadmap.title)}</strong><small>${roadmap.slices.length} slices · ${esc(roadmap.id)}</small></span><span class="item-meta">Replay</span></button>`).join('') || '<div class="empty-list">No recorded roadmaps in this repository.</div>'}<div id="roadmap-replay"></div>`;
@@ -74,7 +77,7 @@ function renderDetail() {
   const { incoming, outgoing } = relations(node.id);
   const relation = (edge, direction) => { const other = nodeById(direction === 'out' ? edge.to : edge.from); if (!other) return ''; return `<button class="relation" data-id="${esc(other.id)}" type="button"><strong>${esc(other.name)}</strong><span>${esc(direction === 'out' ? edge.kind : `used by · ${edge.kind}`)} · ${esc(edge.evidence.file)}:${edge.evidence.line}</span></button>`; };
   const proof = (edge) => `<div class="source-proof">${esc(edge.kind)} · ${esc(edge.evidence.file)}:${edge.evidence.line}:${edge.evidence.column}<code>${esc(edge.evidence.text)}</code></div>`;
-  const options = node.kind === 'block' && node.family === 'local' ? state.graph.nodes.filter((other) => other.kind === 'block' && other.id !== node.id && !(node.manifest.dependencies || []).includes(other.manifest.id)) : [];
+  const options = node.kind === 'block' && node.family === 'local' ? state.graph.nodes.filter((other) => other.kind === 'block' && other.id !== node.id && !(node.manifest.dependencies || []).includes(other.id)) : [];
   const connectionEditor = options.length ? `<div class="detail-section"><h4>Propose a connection</h4><div class="proposal-box"><label for="connection-target">This block depends on</label><select id="connection-target">${options.map((other) => `<option value="${esc(other.id)}">${esc(other.name)}</option>`).join('')}</select><button id="preview-connection" type="button">Preview change</button><div id="connection-result"></div></div></div>` : '';
   el.innerHTML = `<div class="detail-inner"><span class="detail-kind">${esc(node.family || node.kind)}</span><h3>${esc(node.name)}</h3><div class="detail-path">${esc(node.path || node.id)}</div>${node.description ? `<p class="detail-desc">${esc(node.description)}</p>` : ''}${miniGraph(node, incoming, outgoing)}${node.evidence ? proof({ kind: 'declared', evidence: node.evidence }) : ''}<div class="detail-section"><h4>Uses (${outgoing.length})</h4>${outgoing.slice(0, 25).map((edge) => relation(edge, 'out')).join('') || '<p class="detail-desc">No outgoing relationships observed.</p>'}</div><div class="detail-section"><h4>Used by (${incoming.length})</h4>${incoming.slice(0, 25).map((edge) => relation(edge, 'in')).join('') || '<p class="detail-desc">No incoming relationships observed.</p>'}</div><div class="detail-section"><h4>Evidence</h4>${[...outgoing, ...incoming].slice(0, 15).map(proof).join('') || '<p class="detail-desc">No relationship evidence for this item.</p>'}</div>${connectionEditor}</div>`;
   if (options.length) $('#preview-connection').addEventListener('click', async () => {
@@ -154,10 +157,12 @@ document.addEventListener('click', async (event) => {
   const data = await response.json();
   if (!response.ok) { toast(data.error || 'Could not load roadmap.'); return; }
   const panel = $('#roadmap-replay');
-  panel.innerHTML = `<div class="replay-panel"><strong>${esc(data.roadmap.title)}</strong><p>${data.events.length} recorded events · ${data.roadmap.scope.length} files in scope</p><input type="range" min="1" max="${Math.max(1, data.events.length)}" value="${Math.max(1, data.events.length)}" aria-label="Roadmap event"><div class="replay-event"></div></div>`;
+  panel.innerHTML = `<div class="replay-panel"><strong>${esc(data.roadmap.title)}</strong><p>${data.events.length} recorded events · ${data.roadmap.scope.length} files in scope</p><div class="replay-controls"><button class="replay-play" type="button">Play</button><input type="range" min="1" max="${Math.max(1, data.events.length)}" value="${Math.max(1, data.events.length)}" aria-label="Roadmap event"></div><div class="replay-event"></div></div>`;
   const slider = panel.querySelector('input');
-  const show = () => { const entry = data.events[Number(slider.value) - 1]; panel.querySelector('.replay-event').innerHTML = entry ? `<span>Event ${entry.seq} of ${data.events.length}</span><strong>${esc(entry.type.replaceAll('-', ' '))}</strong><small>${esc(entry.at)}${entry.slice ? ` · ${esc(entry.slice)}` : ''}</small>` : ''; };
+  const show = () => { const entry = data.events[Number(slider.value) - 1]; const files = entry?.slice ? data.slices[entry.slice]?.files || [] : []; panel.querySelector('.replay-event').innerHTML = entry ? `<span>Event ${entry.seq} of ${data.events.length}</span><strong>${esc(entry.type.replaceAll('-', ' '))}</strong><small>${esc(entry.at)}${entry.slice ? ` · ${esc(entry.slice)}` : ''}</small>${files.length ? `<div class="replay-files">${files.map((path) => `<button type="button" data-id="${esc(`file:${path}`)}">${esc(path)}</button>`).join('')}</div>` : ''}` : ''; };
   slider.addEventListener('input', show);
+  const play = panel.querySelector('.replay-play');
+  play.addEventListener('click', () => { if (replayTimer) { clearInterval(replayTimer); replayTimer = null; play.textContent = 'Play'; return; } slider.value = '1'; show(); play.textContent = 'Pause'; replayTimer = setInterval(() => { if (Number(slider.value) >= data.events.length) { clearInterval(replayTimer); replayTimer = null; play.textContent = 'Play'; return; } slider.value = String(Number(slider.value) + 1); show(); }, 750); });
   show();
 });
 const meta = await fetch('/api/meta').then((response) => response.json());

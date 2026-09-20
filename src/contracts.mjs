@@ -20,7 +20,7 @@ export function validateBlock(manifest, graph, { existing = [] } = {}) {
   }
   if (manifest.dependencies !== undefined) {
     if (!Array.isArray(manifest.dependencies)) issue('$.dependencies', 'Dependencies must be an array.');
-    else for (const [index, id] of manifest.dependencies.entries()) if (typeof id !== 'string') issue(`$.dependencies[${index}]`, 'Dependency must be a block ID.');
+    else for (const [index, id] of manifest.dependencies.entries()) if (typeof id !== 'string' || !graph?.nodes.some((node) => node.id === id && node.kind === 'block')) issue(`$.dependencies[${index}]`, 'Dependency must reference a declared block ID in the scan.');
   }
   if (manifest.verification !== undefined && (!Array.isArray(manifest.verification) || !manifest.verification.every((x) => typeof x === 'string'))) issue('$.verification', 'Verification must be a list of commands.');
   const declared = graph?.nodes.find((node) => node.kind === 'block' && node.manifest?.id === manifest.id);
@@ -60,7 +60,7 @@ export function connectionProposal(graph, blockId, dependencyId) {
   const dependency = graph.nodes.find((node) => node.id === dependencyId && node.kind === 'block');
   if (!block || !dependency || block.id === dependency.id) throw new Error('Choose a local block and a different declared block.');
   const before = block.manifest;
-  const dependencies = [...new Set([...(before.dependencies || []), dependency.manifest.id])];
+  const dependencies = [...new Set([...(before.dependencies || []), dependency.id])];
   const after = { ...before, version: before.version + 1, dependencies };
   return { before, manifest: after, patches: [], check: validateBlock(after, graph), fingerprint: graph.fingerprint, proposedAt: new Date().toISOString() };
 }

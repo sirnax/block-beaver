@@ -1,11 +1,13 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtemp, mkdir, writeFile, rm } from 'node:fs/promises';
+import { mkdtemp, mkdir, writeFile, chmod, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { scanRepository } from '../src/scanner.mjs';
+import { attachLocalRegistry } from '../src/adapter.mjs';
 import { inspect, impact } from '../src/graph.mjs';
-import { makeProposal, suggestBoundaries } from '../src/contracts.mjs';
+import { makeProposal, suggestBoundaries, connectionProposal } from '../src/contracts.mjs';
+import { runAgentAdapter } from '../src/agent.mjs';
 
 test('scanner maps TypeScript, React and import relationships to source evidence', async () => {
   const root = await mkdtemp(join(tmpdir(), 'block-studio-scan-'));
@@ -26,5 +28,19 @@ test('scanner maps TypeScript, React and import relationships to source evidence
     assert.ok(suggestBoundaries(graph).some((b) => b.folder === 'src/feature'));
     const proposal = makeProposal({ id: 'feature', name: 'Feature', description: 'A feature.', rationale: 'The math and card form one feature.', files: ['src/feature/math.ts', 'src/feature/Card.tsx'] }, graph);
     assert.equal(proposal.check.valid, true);
+    await mkdir(join(root, '.blocks', 'manifests'), { recursive: true });
+    const block = (id, file) => ({ schemaVersion: 1, id, version: 1, name: id, description: `${id} feature`, rationale: `${id} is a cohesive feature`, files: [file], dependencies: [], verification: [] });
+    await writeFile(join(root, '.blocks', 'manifests', 'card.json'), JSON.stringify(block('card', 'src/feature/Card.tsx')));
+    await writeFile(join(root, '.blocks', 'manifests', 'math.json'), JSON.stringify(block('math', 'src/feature/math.ts')));
+    const withBlocks = await attachLocalRegistry(graph);
+    const connection = connectionProposal(withBlocks, 'block:local:card', 'block:local:math');
+    assert.equal(connection.check.valid, true);
+    assert.deepEqual(connection.manifest.dependencies, ['block:local:math']);
+    assert.equal(connection.manifest.version, 2);
+    const executable = join(root, 'adapter.cjs');
+    await writeFile(executable, '#!/usr/bin/env node\nlet s="";process.stdin.on("data",c=>s+=c);process.stdin.on("end",()=>{const x=JSON.parse(s);process.stdout.write(JSON.stringify({protocol:1,proposals:[{manifest:{schemaVersion:1,id:"new-feature",version:1,name:"New feature",description:"A feature",rationale:"One cohesive feature",files:x.scope,dependencies:[],verification:[]},patches:[]}]}))})\n');
+    await chmod(executable, 0o755);
+    const agent = await runAgentAdapter(executable, { graph: withBlocks, scope: ['src/main.tsx'] });
+    assert.equal(agent.proposals[0].check.valid, true);
   } finally { await rm(root, { recursive: true, force: true }); }
 });

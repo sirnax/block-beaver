@@ -66,7 +66,19 @@ A proposal JSON may contain the fields below. `patches` are optional, complete r
 
 `repair` replaces a pending or failed proposal but requires the same slice ID, implementation files, and patch paths. It records a new event and resets the slice to proposed. A repair cannot silently widen its scope.
 
-The console can preview a candidate block from a folder and download its JSON proposal. It also replays recorded roadmap events. Browser actions never apply patches.
+The console can preview a candidate block from a folder and download its JSON proposal. For local declared blocks, it can also preview a new dependency connection with before/after manifests and download that as a proposal. It plays the recorded roadmap ledger and shows the files involved in each event. Browser actions never apply patches.
+
+## Agent and worker interfaces
+
+An agent adapter is any local executable that accepts one JSON request on stdin and returns one JSON response on stdout. Run it with `node bin/block-studio.mjs agent --exec /path/to/adapter --scope src/one.ts,src/two.ts --root /path/to/project`. The request includes protocol version 1, the bounded source contents and hashes, graph nodes and edges for that scope, and the scan fingerprint. The response contains `{"protocol":1,"proposals":[...]}`. Block Studio validates each proposed boundary and patch path before returning it; `agent` does not save or apply anything. A proposal is passed through the ordinary `propose`, `check`, `review`, and `approve` operations.
+
+For a separate code-changing process, start the authenticated worker with an explicit repository path and a strong token:
+
+```sh
+BLOCK_STUDIO_REPO=/path/to/project BLOCK_STUDIO_TOKEN=replace-with-a-random-secret npm run worker
+```
+
+It binds to `127.0.0.1:4174` and requires `Authorization: Bearer <token>` on every request. POST JSON to `/scan`, `/inspect`, `/search`, `/suggest`, `/plan`, `/propose`, `/repair`, `/check`, `/review`, `/approve`, `/reject`, or `/resume`. The worker rescans before source-dependent operations. The visual server on port 4173 has no mutation endpoints and never receives the worker token.
 
 ## Contracts and boundaries
 

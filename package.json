@@ -6,6 +6,7 @@
   "scripts": {
     "start": "node server.mjs",
     "dev": "node server.mjs",
+    "worker": "node worker.mjs",
     "test": "node --test",
     "scan": "node bin/block-studio.mjs scan"
   },

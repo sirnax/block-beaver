@@ -6,6 +6,7 @@ import { attachTeacakeRegistry, attachLocalRegistry, runTeacakeKit } from '../sr
 import { inspect, search } from '../src/graph.mjs';
 import { suggestBoundaries, makeProposal } from '../src/contracts.mjs';
 import { createRoadmap, propose, repair, checkSlice, review, approve, reject, resume } from '../src/workflow.mjs';
+import { runAgentAdapter } from '../src/agent.mjs';
 
 const [command, ...args] = process.argv.slice(2);
 const option = (name, fallback) => { const index = args.indexOf(`--${name}`); return index < 0 ? fallback : args[index + 1]; };
@@ -15,7 +16,7 @@ const print = (value) => process.stdout.write(JSON.stringify(value, null, 2) + '
 
 try {
   if (!command || command === 'help') {
-    process.stdout.write('Block Studio\n  scan [--root PATH] [--full true]\n  inspect ID [--root PATH]\n  search QUERY [--root PATH] [--kind KIND]\n  kit COMMAND INPUT.json [--root TEACAKE_PATH]\n  plan ROADMAP_ID --scope file1,file2 [--root PATH] [--title TITLE]\n  propose ROADMAP_ID PROPOSAL.json [--root PATH]\n  repair ROADMAP_ID SLICE_ID PROPOSAL.json [--root PATH]\n  check ROADMAP_ID SLICE_ID [--root PATH]\n  review ROADMAP_ID SLICE_ID [--root PATH]\n  approve ROADMAP_ID SLICE_ID [--root PATH]\n  reject ROADMAP_ID SLICE_ID --reason TEXT [--root PATH]\n  resume ROADMAP_ID [--root PATH]\n');
+    process.stdout.write('Block Studio\n  scan [--root PATH] [--full true]\n  inspect ID [--root PATH]\n  search QUERY [--root PATH] [--kind KIND]\n  kit COMMAND INPUT.json [--root TEACAKE_PATH]\n  agent --exec PATH --scope file1,file2 [--root PATH]\n  plan ROADMAP_ID --scope file1,file2 [--root PATH] [--title TITLE]\n  propose ROADMAP_ID PROPOSAL.json [--root PATH]\n  repair ROADMAP_ID SLICE_ID PROPOSAL.json [--root PATH]\n  check ROADMAP_ID SLICE_ID [--root PATH]\n  review ROADMAP_ID SLICE_ID [--root PATH]\n  approve ROADMAP_ID SLICE_ID [--root PATH]\n  reject ROADMAP_ID SLICE_ID --reason TEXT [--root PATH]\n  resume ROADMAP_ID [--root PATH]\n');
     process.exit(0);
   }
   if (command === 'resume') { print(await resume(root, positional[0])); process.exit(0); }
@@ -25,6 +26,7 @@ try {
   else if (command === 'inspect') print(inspect(graph, positional[0]));
   else if (command === 'search') print(search(graph, positional.join(' '), { kind: option('kind') }));
   else if (command === 'kit') { if (graph.adapter !== 'teacake') throw new Error('The TeaCake kit adapter is unavailable for this repository.'); print(await runTeacakeKit(root, positional[0], positional[1] ? JSON.parse(await readFile(resolve(positional[1]), 'utf8')) : {})); }
+  else if (command === 'agent') print(await runAgentAdapter(option('exec'), { graph, scope: option('scope', '').split(',').filter(Boolean) }));
   else if (command === 'plan') { const id = positional[0]; print({ roadmap: await createRoadmap(root, id, graph, { title: option('title', id), scope: option('scope', '').split(',').filter(Boolean) }), suggestions: suggestBoundaries(graph) }); }
   else if (command === 'propose') { const raw = JSON.parse(await readFile(resolve(positional[1]), 'utf8')); const candidate = raw.manifest ? raw : makeProposal(raw, graph); print(await propose(root, positional[0], candidate, graph)); }
   else if (command === 'repair') { const raw = JSON.parse(await readFile(resolve(positional[2]), 'utf8')); const candidate = raw.manifest ? raw : makeProposal(raw, graph); print(await repair(root, positional[0], positional[1], candidate, graph)); }

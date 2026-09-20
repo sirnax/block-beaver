@@ -34,6 +34,7 @@ async function prepareWorktree(root, roadmapId, sliceId, proposal) {
 }
 async function runVerification(worktree, commands) {
   const checks = [];
+  const { BLOCK_STUDIO_TOKEN: _workerToken, ...safeEnvironment } = process.env;
   for (const command of commands || []) {
     const args = Array.isArray(command) ? command : command.trim().split(/\s+/);
     if (!args.length || args.some((arg) => !arg || /[;&|`$<>]/.test(arg))) {
@@ -41,7 +42,7 @@ async function runVerification(worktree, commands) {
       continue;
     }
     try {
-      const result = await exec(args[0], args.slice(1), { cwd: worktree, timeout: 120_000, maxBuffer: 2_000_000 });
+      const result = await exec(args[0], args.slice(1), { cwd: worktree, env: safeEnvironment, timeout: 120_000, maxBuffer: 2_000_000 });
       checks.push({ command, pass: true, output: `${result.stdout}${result.stderr}`.slice(-4000) });
     } catch (error) { checks.push({ command, pass: false, output: `${error.stdout || ''}${error.stderr || ''}${error.message}`.slice(-4000) }); }
   }
@@ -182,6 +183,10 @@ export async function resume(root, roadmapId) {
     if (event.type === 'checks-failed') slices[event.slice] = { ...slices[event.slice], status: 'failed' };
     if (event.type === 'slice-rejected') slices[event.slice] = { status: 'rejected', reason: event.reason };
     if (event.type === 'slice-approved') slices[event.slice] = { status: 'approved', branch: event.branch, worktree: event.worktree };
+  }
+  for (const slice of roadmap.slices) {
+    try { slices[slice.id].files = (await readJson(join(roadmapDir(root, roadmapId), `${slice.id}.proposal.json`))).manifest.files; }
+    catch { slices[slice.id].files = []; }
   }
   return { roadmap, slices, events: ledger };
 }

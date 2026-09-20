@@ -27,6 +27,7 @@ test('roadmap replays approvals and rejects stale source', async () => {
     assert.equal(applied.status, 'approved');
     assert.equal(await readFile(join(applied.worktree, 'src', 'feature.ts'), 'utf8'), 'export function feature() { return 42 }\n');
     assert.equal((await resume(root, 'first-feature')).slices.feature.status, 'approved');
+    assert.deepEqual((await resume(root, 'first-feature')).slices.feature.files, ['src/feature.ts']);
 
     await createRoadmap(root, 'changed-feature', graph, { scope: ['src/feature.ts'] });
     const second = makeProposal({ id: 'changed', name: 'Changed', description: 'Another test.', rationale: 'A separate cohesive feature.', files: ['src/feature.ts'] }, graph);
