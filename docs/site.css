@@ -1,0 +1,257 @@
+:root {
+  font-family:Arial,Helvetica,sans-serif;
+  color:#18364a;
+  background:#e7eff4;
+  font-synthesis:none
+}
+* {
+  box-sizing:border-box
+}
+html {
+  scroll-behavior:smooth
+}
+body {
+  margin:0
+}
+a {
+  color:inherit
+}
+a:focus-visible {
+  outline:3px solid #c27f6f;
+  outline-offset:4px
+}
+.wrap {
+  width:min(100% - 48px,1280px);
+  margin-inline:auto
+}
+.skip {
+  position:absolute;
+  left:12px;
+  top:-80px;
+  background:#fff;
+  padding:10px;
+  z-index:10
+}
+.skip:focus {
+  top:12px
+}
+.site-header {
+  height:94px;
+  display:flex;
+  align-items:center;
+  justify-content:space-between;
+  gap:24px
+}
+.brand {
+  display:flex;
+  align-items:center;
+  gap:11px;
+  color:#164b6b;
+  text-decoration:none;
+  font-size:22px;
+  letter-spacing:-.05em
+}
+.brand img {
+  display:block
+}
+.site-header nav {
+  display:flex;
+  align-items:center;
+  gap:32px
+}
+.site-header nav a {
+  font-size:14px;
+  font-weight:700;
+  text-decoration:none
+}
+.site-header nav a:hover,.text-link:hover,footer a:hover {
+  text-decoration:underline
+}
+.masthead img {
+  display:block;
+  width:100%;
+  height:auto;
+  border-radius:20px
+}
+.badges {
+  display:flex;
+  flex-wrap:wrap;
+  align-items:center;
+  gap:8px;
+  padding-block:20px 7px
+}
+.badges img {
+  height:20px;
+  display:block
+}
+.intro {
+  display:grid;
+  grid-template-columns:1fr 1fr;
+  gap:50px;
+  align-items:start;
+  padding-block:65px 70px
+}
+.intro h1 {
+  font-size:clamp(36px,4.1vw,62px);
+  line-height:1.06;
+  letter-spacing:-.065em;
+  margin:0;
+  max-width:590px
+}
+.intro p {
+  font-size:19px;
+  line-height:1.65;
+  max-width:590px;
+  margin:3px 0 0
+}
+.intro .note {
+  font-size:14px;
+  color:#608093;
+  margin-top:20px
+}
+.process {
+  display:grid;
+  grid-template-columns:repeat(3,1fr);
+  border-top:1px solid #bed0da;
+  border-bottom:1px solid #bed0da
+}
+.process article {
+  padding:29px 34px 36px 0
+}
+.process article+article {
+  border-left:1px solid #bed0da;
+  padding-left:34px
+}
+.step {
+  font-size:13px;
+  font-weight:700;
+  color:#4e8499
+}
+.process h2 {
+  font-size:23px;
+  letter-spacing:-.04em;
+  margin:17px 0 9px
+}
+.process p {
+  color:#57758a;
+  font-size:15px;
+  line-height:1.65;
+  margin:0;
+  max-width:340px
+}
+.start {
+  display:grid;
+  grid-template-columns:1fr 1fr;
+  gap:60px;
+  align-items:center;
+  padding-block:75px 90px
+}
+.start h2 {
+  font-size:clamp(28px,3vw,43px);
+  line-height:1.12;
+  letter-spacing:-.05em;
+  max-width:430px;
+  margin:0 0 16px
+}
+.start p {
+  max-width:420px;
+  color:#57758a;
+  font-size:16px;
+  line-height:1.65;
+  margin:0 0 20px
+}
+.text-link {
+  font-size:15px;
+  font-weight:700;
+  text-decoration:none;
+  color:#1d6685
+}
+.start pre {
+  margin:0;
+  background:#164b6b;
+  color:#e5f1f5;
+  border-radius:13px;
+  padding:30px;
+  overflow-x:auto;
+  box-shadow:0 12px 24px #164b6b17
+}
+.start code {
+  font:15px/1.9 ui-monospace,SFMono-Regular,Menlo,Consolas,monospace
+}
+footer {
+  border-top:1px solid #bed0da;
+  padding-block:25px 40px;
+  display:flex;
+  justify-content:space-between;
+  gap:24px;
+  color:#6c8797;
+  font-size:13px
+}
+footer div {
+  display:flex;
+  gap:25px
+}
+footer a {
+  text-decoration:none;
+  font-weight:700;
+  color:#3d7088
+}
+@media(max-width:780px) {
+  .wrap {
+    width:min(100% - 30px,1280px)
+  }
+  .site-header {
+    height:auto;
+    min-height:76px;
+    align-items:flex-start;
+    padding-block:20px;
+    flex-direction:column;
+    gap:15px
+  }
+  .site-header nav {
+    gap:20px;
+    flex-wrap:wrap
+  }
+  .masthead img {
+    border-radius:13px
+  }
+  .intro,.start {
+    grid-template-columns:1fr;
+    gap:22px
+  }
+  .intro {
+    padding-block:40px 50px
+  }
+  .intro p {
+    font-size:17px
+  }
+  .process {
+    grid-template-columns:1fr
+  }
+  .process article,.process article+article {
+    border-left:0;
+    border-top:1px solid #bed0da;
+    padding:25px 0
+  }
+  .process article:first-child {
+    border-top:0
+  }
+  .start {
+    padding-block:52px 65px
+  }
+  .start pre {
+    padding:22px
+  }
+  footer {
+    flex-direction:column
+  }
+  footer div {
+    flex-wrap:wrap;
+    gap:16px
+  }
+}
+@media(prefers-reduced-motion:reduce) {
+  html {
+    scroll-behavior:auto
+  }
+}
