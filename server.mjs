@@ -1,5 +1,5 @@
 import { createServer } from 'node:http';
-import { readFile, stat, readdir } from 'node:fs/promises';
+import { readFile, readdir } from 'node:fs/promises';
 import { fileURLToPath } from 'node:url';
 import { dirname, extname, join, normalize, resolve, sep } from 'node:path';
 import { scanRepository } from './src/scanner.mjs';
@@ -63,7 +63,6 @@ createServer(async (request, response) => {
     const path = join(appRoot, relative);
     if (relative.startsWith('..' + sep) || relative === '..' || !path.startsWith(appRoot + sep)) return response.writeHead(403).end('Forbidden');
     if (!['index.html', 'styles.css'].includes(relative) && !relative.startsWith('src/')) return response.writeHead(404).end('Not found');
-    if (!(await stat(path)).isFile()) throw new Error('Not a file');
     const content = await readFile(path);
     response.writeHead(200, { 'content-type': `${types[extname(path)] || 'application/octet-stream'}; charset=utf-8`, 'cache-control': 'no-cache' }).end(content);
   } catch (error) {
