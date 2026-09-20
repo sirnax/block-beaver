@@ -7,7 +7,7 @@
   <a href="https://github.com/sirnax/block-beaver/actions/workflows/ci.yml"><img alt="CI status" src="https://github.com/sirnax/block-beaver/actions/workflows/ci.yml/badge.svg?branch=main"></a>
   <a href="https://github.com/sirnax/block-beaver/actions/workflows/secret-scan.yml"><img alt="Secret scan status" src="https://github.com/sirnax/block-beaver/actions/workflows/secret-scan.yml/badge.svg?branch=main"></a>
   <a href="https://github.com/sirnax/block-beaver/actions/workflows/codeql.yml"><img alt="CodeQL status" src="https://github.com/sirnax/block-beaver/actions/workflows/codeql.yml/badge.svg?branch=main"></a>
-  <a href="LICENSE"><img alt="Apache-2.0 license" src="https://img.shields.io/github/license/sirnax/block-beaver?color=28728d"></a>
+  <a href="LICENSE"><img alt="Apache-2.0 license" src="https://img.shields.io/badge/license-Apache--2.0-28728d"></a>
   <a href="#supported-environments"><img alt="Node.js 22, 24 and 26" src="https://img.shields.io/badge/Node.js-22%20%7C%2024%20%7C%2026-28728d"></a>
   <a href="#supported-environments"><img alt="Linux, macOS and Windows" src="https://img.shields.io/badge/OS-Linux%20%7C%20macOS%20%7C%20Windows-28728d"></a>
   <a href="https://github.com/sirnax/block-beaver/issues"><img alt="Report an issue" src="https://img.shields.io/badge/issues-report%20a%20bug-d1985b"></a>
