@@ -3,17 +3,25 @@
 <p align="center"><img src="docs/assets/block-beaver-hero.png" alt="A beaver builds a dam from blocks marked with code and graph connections" width="100%"></p>
 
 <p align="center">
-  <a href="https://github.com/sirnax/block-beaver/actions/workflows/ci.yml"><img alt="GitHub Actions checks" src="https://img.shields.io/badge/CI-GitHub%20Actions-28728d"></a>
-  <a href="LICENSE"><img alt="Apache-2.0 license" src="https://img.shields.io/badge/license-Apache--2.0-28728d"></a>
-  <a href="package.json"><img alt="Node.js 22 or newer" src="https://img.shields.io/badge/node-22%2B-28728d"></a>
+  <a href="https://github.com/sirnax/block-beaver/releases"><img alt="Latest GitHub release" src="https://img.shields.io/github/v/release/sirnax/block-beaver?color=28728d"></a>
+  <a href="https://github.com/sirnax/block-beaver/actions/workflows/ci.yml"><img alt="CI status" src="https://github.com/sirnax/block-beaver/actions/workflows/ci.yml/badge.svg?branch=main"></a>
+  <a href="https://github.com/sirnax/block-beaver/actions/workflows/secret-scan.yml"><img alt="Secret scan status" src="https://github.com/sirnax/block-beaver/actions/workflows/secret-scan.yml/badge.svg?branch=main"></a>
+  <a href="https://github.com/sirnax/block-beaver/actions/workflows/codeql.yml"><img alt="CodeQL status" src="https://github.com/sirnax/block-beaver/actions/workflows/codeql.yml/badge.svg?branch=main"></a>
+  <a href="LICENSE"><img alt="Apache-2.0 license" src="https://img.shields.io/github/license/sirnax/block-beaver?color=28728d"></a>
+  <a href="#supported-environments"><img alt="Node.js 22, 24 and 26" src="https://img.shields.io/badge/Node.js-22%20%7C%2024%20%7C%2026-28728d"></a>
+  <a href="#supported-environments"><img alt="Linux, macOS and Windows" src="https://img.shields.io/badge/OS-Linux%20%7C%20macOS%20%7C%20Windows-28728d"></a>
   <a href="https://github.com/sirnax/block-beaver/issues"><img alt="Report an issue" src="https://img.shields.io/badge/issues-report%20a%20bug-d1985b"></a>
 </p>
 
 Block Beaver makes the shape of a codebase visible. Scan a JavaScript, TypeScript, or React repository, follow each observed relationship to its source line, and turn a candidate feature into a reviewed block proposal. It runs locally and keeps code changes inside bounded Git worktrees.
 
-**[Get started](#quick-start)** · **[How it works](#how-it-works)** · **[CLI and workflow](#propose-a-block)** · **[Plan](Block-Studio-PLAN.md)** · **[Contribute](CONTRIBUTING.md)**
+**[Project page](https://sirnax.github.io/block-beaver/)** · **[Get started](#quick-start)** · **[How it works](#how-it-works)** · **[CLI and workflow](#propose-a-block)** · **[Plan](Block-Studio-PLAN.md)** · **[Contribute](CONTRIBUTING.md)**
 
-> **Early development.** The graph is an aid to review, not a complete static analysis. The GitHub repository is private while public release preparation continues. Block Beaver is [Apache-2.0 licensed](LICENSE); `package.json` remains private to prevent accidental npm publication.
+> **v0.1.0 is an early release.** The graph is an aid to review, not a complete static analysis. Block Beaver is [Apache-2.0 licensed](LICENSE). The npm package is marked private, so install it from source.
+
+## Supported environments
+
+The CLI and local browser console run with **Node.js 22, 24, or 26**. CI checks Linux on all three versions and macOS and Windows on Node.js 24. The scanner reads JavaScript, JSX, TypeScript, and TSX, including MJS, CJS, MTS, and CTS files. Git is needed for roadmap checks and worktrees. This release is distributed as source through GitHub; it is not published to npm.
 
 ## Why use it?
 
@@ -142,4 +150,4 @@ The focused tests cover source evidence, React rendering links, candidate bounda
 
 Read [CONTRIBUTING.md](CONTRIBUTING.md) before opening a pull request. Use the issue templates for bugs and feature ideas. For a security issue, follow [SECURITY.md](SECURITY.md) and avoid public issues. [SUPPORT.md](SUPPORT.md) explains where to ask usage questions. Changes are recorded in [CHANGELOG.md](CHANGELOG.md).
 
-A standalone [project page](docs/index.html) is prepared for GitHub Pages and will remain unpublished until public access is intentional.
+The [project page](https://sirnax.github.io/block-beaver/) shows the visual concept and quick start. [Release notes](CHANGELOG.md) and the [release process](docs/RELEASING.md) describe each version.
