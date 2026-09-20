@@ -16,5 +16,5 @@
     "scan": "node bin/block-studio.mjs scan"
   },
   "engines": { "node": ">=22" },
-  "dependencies": { "typescript": "^5.9.3" }
+  "dependencies": { "typescript": "^7.0.2" }
 }
