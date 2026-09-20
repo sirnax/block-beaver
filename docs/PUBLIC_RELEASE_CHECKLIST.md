@@ -14,7 +14,7 @@ This records the v0.1.0 launch review. Check an item only after verifying the pu
 
 - [x] Run `npm ci --ignore-scripts` and `npm run check` on supported Node versions through GitHub Actions (Linux 22/24/26; macOS and Windows 24).
 - [x] Run the dependency audit online and resolve high or critical findings (production audit passed).
-- [ ] Smoke test the visual console and worker on a clean local fixture, including rejected foreign Host and Origin headers and missing worker tokens.
+- [x] Smoke test the visual console and worker: console root 200, foreign Host and Origin 403; worker scan 200 with a local test token, missing token 401, foreign Origin 403.
 - [x] Review verification command execution and agent adapter trust instructions in `SECURITY.md`.
 
 ## GitHub configuration
