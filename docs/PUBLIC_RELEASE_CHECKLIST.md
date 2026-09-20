@@ -19,6 +19,6 @@ This is the review gate before changing repository visibility or advertising a f
 
 ## GitHub configuration
 
-- [ ] Apply [GitHub setup](GITHUB_SETUP.md), including dependency alerts, private vulnerability reporting, and an active `master` ruleset.
+- [ ] Apply [GitHub setup](GITHUB_SETUP.md), including dependency alerts, private vulnerability reporting, and an active `main` ruleset.
 - [ ] Confirm required checks and one outside contributor pull request path work.
 - [ ] Decide and record the first release version, tag, and known limitations.

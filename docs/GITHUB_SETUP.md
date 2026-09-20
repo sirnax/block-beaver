@@ -1,6 +1,6 @@
 # GitHub repository setup
 
-These settings live on GitHub and cannot be enforced by files in this repository alone. Apply them to `sirnax/block-bot-dev` before making it public. Keep the current default branch `master` unless a branch rename is deliberately coordinated with CI and branch rules.
+These settings live on GitHub and cannot be enforced by files in this repository alone. Apply them to `sirnax/block-bot-dev` before making it public. The default branch is `main`.
 
 ## General
 
@@ -16,9 +16,9 @@ These settings live on GitHub and cannot be enforced by files in this repository
 3. Confirm the private vulnerability link in the issue template works for a non-maintainer before changing visibility.
 4. Review the first full CI run. The required status checks below must have run at least once before they can be selected in a ruleset.
 
-## Protect `master`
+## Protect `main`
 
-Create a branch ruleset targeting `master`, with no routine bypass actors. Enable:
+Create a branch ruleset targeting `main`, with no routine bypass actors. Enable:
 
 - Require a pull request before merging, with at least one approval and dismissal of stale approvals after new commits.
 - Require conversation resolution and status checks before merging. Require these exact CI checks: `Check (Node 22)`, `Check (Node 24)`, `Check (Node 26)`, and `Dependency audit`.
