@@ -1,6 +1,6 @@
 # Contributing to Block Beaver
 
-Thanks for helping improve Block Beaver. The project is early and the [plan](Block-Studio-PLAN.md) describes its intended boundaries. Please open an issue before a large change so the approach can be discussed.
+Thanks for helping improve Block Beaver. The project is early and the [plan](docs/tasks/block-studio.md) describes its intended boundaries. Please open an issue before a large change so the approach can be discussed.
 
 ## Set up
 
