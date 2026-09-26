@@ -102,6 +102,12 @@ async function hashWorktreeFile(worktree, path) {
     return digest.digest('hex');
   } finally { await handle.close(); }
 }
+async function assertSourceMatchesBase(root, baseCommit, path) {
+  const source = inside(root, path);
+  const { stdout: sourceHash } = await exec('git', ['-C', root, 'hash-object', `--path=${path}`, '--', source]);
+  const { stdout: baseHash } = await exec('git', ['-C', root, 'rev-parse', '--verify', `${baseCommit}:${path}`]);
+  if (sourceHash.trim() !== baseHash.trim()) throw new Error(`Source file differs from the roadmap base commit: ${path}`);
+}
 async function bootstrapLegacyWorktree(worktree, snapshot, proposal, manifestPath) {
   const patches = proposal.patches || [];
   const allowed = new Set([manifestPath, ...patches.map((patch) => patch.path)]);
@@ -153,15 +159,20 @@ async function prepareWorktree(root, roadmapId, sliceId, proposal, roadmap, prev
   assertAllowedChanges(before, allowedBefore, { allowMissingManifest: manifestPath });
   if (previousEvidence && !compareWorktreeSnapshots(previousEvidence, before).equal) throw new Error('Worktree changed since the previous check attempt. Restore it before retrying.');
   const previousEntry = (path) => previousEvidence?.files.find((file) => file.path === path && file.type === 'file');
-  const manifestTarget = await safeWorktreeTarget(worktree, manifestPath, !before.files.some((file) => file.path === manifestPath && file.type !== 'deleted'));
-  await writeWorktreeFile(worktree, manifestTarget, JSON.stringify(proposal.manifest, null, 2) + '\n', { create: !previousEntry(manifestPath), expectedHash: previousEntry(manifestPath)?.sha256 });
+  const manifestExists = before.files.some((file) => file.path === manifestPath && file.type !== 'deleted');
+  if (manifestExists && !previousEntry(manifestPath)) throw new Error('Worktree manifest exists without prior check evidence. Restore it before retrying.');
+  const manifestTarget = await safeWorktreeTarget(worktree, manifestPath, !manifestExists);
+  await writeWorktreeFile(worktree, manifestTarget, JSON.stringify(proposal.manifest, null, 2) + '\n', { create: !manifestExists, expectedHash: previousEntry(manifestPath)?.sha256 });
   for (const patch of proposal.patches || []) {
     const existsInWorktree = before.files.some((file) => file.path === patch.path && file.type !== 'deleted');
     if (patchOp(patch) === 'create' && existsInWorktree && !previousEntry(patch.path)) {
       throw new Error(`Create target appeared in worktree without passing check evidence: ${patch.path}`);
     }
     const target = await safeWorktreeTarget(worktree, patch.path, patchOp(patch) === 'create' && !existsInWorktree);
-    await writeWorktreeFile(worktree, target, patch.content, { create: patchOp(patch) === 'create' && !existsInWorktree, expectedHash: previousEntry(patch.path)?.sha256 || (patchOp(patch) === 'replace' ? patch.baseHash : null) });
+    if (patchOp(patch) === 'replace' && !previousEntry(patch.path)) await assertSourceMatchesBase(root, baseCommit, patch.path);
+    // Git may check out CRLF bytes from an LF blob. The clean worktree snapshot and
+    // source blob check establish the first preimage; retries use the saved raw hash.
+    await writeWorktreeFile(worktree, target, patch.content, { create: patchOp(patch) === 'create' && !existsInWorktree, expectedHash: previousEntry(patch.path)?.sha256 });
   }
   return { worktree, baseCommit, manifestPath };
 }
