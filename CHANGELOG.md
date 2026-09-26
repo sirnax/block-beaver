@@ -4,6 +4,10 @@ All notable user visible changes are recorded here. Releases follow semantic ver
 
 ## Unreleased
 
+- Support explicitly scoped file creation in roadmaps and agent requests, with safe `op: "create"` patches alongside existing replacements.
+- Bind review and approval to the complete verified worktree snapshot, including declared generated files and the `.blocks` manifest; reject out-of-scope or post-check changes.
+- Keep repair within the same implementation paths and patch operations while allowing content fixes.
+
 ## 0.1.1 — 2026-09-20
 
 - Remove a separate file metadata check before reading local console assets, closing the file system race reported by CodeQL.
