@@ -265,7 +265,7 @@ test('review exposes and approval rejects changes made after a passing check', a
     ['tracked file outside scope', async (worktree) => writeFile(join(worktree, 'README.md'), 'late\n')],
     ['replacement content', async (worktree) => writeFile(join(worktree, 'src/consumer.ts'), 'export const value = 9;\n')],
     ['created content', async (worktree) => writeFile(join(worktree, 'src/contracts/new.json'), '{}\n')],
-    ['created file mode', async (worktree) => chmod(join(worktree, 'src/selectors/new.ts'), 0o755)],
+    ...(process.platform === 'win32' ? [] : [['created file mode', async (worktree) => chmod(join(worktree, 'src/selectors/new.ts'), 0o755)]]),
     ['created file symlink', async (worktree) => {
       await rm(join(worktree, 'src/contracts/new.json'));
       await symlink('../consumer.ts', join(worktree, 'src/contracts/new.json'));

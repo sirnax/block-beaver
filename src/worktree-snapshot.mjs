@@ -2,12 +2,13 @@ import { createHash } from 'node:crypto';
 import { execFile } from 'node:child_process';
 import { constants } from 'node:fs';
 import { lstat, open, readlink, realpath } from 'node:fs/promises';
-import { isAbsolute, join, relative, resolve, sep } from 'node:path';
+import { dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { promisify } from 'node:util';
 
 const exec = promisify(execFile);
 const decodePath = new TextDecoder('utf-8', { fatal: true });
 const sha256 = (value) => createHash('sha256').update(value).digest('hex');
+const repoPath = (path) => path.split(sep).join('/');
 
 function confinedPath(root, path) {
   if (typeof path !== 'string' || !path || path.includes('\0')) throw new Error('Snapshot path must be a nonempty string.');
@@ -15,12 +16,12 @@ function confinedPath(root, path) {
   const absolute = resolve(root, path);
   const name = relative(root, absolute);
   if (!name || name === '..' || name.startsWith(`..${sep}`) || isAbsolute(name)) throw new Error(`Snapshot path escapes the worktree: ${path}`);
-  return { absolute, name };
+  return { absolute, name: repoPath(name) };
 }
 
 async function assertSafeParents(root, name) {
   let current = root;
-  for (const part of name.split(sep).slice(0, -1)) {
+  for (const part of name.split('/').slice(0, -1)) {
     current = join(current, part);
     let info;
     try { info = await lstat(current); }
@@ -31,27 +32,36 @@ async function assertSafeParents(root, name) {
 }
 
 async function entryFor(root, name) {
-  const { absolute } = confinedPath(root, name);
-  await assertSafeParents(root, name);
-  let info;
-  try { info = await lstat(absolute); }
+  const { absolute, name: normalized } = confinedPath(root, name);
+  await assertSafeParents(root, normalized);
+  let handle;
+  try { handle = await open(absolute, constants.O_RDONLY | constants.O_NOFOLLOW); }
   catch (error) {
-    if (error.code === 'ENOENT') return { path: name, type: 'deleted', mode: null, sha256: null };
+    // O_NOFOLLOW rejects a symlink on POSIX; Windows may report ENOENT for a broken link.
+    let info;
+    try { info = await lstat(absolute); }
+    catch (lookupError) {
+      if (lookupError.code === 'ENOENT') return { path: normalized, type: 'deleted', mode: null, sha256: null };
+      throw lookupError;
+    }
+    if (info.isSymbolicLink()) {
+      const target = await readlink(absolute, { encoding: 'buffer' });
+      return { path: normalized, type: 'symlink', mode: info.mode.toString(8), sha256: sha256(target) };
+    }
     throw error;
   }
-  if (info.isSymbolicLink()) {
-    const target = await readlink(absolute, { encoding: 'buffer' });
-    return { path: name, type: 'symlink', mode: info.mode.toString(8), sha256: sha256(target) };
-  }
-  if (!info.isFile()) throw new Error(`Snapshot path is not a regular file or symlink: ${name}`);
-  // O_NOFOLLOW prevents a changed leaf from redirecting the read after lstat.
-  const handle = await open(absolute, constants.O_RDONLY | constants.O_NOFOLLOW);
   try {
     const opened = await handle.stat();
-    if (!opened.isFile()) throw new Error(`Snapshot path changed type while reading: ${name}`);
+    const current = await lstat(absolute);
+    if (current.isSymbolicLink()) {
+      const target = await readlink(absolute, { encoding: 'buffer' });
+      return { path: normalized, type: 'symlink', mode: current.mode.toString(8), sha256: sha256(target) };
+    }
+    if (!opened.isFile() || !current.isFile() || opened.dev !== current.dev || opened.ino !== current.ino ||
+        await realpath(dirname(absolute)) !== dirname(absolute)) throw new Error(`Snapshot path changed type while reading: ${normalized}`);
     const digest = createHash('sha256');
     for await (const chunk of handle.createReadStream({ autoClose: false })) digest.update(chunk);
-    return { path: name, type: 'file', mode: opened.mode.toString(8), sha256: digest.digest('hex') };
+    return { path: normalized, type: 'file', mode: opened.mode.toString(8), sha256: digest.digest('hex') };
   } finally { await handle.close(); }
 }
 
@@ -63,12 +73,12 @@ function statusPaths(output) {
     const record = output.subarray(at, end);
     if (record.length < 4 || record[2] !== 32) throw new Error('Malformed Git status entry.');
     const code = record.toString('ascii', 0, 2);
-    paths.add(decodePath.decode(record.subarray(3)));
+    paths.add(repoPath(decodePath.decode(record.subarray(3))));
     at = end + 1;
     if (code.includes('R') || code.includes('C')) {
       const priorEnd = output.indexOf(0, at);
       if (priorEnd < 0) throw new Error('Malformed null-delimited Git rename.');
-      paths.add(decodePath.decode(output.subarray(at, priorEnd)));
+      paths.add(repoPath(decodePath.decode(output.subarray(at, priorEnd))));
       at = priorEnd + 1;
     }
   }
@@ -80,7 +90,7 @@ function nullDelimitedPaths(output) {
   for (let at = 0; at < output.length;) {
     const end = output.indexOf(0, at);
     if (end < 0) throw new Error('Malformed null-delimited Git path list.');
-    paths.add(decodePath.decode(output.subarray(at, end)));
+    paths.add(repoPath(decodePath.decode(output.subarray(at, end))));
     at = end + 1;
   }
   return paths;

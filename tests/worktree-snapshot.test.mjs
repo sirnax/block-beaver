@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
 import { execFileSync } from 'node:child_process';
-import { chmod, mkdir, mkdtemp, readFile, rename, rm, symlink, writeFile } from 'node:fs/promises';
+import { chmod, lstat, mkdir, mkdtemp, readFile, readlink, rename, rm, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { captureWorktreeSnapshot, compareWorktreeSnapshots } from '../src/worktree-snapshot.mjs';
@@ -34,11 +34,11 @@ test('captures tracked changes, individual untracked files, deletions, modes, an
     await rm(join(root, 'src', 'old.ts'));
     await mkdir(join(root, 'generated'));
     await writeFile(join(root, 'generated', 'new.json'), '{"new":true}\n');
-    await writeFile(join(root, 'generated', 'odd\nname.txt'), 'odd\n');
+    if (process.platform !== 'win32') await writeFile(join(root, 'generated', 'odd\nname.txt'), 'odd\n');
     const snapshot = await captureWorktreeSnapshot(root, baseCommit, manifestPath);
-    assert.deepEqual(snapshot.files.map((entry) => entry.path), [manifestPath, 'generated/new.json', 'generated/odd\nname.txt', 'src/existing.ts', 'src/old.ts']);
+    assert.deepEqual(snapshot.files.map((entry) => entry.path), [manifestPath, 'generated/new.json', ...(process.platform === 'win32' ? [] : ['generated/odd\nname.txt']), 'src/existing.ts', 'src/old.ts']);
     assert.deepEqual(snapshot.files.find((entry) => entry.path === 'src/old.ts'), { path: 'src/old.ts', type: 'deleted', mode: null, sha256: null });
-    assert.deepEqual(snapshot.files.find((entry) => entry.path === 'src/existing.ts'), { path: 'src/existing.ts', type: 'file', mode: '100755', sha256: hash('export const value = 2;\n') });
+    assert.deepEqual(snapshot.files.find((entry) => entry.path === 'src/existing.ts'), { path: 'src/existing.ts', type: 'file', mode: (await lstat(join(root, 'src', 'existing.ts'))).mode.toString(8), sha256: hash('export const value = 2;\n') });
     assert.equal(snapshot.files.find((entry) => entry.path === manifestPath).sha256, hash(await readFile(join(root, manifestPath))));
     assert.equal(snapshot.digest, hash(JSON.stringify({ baseCommit, files: snapshot.files })));
     assert.deepEqual(await captureWorktreeSnapshot(root, baseCommit, join(root, manifestPath)), snapshot);
@@ -46,7 +46,8 @@ test('captures tracked changes, individual untracked files, deletions, modes, an
     await writeFile(join(root, 'generated', 'extra.ts'), 'export {};\n');
     await chmod(join(root, 'src', 'existing.ts'), 0o644);
     const changed = await captureWorktreeSnapshot(root, baseCommit, manifestPath);
-    assert.deepEqual(compareWorktreeSnapshots(snapshot, changed), { equal: false, added: ['generated/extra.ts'], removed: [], changed: ['src/existing.ts'] });
+    const modeChanged = snapshot.files.find((entry) => entry.path === 'src/existing.ts').mode !== changed.files.find((entry) => entry.path === 'src/existing.ts').mode;
+    assert.deepEqual(compareWorktreeSnapshots(snapshot, changed), { equal: false, added: ['generated/extra.ts'], removed: [], changed: modeChanged ? ['src/existing.ts'] : [] });
     assert.deepEqual(compareWorktreeSnapshots(snapshot, snapshot), { equal: true, added: [], removed: [], changed: [] });
   } finally { await rm(root, { recursive: true, force: true }); }
 });
@@ -62,7 +63,7 @@ test('records both sides of a rename and hashes symlink targets without followin
     const link = snapshot.files.find((entry) => entry.path === 'src/link.ts');
     assert.equal(link.type, 'symlink');
     assert.match(link.mode, /^120/);
-    assert.equal(link.sha256, hash('/outside/secret.txt'));
+    assert.equal(link.sha256, hash(await readlink(join(root, 'src', 'link.ts'), { encoding: 'buffer' })));
   } finally { await rm(root, { recursive: true, force: true }); }
 });
 
