@@ -79,17 +79,17 @@ The scanner host accepts language plugins with `accepts`, `parse`, `declarations
 A target repository opts in when you create a roadmap. The scope is an explicit list of scanned source files. Block Beaver writes its roadmap, proposals, checks and ordered event log to that repository's `.blocks/roadmaps/` directory. It never writes to TeaCake during the scans described above.
 
 ```sh
-node bin/block-beaver.mjs plan account-card --root /path/to/project --scope src/account/Card.tsx,src/account/data.ts
+node bin/block-beaver.mjs plan account-card --root /path/to/project --scope src/account/Card.tsx,src/account/data.ts --create src/account/card.json
 node bin/block-beaver.mjs propose account-card /path/to/proposal.json --root /path/to/project
 node bin/block-beaver.mjs check account-card account-card --root /path/to/project
 node bin/block-beaver.mjs review account-card account-card --root /path/to/project
 node bin/block-beaver.mjs approve account-card account-card --root /path/to/project
-# After a failed check, repair within the same file boundary, then check again:
+# After a failed check, repair within the same path and operation boundary, then check again:
 node bin/block-beaver.mjs repair account-card account-card /path/to/revised-proposal.json --root /path/to/project
 node bin/block-beaver.mjs resume account-card --root /path/to/project
 ```
 
-A proposal JSON may contain the fields below. `patches` are optional, complete replacement file contents. Each patch's `baseHash` must match the hash from `scan --full true` for that source path.
+A roadmap's `scope` lists existing scanned source files; optional `createScope` lists paths that may be added. The CLI accepts these new paths through `plan --create path1,path2`. Existing replacements use complete file contents and require a `baseHash` matching `scan --full true`. New files use an explicit `op: "create"` patch with complete content, and can only target a declared, currently absent path. Creation supports JSON and the JS/TS/React formats read by the scanner; JSON is parsed as JSON and source files are parsed by TypeScript.
 
 ```json
 {
@@ -110,15 +110,17 @@ A proposal JSON may contain the fields below. `patches` are optional, complete r
 }
 ```
 
-`propose` validates the boundary and stores the proposal. `check` verifies the contract, source fingerprint, patch hashes, and patch syntax, then creates an isolated Git branch and worktree under `.blocks/worktrees/`. It applies the proposed files there and runs the manifest's verification commands. `review` shows the proposed manifest and before/after content. `approve` records the decision only after the latest checks passed and the worktree still matches them. The original checkout stays untouched. `reject ... --reason TEXT` records a rejection. `resume` rebuilds slice status from `events.jsonl`. A failed check or changed source cannot be approved.
+For a roadmap with `createScope: ["src/account/card.json"]`, a proposal may include `{ "op": "create", "path": "src/account/card.json", "content": "{\"id\":\"account-card\"}\n" }` in `patches`. Include every generated file that should be reviewed in `createScope` (or existing `scope` when it already exists); undeclared generated changes fail the check. A path declared in `manifest.files` must have its create patch. Paths must be safe, unique, and absent when planned and checked; if a file appears after planning, check reports drift rather than overwriting it.
 
-`repair` replaces a pending or failed proposal but requires the same slice ID, implementation files, and patch paths. It records a new event and resets the slice to proposed. A repair cannot silently widen its scope.
+`propose` validates the boundary and stores the proposal. `check` verifies the contract, source fingerprint, patch hashes, and patch syntax, then creates an isolated Git branch and worktree under `.blocks/worktrees/`. It applies the proposed files there and runs the manifest's verification commands. After verification it captures the complete worktree change set: tracked and nonignored untracked files, plus the `.blocks` manifest even when ignored. Undeclared changes fail the check. `review` shows the complete change set and before/after content (or a binary summary). `approve` records the decision only if the worktree still matches the latest passing snapshot; any later file, mode, or symlink change blocks approval. The original checkout stays untouched. `reject ... --reason TEXT` records a rejection. `resume` rebuilds slice status from `events.jsonl`. A failed check or changed source cannot be approved.
+
+`repair` replaces a pending or failed proposal but requires the same slice ID, implementation files, and path-and-operation set. It records a new event and resets the slice to proposed. A repair may revise content, but cannot silently add, remove, or change a creation or replacement operation.
 
 The console can preview a candidate block from a folder and download its JSON proposal. For local declared blocks, it can also preview a new dependency connection with before/after manifests and download that as a proposal. It plays the recorded roadmap ledger and shows the files involved in each event. Browser actions never apply patches.
 
 ## Agent and worker interfaces
 
-An agent adapter is any local executable that accepts one JSON request on stdin and returns one JSON response on stdout. Run it with `node bin/block-beaver.mjs agent --exec /path/to/adapter --scope src/one.ts,src/two.ts --root /path/to/project`. The request includes protocol version 1, the bounded source contents and hashes, graph nodes and edges for that scope, and the scan fingerprint. The response contains `{"protocol":1,"proposals":[...]}`. Block Beaver validates each proposed boundary and patch path before returning it; `agent` does not save or apply anything. A proposal is passed through the ordinary `propose`, `check`, `review`, and `approve` operations.
+An agent adapter is any local executable that accepts one JSON request on stdin and returns one JSON response on stdout. Run it with `node bin/block-beaver.mjs agent --exec /path/to/adapter --scope src/one.ts,src/two.ts --create src/new-contract.json --root /path/to/project`. The request includes protocol version 1, the bounded source contents and hashes, `createScope`, graph nodes and edges for the existing scope, and the scan fingerprint. Worker `plan` requests can likewise provide `createScope`. The response contains `{"protocol":1,"proposals":[...]}`. Block Beaver validates each proposed boundary and patch path before returning it; `agent` does not save or apply anything. A proposal is passed through the ordinary `propose`, `check`, `review`, and `approve` operations.
 
 For a separate code-changing process, start the authenticated worker with an explicit repository path and a strong token:
 

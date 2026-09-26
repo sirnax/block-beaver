@@ -55,3 +55,48 @@ test('roadmap replays approvals and rejects stale source', async () => {
     assert.equal((await approve(root, 'failing-feature', 'failing', changedGraph)).status, 'approved');
   } finally { await rm(root, { recursive: true, force: true }); }
 });
+
+test('legacy passing worktree gains a snapshot only when its files still match the saved proposal', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'block-beaver-legacy-flow-'));
+  try {
+    await mkdir(join(root, 'src'));
+    await writeFile(join(root, '.gitignore'), '.blocks/\n');
+    await writeFile(join(root, 'src', 'feature.ts'), 'export const feature = 1;\n');
+    execFileSync('git', ['init', '-q', root]);
+    execFileSync('git', ['-C', root, 'add', '.']);
+    execFileSync('git', ['-C', root, '-c', 'user.name=Test', '-c', 'user.email=test@example.com', 'commit', '-qm', 'initial']);
+    const graph = await scanRepository(root);
+    await createRoadmap(root, 'legacy-feature', graph, { scope: ['src/feature.ts'] });
+    const candidate = makeProposal({ id: 'legacy', name: 'Legacy', description: 'Existing worktree.', rationale: 'One feature.', files: ['src/feature.ts'], patches: [{ path: 'src/feature.ts', baseHash: graph.hashes['src/feature.ts'], content: 'export const feature = 2;\n' }] }, graph);
+    await propose(root, 'legacy-feature', candidate, graph);
+    const first = await checkSlice(root, 'legacy-feature', 'legacy', graph);
+    assert.equal(first.pass, true);
+    const roadmapDir = join(root, '.blocks', 'roadmaps', 'legacy-feature');
+    const ledgerPath = join(roadmapDir, 'events.jsonl');
+    const ledger = (await readFile(ledgerPath, 'utf8')).trim().split('\n').map(JSON.parse);
+    for (const entry of ledger) if (entry.type === 'checks-passed') {
+      delete entry.result.snapshot;
+      delete entry.result.attemptSnapshot;
+      delete entry.result.proposalHash;
+    }
+    await writeFile(ledgerPath, ledger.map((entry) => JSON.stringify(entry)).join('\n') + '\n');
+    const oldRoadmapPath = join(roadmapDir, 'roadmap.json');
+    const oldRoadmap = JSON.parse(await readFile(oldRoadmapPath, 'utf8'));
+    delete oldRoadmap.baseCommit;
+    delete oldRoadmap.createScope;
+    await writeFile(oldRoadmapPath, JSON.stringify(oldRoadmap));
+    execFileSync('git', ['-C', first.worktree, 'add', 'src/feature.ts']);
+    execFileSync('git', ['-C', first.worktree, '-c', 'user.name=Test', '-c', 'user.email=test@example.com', 'commit', '-qm', 'moved legacy head']);
+    const moved = await checkSlice(root, 'legacy-feature', 'legacy', graph);
+    assert.equal(moved.pass, false);
+    assert.match(moved.verification.at(-1).output, /Legacy worktree HEAD differs/);
+    execFileSync('git', ['-C', first.worktree, 'reset', '--hard', 'HEAD~1']);
+    await writeFile(join(first.worktree, 'src', 'feature.ts'), 'export const feature = 99;\n');
+    const altered = await checkSlice(root, 'legacy-feature', 'legacy', graph);
+    assert.equal(altered.pass, false);
+    assert.match(altered.verification.at(-1).output, /Legacy worktree differs/);
+    await writeFile(join(first.worktree, 'src', 'feature.ts'), 'export const feature = 2;\n');
+    assert.equal((await checkSlice(root, 'legacy-feature', 'legacy', graph)).pass, true);
+    assert.equal((await approve(root, 'legacy-feature', 'legacy', graph)).status, 'approved');
+  } finally { await rm(root, { recursive: true, force: true }); }
+});

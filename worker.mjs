@@ -35,7 +35,7 @@ export async function dispatch(action, input = {}) {
   if (action === 'inspect') return inspect(current, input.id);
   if (action === 'search') return search(current, input.query, { kind: input.kind, limit: input.limit });
   if (action === 'suggest') return suggestBoundaries(current);
-  if (action === 'plan') return createRoadmap(root, input.roadmapId, current, { title: input.title, scope: input.scope });
+  if (action === 'plan') return createRoadmap(root, input.roadmapId, current, { title: input.title, scope: input.scope, createScope: input.createScope });
   if (action === 'propose') return propose(root, input.roadmapId, input.proposal?.manifest ? input.proposal : makeProposal(input.proposal || {}, current), current);
   if (action === 'repair') return repair(root, input.roadmapId, input.sliceId, input.proposal?.manifest ? input.proposal : makeProposal(input.proposal || {}, current), current);
   if (action === 'check') return checkSlice(root, input.roadmapId, input.sliceId, current);
