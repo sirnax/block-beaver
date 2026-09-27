@@ -27,6 +27,10 @@ Luna medium is the default for small, clear non-code tasks. Sol medium is the de
 
 ## Repository work
 
+- Use [Working in blocks](docs/BLOCK_WORKFLOW.md) as the standing reference for feature boundaries, implementation, verification, and review. Record the purpose, owned files, connections, and acceptance checks for meaningful changes in the task document or pull request before editing; update that record if the boundary changes.
+- Changes to the user workflow must also update `templates/block-workflow.md` and the installed editor guidance in `src/project-integration.mjs`. Verify onboarding and view regeneration in a disposable target repository; instructions in this development repository alone do not integrate other projects.
+- For a change that adds or changes a declared block, update the authoritative manifest or registry in the target repository as part of the reviewed slice. After integration, rescan the target and verify the block appears with the right files and connections in the local console's Blocks view. Do not hard-code individual blocks into HTML.
+- When a change affects how blocks are presented, update the local console's `index.html`, `src/app.js`, and `styles.css` as needed, then verify the Blocks view with a representative manifest. `docs/index.html` is the public landing page, not the interactive Blocks view. Record in the review which view was checked and what appeared.
 - Read the relevant code and task document before editing. Keep changes within the requested scope and preserve existing public behavior unless the task requires a change.
 - Use disposable repositories or fixtures for workflow experiments. Do not put source or machine-specific absolute paths from another project into Block Beaver.
 - Have one agent integrate shared-file changes and inspect the resulting diff. Run the checks needed for the change and report any checks that could not be completed.

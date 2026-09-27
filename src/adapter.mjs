@@ -5,6 +5,21 @@ import { promisify } from 'node:util';
 import { createHash } from 'node:crypto';
 const exec = promisify(execFile);
 
+function attachLocalDependencies(graph) {
+  const ids = new Set(graph.nodes.map((node) => node.id));
+  const linked = new Set(graph.edges.map((edge) => `${edge.from}\0${edge.to}\0${edge.kind}`));
+  for (const node of graph.nodes.filter((entry) => entry.kind === 'block' && entry.family === 'local')) {
+    for (const dependency of Array.isArray(node.manifest.dependencies) ? node.manifest.dependencies : []) {
+      const key = `${node.id}\0${dependency}\0depends-on`;
+      if (ids.has(dependency) && !linked.has(key)) {
+        graph.edges.push({ from: node.id, to: dependency, kind: 'depends-on', evidence: { file: node.path, line: 1, column: 1, text: dependency } });
+        linked.add(key);
+      }
+    }
+  }
+  graph.summary.relationships = graph.edges.length;
+}
+
 /** Delegate read-only developer queries to TeaCake's own kit. */
 export async function runTeacakeKit(root, command, input = {}) {
   if (!['list_blocks', 'describe_family', 'validate_block', 'compose_blocks'].includes(command)) throw new Error('This adapter exposes only read-only TeaCake kit commands.');
@@ -29,8 +44,8 @@ export async function attachLocalRegistry(graph) {
       if (graph.nodes.some((node) => node.id === `file:${file}`)) graph.edges.push({ from: id, to: `file:${file}`, kind: 'implemented-by', evidence: { file: `.blocks/manifests/${name}`, line: 1, column: 1, text: file } });
     }
   }
+  attachLocalDependencies(graph);
   graph.summary.blocks = graph.nodes.filter((node) => node.kind === 'block').length;
-  graph.summary.relationships = graph.edges.length;
   if (manifestHashes.length) graph.fingerprint = createHash('sha256').update(JSON.stringify([graph.fingerprint, manifestHashes])).digest('hex').slice(0, 16);
   return graph;
 }
@@ -68,7 +83,7 @@ export async function attachTeacakeRegistry(graph) {
     }
   } catch { /* The manifest index alone is enough. */ }
   graph.summary.blocks = graph.nodes.filter((node) => node.kind === 'block').length;
-  graph.summary.relationships = graph.edges.length;
+  attachLocalDependencies(graph);
   graph.adapter = 'teacake';
   return graph;
 }

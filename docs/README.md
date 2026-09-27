@@ -4,6 +4,7 @@ This directory contains the project site, repository operations guides, and task
 
 ## Repository guides
 
+- [Working in blocks](BLOCK_WORKFLOW.md) is the reference for using Block Beaver and keeping AI editor changes aligned with block boundaries and the local Blocks view.
 - [GitHub repository setup](GITHUB_SETUP.md) covers repository settings, security, branch protection, and Pages configuration.
 - [Public release checklist](PUBLIC_RELEASE_CHECKLIST.md) records the v0.1.0 launch review and remaining follow-ups.
 - [Release process](RELEASING.md) describes version updates, tags, and GitHub releases.

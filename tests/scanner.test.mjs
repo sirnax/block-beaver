@@ -37,6 +37,11 @@ test('scanner maps TypeScript, React and import relationships to source evidence
     assert.equal(connection.check.valid, true);
     assert.deepEqual(connection.manifest.dependencies, ['block:local:math']);
     assert.equal(connection.manifest.version, 2);
+    await writeFile(join(root, '.blocks', 'manifests', 'card.json'), JSON.stringify(connection.manifest));
+    const updated = await attachLocalRegistry(await scanRepository(root));
+    const dependency = updated.edges.find((edge) => edge.from === 'block:local:card' && edge.to === 'block:local:math');
+    assert.equal(dependency.kind, 'depends-on');
+    assert.equal(dependency.evidence.file, '.blocks/manifests/card.json');
     const executable = join(root, 'adapter.cjs');
     await writeFile(executable, '#!/usr/bin/env node\nlet s="";process.stdin.on("data",c=>s+=c);process.stdin.on("end",()=>{const x=JSON.parse(s);process.stdout.write(JSON.stringify({protocol:1,proposals:[{manifest:{schemaVersion:1,id:"new-feature",version:1,name:"New feature",description:"A feature",rationale:"One cohesive feature",files:x.scope,dependencies:[],verification:[]},patches:[]}]}))})\n');
     await chmod(executable, 0o755);
