@@ -4,6 +4,8 @@ All notable user visible changes are recorded here. Releases follow semantic ver
 
 ## Unreleased
 
+- Add one-command target-project integration with native editor instructions, a portable block workflow, generated HTML/JSON maps, and automatic refresh through `block-beaver start`. Add `init` and `update` for setup and offline regeneration.
+- Show declared local block dependencies as evidenced connections in the scanned graph and local Blocks view.
 - Support explicitly scoped file creation in roadmaps and agent requests, with safe `op: "create"` patches alongside existing replacements.
 - Bind review and approval to the complete verified worktree snapshot, including declared generated files and the `.blocks` manifest; reject out-of-scope or post-check changes.
 - Keep repair within the same implementation paths and patch operations while allowing content fixes.

@@ -7,6 +7,9 @@ import { inspect, search } from '../src/graph.mjs';
 import { suggestBoundaries, makeProposal } from '../src/contracts.mjs';
 import { createRoadmap, propose, repair, checkSlice, review, approve, reject, resume } from '../src/workflow.mjs';
 import { runAgentAdapter } from '../src/agent.mjs';
+import { initializeProject } from '../src/project-integration.mjs';
+import { updateProject } from '../src/block-map.mjs';
+import { watchProject } from '../src/project-watch.mjs';
 
 const [command, ...args] = process.argv.slice(2);
 const option = (name, fallback) => { const index = args.indexOf(`--${name}`); return index < 0 ? fallback : args[index + 1]; };
@@ -16,7 +19,29 @@ const print = (value) => process.stdout.write(JSON.stringify(value, null, 2) + '
 
 try {
   if (!command || command === 'help') {
+    process.stdout.write('Project integration\n  start [--root PATH] [--editor all|agents|claude|cursor|copilot] [--port 4175]\n  init [--root PATH] [--editor all|agents|claude|cursor|copilot]\n  update [--root PATH]\n\n');
     process.stdout.write('Block Beaver\n  scan [--root PATH] [--full true]\n  inspect ID [--root PATH]\n  search QUERY [--root PATH] [--kind KIND]\n  kit COMMAND INPUT.json [--root TEACAKE_PATH]\n  agent --exec PATH [--scope file1,file2] [--create new1,new2] [--root PATH]\n  plan ROADMAP_ID [--scope file1,file2] [--create new1,new2] [--root PATH] [--title TITLE]\n  propose ROADMAP_ID PROPOSAL.json [--root PATH]\n  repair ROADMAP_ID SLICE_ID PROPOSAL.json [--root PATH]\n  check ROADMAP_ID SLICE_ID [--root PATH]\n  review ROADMAP_ID SLICE_ID [--root PATH]\n  approve ROADMAP_ID SLICE_ID [--root PATH]\n  reject ROADMAP_ID SLICE_ID --reason TEXT [--root PATH]\n  resume ROADMAP_ID [--root PATH]\n');
+    process.exit(0);
+  }
+  if (command === 'init') { print(await initializeProject(root, { editor: option('editor', 'all') })); process.exit(0); }
+  if (command === 'update') {
+    const { graph, ...result } = await updateProject(root);
+    print({ ...result, summary: graph.summary });
+    process.exit(0);
+  }
+  if (command === 'start') {
+    const integration = await initializeProject(root, { editor: option('editor', 'all') });
+    const session = await watchProject(root, { port: Number(option('port', '4175')) });
+    print({ ...integration, url: session.url, message: 'Open this URL for the live block map. Keep this process running for automatic updates; Ctrl+C stops it.' });
+    await new Promise((done, fail) => {
+      const stop = () => {
+        process.removeListener('SIGINT', stop);
+        process.removeListener('SIGTERM', stop);
+        session.close().then(done, fail);
+      };
+      process.once('SIGINT', stop);
+      process.once('SIGTERM', stop);
+    });
     process.exit(0);
   }
   if (command === 'resume') { print(await resume(root, positional[0])); process.exit(0); }

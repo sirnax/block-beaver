@@ -2,6 +2,8 @@
 
 Thanks for helping improve Block Beaver. The project is early and the [plan](docs/tasks/block-studio.md) describes its intended boundaries. Please open an issue before a large change so the approach can be discussed.
 
+Use [Working in blocks](docs/BLOCK_WORKFLOW.md) to define a feature boundary and carry it through implementation, checks, and review.
+
 ## Set up
 
 1. Install Node.js 22 or newer and Git.
