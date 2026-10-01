@@ -168,9 +168,18 @@ Commit `.blocks/detection.json` too: it stores the last detected app entries so 
 edits can be recognized without replacing them. View module paths are tracked in
 `.blocks/view-exports.json`, which must travel with committed snapshots.
 Use `scan --strict` to fail on configuration or unresolved-import problems.
+Asset imports such as `reactflow/dist/style.css` resolve through `node_modules` and package
+`exports`; a missing one is reported with the `asset` category and counted in `missingAssets`.
 
 The generated map and console group folders under apps. App health opens a report of
 unresolved imports, unreachable files and tsconfig errors; cross-app links show evidence.
+
+### Enforcement levels
+
+`.blocks/config.json` sets `enforcement.receipts` to `required`, `optional` or `off`. New
+installs write `optional`: structural rules gate commits and unreviewed files are advisory.
+A missing key means `required`. Set `required` to demand review receipts or exceptions.
+The audit reports the active level, and the stricter of the base and tree values applies.
 
 For a build-time snapshot, run:
 
