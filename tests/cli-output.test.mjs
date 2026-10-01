@@ -17,7 +17,7 @@ function git(root, args) {
 // Commits a small project so audit has a base; callers add the files that make output large.
 async function fixture(t, prefix) {
   const root = await mkdtemp(join(tmpdir(), prefix));
-  t.after(() => rm(root, { recursive: true, force: true }));
+  t.after(() => rm(root, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 }));
   git(root, ['init', '-q']);
   git(root, ['config', 'user.email', 'test@example.invalid']);
   git(root, ['config', 'user.name', 'Test']);
@@ -29,7 +29,8 @@ async function fixture(t, prefix) {
   return root;
 }
 
-// Audit costs about 4ms per untracked file and emits about 250 bytes each, so 600 files clear the 64 KB pipe buffer by 2x.
+// Audit costs a few ms per untracked file (several times that on Windows) and emits about 235 bytes plus the path, so 250 files with
+// long names clear the 64 KB pipe buffer without risking the spawn timeout.
 async function writeMany(dir, count, name, content) {
   await mkdir(dir, { recursive: true });
   for (let start = 0; start < count; start += 200) {
@@ -47,7 +48,7 @@ function run(root, args) {
 
 test('audit JSON larger than the pipe buffer is not truncated', async (t) => {
   const root = await fixture(t, 'block-beaver-cli-output-audit-');
-  await writeMany(join(root, 'notes'), 600, (i) => `n-${i}.txt`, (i) => `note ${i}\n`);
+  await writeMany(join(root, 'notes'), 250, (i) => `${`n-${i}-`.padEnd(100, 'x')}.txt`, (i) => `note ${i}\n`);
   const result = run(root, ['audit']);
   assert.ok(result.stdout.length > PIPE_BUFFER, `fixture must exceed the pipe buffer, got ${result.stdout.length}`);
   assert.doesNotThrow(() => JSON.parse(result.stdout), 'audit stdout must be one complete JSON document');

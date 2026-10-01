@@ -6,7 +6,8 @@ import { execFileSync } from 'node:child_process';
 export async function installationFixture(t) {
   const container = await mkdtemp(join(tmpdir(), 'block-beaver-install-'));
   const root = join(container, 'host');
-  t.after(() => rm(container, { recursive: true, force: true }));
+  // Retries cover git's background maintenance still writing under .git/objects when a test ends.
+  t.after(() => rm(container, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 }));
   await mkdir(root);
   execFileSync('git', ['init', '-q', root]);
   await mkdir(join(root, 'src'));
