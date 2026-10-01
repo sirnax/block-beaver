@@ -21,7 +21,7 @@ These settings live on GitHub and cannot be enforced by files in this repository
 Create a branch ruleset targeting `main`, with no bypass actors. The versioned [ruleset payload](github-main-ruleset.json) records the intended settings. Enable:
 
 - Require a pull request before merging, with dismissal of stale approvals after new commits. The initial approval count is zero because `@sirnax` is the only collaborator; raise it to one when a second maintainer can review pull requests.
-- Require conversation resolution and status checks before merging. Require these exact CI checks: `Check (Node 22)`, `Check (Node 24)`, `Check (Node 26)`, `Platform (macos-latest)`, `Platform (windows-latest)`, `Dependency audit`, `Gitleaks`, and `Analyze (JavaScript and TypeScript)` after each has passed on public `main` and a pull request.
+- Require conversation resolution and status checks before merging. Require these exact CI checks: `Check (Node 22.18.0)`, `Check (Node 22)`, `Check (Node 24)`, `Check (Node 26)`, `Platform (macos-latest)`, `Platform (windows-latest)`, `Dependency audit`, `Gitleaks`, and `Analyze (JavaScript and TypeScript)` after each has passed on public `main` and a pull request.
 - Require branches to be up to date before merging, unless merge queue is configured. Block force pushes and deletions.
 - Apply rules to administrators as well. Keep the ruleset active and verify it against a test pull request.
 

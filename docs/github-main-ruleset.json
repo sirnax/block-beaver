@@ -28,6 +28,7 @@
       "parameters": {
         "strict_required_status_checks_policy": true,
         "required_status_checks": [
+          { "context": "Check (Node 22.18.0)" },
           { "context": "Check (Node 22)" },
           { "context": "Check (Node 24)" },
           { "context": "Check (Node 26)" },

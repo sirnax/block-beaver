@@ -1,8 +1,6 @@
 # Block Beaver v0.2 design: multi-app projects, install and upgrades, families
 
-**Status:** design agreed with the owner on 2026-10-01. Not yet planned or implemented.
-Each sub-project below gets its own implementation plan, in order: A, then B, then C.
-E is a direction for later versions, not a design.
+**Status:** design agreed with the owner on 2026-10-01. A–C are implemented and verified locally at 0.4.0; all eight live-editor release-rubric cases passed. See `ROADMAP.md` and the [verification record](2026-10-01-block-beaver-v0.4-verification.md) for evidence and remaining external release checks. Nothing is published. E is a direction for later versions, not a design.
 
 ## Why
 
@@ -242,7 +240,7 @@ Dependabot or Renovate propose upgrades.
    - `"enforcement": { "agents": "guide", "gate": "audit" }`. The `agents` setting can
      be `"guide"` or `"block"`.
 3. **Agents.** For each detected agent, or those named with
-   `--agents claude,codex,cursor,copilot`:
+   `--agents claude, codex, cursor, copilot`:
    - add a marked section to `CLAUDE.md`, `AGENTS.md`, the Cursor rule and the Copilot
      instructions;
    - install a **skill** at `.claude/skills/block-beaver/`, plus the Codex equivalent;

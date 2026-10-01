@@ -1,10 +1,10 @@
-import { readFile } from 'node:fs/promises';
 import { readProjectFile, writeProjectFiles } from './project-files.mjs';
 import { updateProject } from './block-map.mjs';
+import { installCompliance } from './compliance-setup.mjs';
+import { readInstallTemplates, renderAgentInstructions } from './install-templates.mjs';
 
 const begin = '<!-- block-beaver:start -->';
 const end = '<!-- block-beaver:end -->';
-const instruction = `## Block Beaver\n\nRead and follow the project workflow at .blocks/WORKFLOW.md before changing code.\n- Read the existing block registry and fresh source graph; define the feature's files, interfaces, dependencies, and checks before implementing it.\n- Keep block manifests aligned with implementation and use the bounded plan/propose/check/review workflow. Existing project registries remain authoritative.\n- After source or manifest changes, run \`block-beaver update --root .\` to regenerate .blocks/view/index.html and graph.json. Do not hand-edit generated views.\n- Run \`block-beaver start --root .\` for a live map that refreshes during development. Report block changes and verification at completion.\n`;
 const cursorHeader = '---\ndescription: Build this project in blocks and keep its block map current\nalwaysApply: true\n---\n\n';
 const editorFiles = { agents: 'AGENTS.md', claude: 'CLAUDE.md', cursor: '.cursor/rules/block-beaver.mdc', copilot: '.github/copilot-instructions.md' };
 
@@ -24,11 +24,11 @@ function managedSection(before, body, path, prefix = '') {
 export async function initializeProject(root, { editor = 'all' } = {}) {
   const editors = editor === 'all' ? Object.keys(editorFiles) : [editor];
   if (editors.some((name) => !Object.hasOwn(editorFiles, name))) throw new Error('Editor must be all, agents, claude, cursor, or copilot.');
-  const guide = await readFile(new URL('../templates/block-workflow.md', import.meta.url), 'utf8');
+  const { workflow: guide } = await readInstallTemplates();
   const specifications = [
     { path: '.blocks/WORKFLOW.md', body: guide },
     { path: '.blocks/.gitignore', body: '/worktrees/\n/view/', ignore: true },
-    ...editors.map((name) => ({ path: editorFiles[name], body: instruction, prefix: name === 'cursor' ? cursorHeader : '' })),
+    ...editors.map((name) => ({ path: editorFiles[name], body: renderAgentInstructions(), prefix: name === 'cursor' ? cursorHeader : '' })),
   ];
   const files = [];
   for (const item of specifications) {
@@ -40,7 +40,9 @@ export async function initializeProject(root, { editor = 'all' } = {}) {
     files.push({ path: item.path, before, content });
   }
   // Scan before installing instructions so an invalid target fails without instruction edits.
-  const view = await updateProject(root);
+  await updateProject(root);
   const changed = await writeProjectFiles(root, files);
-  return { initialized: true, editors, changed, view: view.html, watch: 'block-beaver start --root .' };
+  const enforcement = await installCompliance(root, changed);
+  const view = await updateProject(root);
+  return { initialized: true, editors, changed, enforcement, view: view.html, watch: 'block-beaver start --root .' };
 }

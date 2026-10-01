@@ -1,9 +1,26 @@
+import { projectName } from './project-identity.mjs';
+import { readHistory } from './families/history.mjs';
+import { readProjectFile } from './project-files.mjs';
+import { loadProjectModel } from './project-model.mjs';
+import { attachFamilies } from './families/graph.mjs';
 import { readFile, readdir } from 'node:fs/promises';
 import { join } from 'node:path';
-import { execFile } from 'node:child_process';
-import { promisify } from 'node:util';
 import { createHash } from 'node:crypto';
-const exec = promisify(execFile);
+
+export function attachAppMetadata(graph) {
+  const nodes = new Map(graph.nodes.map((node) => [node.id, node]));
+  for (const block of graph.nodes.filter((node) => node.kind === 'block')) {
+    const implementation = graph.edges.filter((edge) => edge.from === block.id && edge.kind === 'implemented-by').map((edge) => nodes.get(edge.to)).filter(Boolean);
+    const owners = [...new Set(implementation.map((file) => file.app ?? null))];
+    block.app = owners.length === 1 ? owners[0] : null;
+    block.usedBy = [...new Set(implementation.flatMap((file) => file.usedBy || []))].sort();
+  }
+  for (const edge of graph.edges) {
+    const from = nodes.get(edge.from), to = nodes.get(edge.to);
+    if (from && to && from.app !== to.app) edge.crossApp = true;
+  }
+  for (const app of graph.apps || []) app.counts.blocks = graph.nodes.filter((node) => node.kind === 'block' && node.app === app.id).length;
+}
 
 function attachLocalDependencies(graph) {
   const ids = new Set(graph.nodes.map((node) => node.id));
@@ -18,13 +35,7 @@ function attachLocalDependencies(graph) {
     }
   }
   graph.summary.relationships = graph.edges.length;
-}
-
-/** Delegate read-only developer queries to TeaCake's own kit. */
-export async function runTeacakeKit(root, command, input = {}) {
-  if (!['list_blocks', 'describe_family', 'validate_block', 'compose_blocks'].includes(command)) throw new Error('This adapter exposes only read-only TeaCake kit commands.');
-  const { stdout } = await exec('pnpm', ['blocks:kit', command, JSON.stringify(input)], { cwd: root, timeout: 120_000, maxBuffer: 4_000_000 });
-  return JSON.parse(stdout);
+  attachAppMetadata(graph);
 }
 
 export async function attachLocalRegistry(graph) {
@@ -50,40 +61,32 @@ export async function attachLocalRegistry(graph) {
   return graph;
 }
 
-/** Recognize an existing block registry without making it a core dependency. */
-export async function attachTeacakeRegistry(graph) {
-  let manifests;
-  try { manifests = JSON.parse(await readFile(join(graph.root, 'docs/blocks/index.json'), 'utf8')); }
-  catch { return graph; }
-  if (!Array.isArray(manifests) || !manifests.every((m) => m && typeof m.id === 'string' && typeof m.family === 'string')) return graph;
-  const nodeIds = new Set(graph.nodes.map((node) => node.id));
-  const blockIds = new Set();
-  for (const manifest of manifests) {
-    const id = `block:${manifest.family}:${manifest.id}`;
-    blockIds.add(id);
-    graph.nodes.push({ id, kind: 'block', family: manifest.family, name: manifest.name, description: manifest.description, manifest, path: 'docs/blocks/index.json' });
-    const module = manifest.implementation?.module;
-    if (typeof module === 'string' && module.startsWith('@/')) {
-      const base = `src/${module.slice(2)}`;
-      const path = [...graph.nodes].find((node) => node.kind === 'file' && (node.path === base || node.path.startsWith(base + '.')))?.path;
-      if (path && nodeIds.has(`file:${path}`)) graph.edges.push({ from: id, to: `file:${path}`, kind: 'implemented-by', evidence: { file: 'docs/blocks/index.json', line: 1, column: 1, text: `${manifest.family}:${manifest.id} → ${module}` } });
-    }
+/** Attach repository-defined declarations; no domain registry is built in. */
+export async function attachProjectRegistry(graph, { config: suppliedConfig, loadFamilies: suppliedLoader } = {}) {
+  await attachLocalRegistry(graph);
+  let config = suppliedConfig;
+  if (config === undefined) {
+    const configText = await readProjectFile(graph.root, '.blocks/config.json');
+    try { config = configText === null ? null : JSON.parse(configText); } catch { return graph; }
   }
-  try {
-    const html = await readFile(join(graph.root, 'docs/blocks/block-map.html'), 'utf8');
-    const raw = html.match(/<script type="application\/json" id="block-map-data">([\s\S]*?)<\/script>/)?.[1];
-    if (raw) {
-      const map = JSON.parse(raw);
-      const mapLine = html.slice(0, html.indexOf('<script type="application/json" id="block-map-data">')).split('\n').length;
-      for (const [from, to, kind] of map.links || []) {
-        const source = `block:${from}`, target = `block:${to}`;
-        if (blockIds.has(source) && blockIds.has(target)) graph.edges.push({ from: source, to: target, kind, evidence: { file: 'docs/blocks/block-map.html', line: mapLine, column: 1, text: `${from} ${kind} ${to}` } });
-      }
-      graph.history = map.history || [];
-    }
-  } catch { /* The manifest index alone is enough. */ }
-  graph.summary.blocks = graph.nodes.filter((node) => node.kind === 'block').length;
-  attachLocalDependencies(graph);
-  graph.adapter = 'teacake';
+  graph.repoName = await projectName(graph.root);
+  if (config && ['families', 'generators', 'loader', 'history'].some((key) => Object.hasOwn(config, key))) {
+    const paths = Object.keys(graph.hashes || {});
+    const project = await loadProjectModel(graph.root, { paths, writeConfig: false });
+    const loadFamilies = suppliedLoader || (await import('./families/loader.mjs')).loadFamilies;
+    const load = await loadFamilies({ root: graph.root, config, paths, resolutionSignature: project.resolutionSignature, fileHashes: graph.hashes });
+    let history;
+    const historyDiagnostics = [];
+    try { history = readHistory(await readProjectFile(graph.root, '.blocks/history.json')); }
+    catch (error) { historyDiagnostics.push({ rule: 'family-drift', code: 'history-invalid', severity: 'error', file: '.blocks/history.json', message: error.message }); }
+    attachFamilies(graph, { load: { ...load, diagnostics: [...(load.diagnostics || []), ...historyDiagnostics] }, project, history });
+    graph.adapter = 'families';
+  }
+  if (config?.map) {
+    const { prepareMapStyle } = await import('./families/map-style.mjs');
+    const style = await prepareMapStyle(graph.root, config);
+    graph.mapStyle = style;
+    graph.familyDiagnostics = [...(graph.familyDiagnostics || []), ...(style.diagnostics || [])];
+  }
   return graph;
 }

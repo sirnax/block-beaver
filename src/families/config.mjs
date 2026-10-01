@@ -1,0 +1,66 @@
+import { hasManifestCapture, globRegex } from './glob.mjs';
+
+const idPattern = /^[a-z][a-z0-9]*(-[a-z0-9]+)*$/;
+const object = (value) => value !== null && typeof value === 'object' && !Array.isArray(value);
+const reservedBindings = new Set(['await', 'break', 'case', 'catch', 'class', 'const', 'continue', 'debugger', 'default', 'delete', 'do', 'else', 'enum', 'export', 'extends', 'false', 'finally', 'for', 'function', 'if', 'import', 'in', 'instanceof', 'new', 'null', 'return', 'super', 'switch', 'this', 'throw', 'true', 'try', 'typeof', 'var', 'void', 'while', 'with', 'yield', 'let', 'implements', 'interface', 'package', 'private', 'protected', 'public', 'static', 'arguments', 'eval']);
+
+export function isRegistryExportName(value) {
+  return typeof value === 'string' && /^[A-Za-z_$][\w$]*$/.test(value) && !reservedBindings.has(value);
+}
+
+/** Same lexical path boundary as the safe project writer; filesystem checks follow on read. */
+export function isFamilyPath(path) {
+  return typeof path === 'string' && !!path && !path.startsWith('/') && !/^[A-Za-z]:/.test(path) && !path.includes('\\') && !path.includes('\0') && path.split('/').every((part) => !!part && part !== '.' && part !== '..');
+}
+
+export function isFamilyGlob(pattern) {
+  const positive = typeof pattern === 'string' && pattern.startsWith('!') ? pattern.slice(1) : pattern;
+  if (!isFamilyPath(positive)) return false;
+  try { globRegex(pattern); return true; } catch { return false; }
+}
+
+/** Parse additions to schemaVersion 1 without imposing domain names or folder conventions. */
+export function parseFamiliesConfig(config) {
+  const diagnostics = [], families = [], generators = [];
+  let loader;
+  const issue = (code, message, field, family) => diagnostics.push({ rule: 'config-valid', code, severity: 'error', message, file: '.blocks/config.json', field, ...(family ? { family } : {}) });
+  if (!object(config)) { issue('family-path-invalid', 'Project config must be an object', '$'); return { families, generators, diagnostics }; }
+  if (config.families !== undefined && !Array.isArray(config.families)) issue('family-path-invalid', 'families must be an array', '$.families');
+  const seen = new Set();
+  for (const [floor, entry] of (Array.isArray(config.families) ? config.families : []).entries()) {
+    const field = `$.families[${floor}]`, family = entry?.id;
+    if (!object(entry)) { issue('family-path-invalid', 'Family configuration must be an object', field); continue; }
+    const start = diagnostics.length;
+    if (typeof family !== 'string' || !idPattern.test(family)) issue('family-id-invalid', 'Family ID must be kebab-case starting with a letter', `${field}.id`);
+    else if (family === 'local') issue('family-id-reserved', 'Family ID local is reserved for the base block registry', `${field}.id`, family);
+    if (seen.has(family)) issue('family-duplicate', `Family ${family} is configured more than once`, `${field}.id`, family);
+    seen.add(family);
+    if (!isFamilyPath(entry.contract)) issue('family-path-invalid', 'Contract must be a repository-relative path', `${field}.contract`, family);
+    if (!isFamilyGlob(entry.manifests) || !hasManifestCaptureSafely(entry.manifests)) issue('family-glob-invalid', 'Manifest glob must be repository-relative and contain a single * capture for the ID', `${field}.manifests`, family);
+    if (entry.registry !== undefined) {
+      if (!object(entry.registry) || !isFamilyPath(entry.registry.out)) issue('family-path-invalid', 'registry.out must be a repository-relative path', `${field}.registry.out`, family);
+      else if (!/\.(?:ts|mts|cts)$/.test(entry.registry.out) || /\.d\.(?:ts|mts|cts)$/.test(entry.registry.out)) issue('family-path-invalid', 'Typed registry output must use .ts, .mts or .cts', `${field}.registry.out`, family);
+      if (entry.registry?.exportName !== undefined && !isRegistryExportName(entry.registry.exportName)) issue('family-path-invalid', 'registry.exportName must be a valid ES module binding identifier', `${field}.registry.exportName`, family);
+      if (entry.registry?.importExtension !== undefined && !['', '.js', '.ts'].includes(entry.registry.importExtension)) issue('family-path-invalid', 'registry.importExtension must be empty, .js or .ts', `${field}.registry.importExtension`, family);
+    }
+    if (entry.generators !== undefined && (!Array.isArray(entry.generators) || entry.generators.some((path) => !isFamilyPath(path)))) issue('family-path-invalid', 'generators must contain repository-relative paths', `${field}.generators`, family);
+    if (diagnostics.length === start) families.push({ ...entry, floor });
+  }
+  if (config.generators !== undefined && (!Array.isArray(config.generators) || config.generators.some((path) => !isFamilyPath(path)))) issue('family-path-invalid', 'generators must contain repository-relative paths', '$.generators');
+  else generators.push(...(config.generators || []));
+  if (config.loader !== undefined) {
+    if (typeof config.loader !== 'string' || !/^(?:@[a-z0-9._-]+\/)?[a-z0-9][a-z0-9._-]*(?:\/[a-zA-Z0-9._/-]+)?$/.test(config.loader) || config.loader.split('/').some((part) => part === '..' || part === '.')) issue('loader-package-missing', 'loader must name a package or a package subpath', '$.loader');
+    else loader = config.loader;
+  }
+  if (config.history !== undefined && (!object(config.history) || (config.history.label !== undefined && typeof config.history.label !== 'string'))) issue('family-path-invalid', 'history.label must be a string', '$.history.label');
+  if (config.map !== undefined) {
+    if (!object(config.map)) issue('family-path-invalid', 'map must be an object', '$.map');
+    else {
+      if (config.map.skin !== undefined && !isFamilyPath(config.map.skin)) issue('family-path-invalid', 'map.skin must be a repository-relative path', '$.map.skin');
+      if (config.map.tokens !== undefined && (!object(config.map.tokens) || Object.entries(config.map.tokens).some(([key, value]) => !idPattern.test(key) || typeof value !== 'string'))) issue('family-path-invalid', 'map.tokens must map kebab-case names to CSS strings', '$.map.tokens');
+    }
+  }
+  return { families, generators, diagnostics, ...(loader ? { loader } : {}) };
+}
+
+function hasManifestCaptureSafely(pattern) { try { return hasManifestCapture(pattern); } catch { return false; } }

@@ -1,0 +1,1 @@
+Frozen installed instruction and workflow bytes from repository HEAD (Block Beaver 0.1.1), captured before v0.2 implementation template edits. Historical init had no config or package-manager pin; upgrade initializes these. The ignored generated graph and HTML are omitted and regenerated during upgrade.

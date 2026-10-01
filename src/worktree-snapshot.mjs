@@ -4,6 +4,7 @@ import { constants } from 'node:fs';
 import { lstat, open, readlink, realpath } from 'node:fs/promises';
 import { dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { promisify } from 'node:util';
+import { gitModeForWorktreeFile } from './file-mode.mjs';
 
 const exec = promisify(execFile);
 const decodePath = new TextDecoder('utf-8', { fatal: true });
@@ -112,6 +113,24 @@ async function assertVisibleIndex(root) {
   }
 }
 
+async function indexModes(root) {
+  const { stdout } = await exec('git', ['-C', root, 'ls-files', '--stage', '-z'], { encoding: 'buffer', maxBuffer: 64 * 1024 * 1024 });
+  const modes = new Map();
+  for (let at = 0; at < stdout.length;) {
+    const end = stdout.indexOf(0, at);
+    if (end < 0) throw new Error('Malformed null-delimited Git index listing.');
+    const record = stdout.subarray(at, end);
+    const tab = record.indexOf(9);
+    if (tab < 0) throw new Error('Malformed Git index entry.');
+    const [mode, , stage] = record.toString('ascii', 0, tab).split(' ');
+    const path = repoPath(decodePath.decode(record.subarray(tab + 1)));
+    if (stage !== '0' || modes.has(path)) throw new Error(`Unmerged Git index entry: ${path}`);
+    modes.set(path, mode);
+    at = end + 1;
+  }
+  return modes;
+}
+
 /** Capture every changed tracked and nonignored untracked path, plus the manifest. */
 export async function captureWorktreeSnapshot(worktree, baseCommit, manifestPath, { allowMissingManifest = false, allowHeadChange = false } = {}) {
   const rootInfo = await lstat(resolve(worktree));
@@ -138,8 +157,18 @@ export async function captureWorktreeSnapshot(worktree, baseCommit, manifestPath
   }
   const manifest = confinedPath(root, manifestName).name;
   paths.add(manifest);
+  const indexedModes = await indexModes(root);
   const files = [];
-  for (const path of [...paths].sort()) files.push(await entryFor(root, path));
+  for (const path of [...paths].sort()) {
+    const entry = await entryFor(root, path);
+    if (entry.type === 'file') {
+      // Keep raw permissions and bytes exact, beside Git's canonical file mode
+      // and the index metadata that Windows retains across native writes.
+      entry.indexMode = indexedModes.get(entry.path) ?? null;
+      entry.gitMode = gitModeForWorktreeFile(entry.mode, entry.indexMode);
+    }
+    files.push(entry);
+  }
   if (!allowMissingManifest && files.find((entry) => entry.path === manifest)?.type === 'deleted') throw new Error(`Worktree manifest is missing: ${manifest}`);
   return { baseCommit, files, digest: sha256(JSON.stringify({ baseCommit, files })) };
 }
@@ -151,7 +180,16 @@ export function compareWorktreeSnapshots(expected, actual) {
   const added = [], removed = [], changed = [];
   for (const path of after.keys()) if (!before.has(path)) added.push(path);
   for (const path of before.keys()) if (!after.has(path)) removed.push(path);
-  for (const [path, entry] of after) if (before.has(path) && JSON.stringify(entry) !== JSON.stringify(before.get(path))) changed.push(path);
+  for (const [path, entry] of after) {
+    if (!before.has(path)) continue;
+    const previous = before.get(path);
+    // Older passing snapshots predate index metadata. Their raw mode and bytes
+    // remain comparable; new evidence binds both additional fields exactly.
+    const comparable = { ...entry };
+    if (!Object.hasOwn(previous, 'indexMode')) delete comparable.indexMode;
+    if (!Object.hasOwn(previous, 'gitMode')) delete comparable.gitMode;
+    if (JSON.stringify(comparable) !== JSON.stringify(previous)) changed.push(path);
+  }
   added.sort(); removed.sort(); changed.sort();
   const equal = expected?.baseCommit === actual?.baseCommit && added.length === 0 && removed.length === 0 && changed.length === 0;
   return { equal, added, removed, changed };

@@ -17,11 +17,11 @@ Block Beaver makes the shape of a codebase visible. Scan a JavaScript, TypeScrip
 
 **[Project page](https://sirnax.github.io/block-beaver/)** · **[Get started](#quick-start)** · **[How it works](#how-it-works)** · **[Working in blocks](docs/BLOCK_WORKFLOW.md)** · **[CLI and workflow](#propose-a-block)** · **[Plan](docs/tasks/block-studio.md)** · **[Contribute](CONTRIBUTING.md)**
 
-> **This is an early release.** The graph is an aid to review, not a complete static analysis. Block Beaver is [Apache-2.0 licensed](LICENSE). The npm package is marked private, so install it from source.
+> **This is an early release.** The graph is an aid to review, not a complete static analysis. Block Beaver is [Apache-2.0 licensed](LICENSE).
 
 ## Supported environments
 
-The CLI and local browser console run with **Node.js 22, 24, or 26**. CI checks Linux on all three versions and macOS and Windows on Node.js 24. The scanner reads JavaScript, JSX, TypeScript, and TSX, including MJS, CJS, MTS, and CTS files. Git is needed for roadmap checks and worktrees. This release is distributed as source through GitHub; it is not published to npm.
+The CLI and local browser console run with **Node.js 22.18+, 24, or 26**. Family contract loading uses Node's built-in TypeScript stripping and `module.registerHooks`, so it requires Node 22.18+ (or a compatible newer release). A repository can configure its own TypeScript loader package with `.blocks/config.json`'s `loader` field. CI checks Linux on Node 22.18.0, 22, 24, and 26 and macOS and Windows on Node 24. The scanner reads JavaScript, JSX, TypeScript, and TSX, including MJS, CJS, MTS, and CTS files. Git is needed for roadmap checks and worktrees. Install the published CLI with `npm install --save-dev --save-exact block-beaver@0.4.0`. Source contributors can use `npm ci` and `npm link` from this checkout.
 
 ## Why use it?
 
@@ -29,11 +29,21 @@ The CLI and local browser console run with **Node.js 22, 24, or 26**. CI checks 
 | --- | --- | --- |
 | Files, functions, components, hooks, and their evidenced connections appear in one graph. | Propose a cohesive feature with a declared file scope, dependencies, and verification commands. | Checks run in an isolated worktree; reviews, decisions, and failures stay in an ordered roadmap ledger. |
 
-The visual console explores and previews. The CLI and optional authenticated worker handle roadmap operations. TeaCake is a read-only reference and optional adapter; no TeaCake files are required for another project.
+The visual console explores and previews. The CLI and optional authenticated worker handle roadmap operations. Optional typed families let a repository define its own manifest contracts and generated outputs. Block Beaver ships no domain families.
 
 ## Quick start
 
-Requires **Node.js 22+**. Install dependencies, then launch the local console:
+Requires **Node.js 22.18+**. From your project repository, inspect and install the managed integration:
+
+```sh
+npx block-beaver@0.4.0 install --agents claude,codex --dry-run
+npx block-beaver@0.4.0 install --agents claude,codex
+npx --no-install block-beaver start
+```
+
+`start` generates the project map and watches for changes. Open the generated HTML map to inspect your repository.
+
+For the development repository’s interactive localhost console, clone Block Beaver and run from its source checkout:
 
 ```sh
 npm ci
@@ -45,22 +55,21 @@ Open **http://127.0.0.1:4173**, enter an absolute path to a project, and select 
 For a terminal first look:
 
 ```sh
-node bin/block-beaver.mjs scan --root /path/to/project
+npx block-beaver@0.4.0 scan --root /path/to/project
 ```
 
 ## Use it with your AI editor
 
-Set up the command once from your Block Beaver source checkout:
+Install the command in the project you want to build:
 
 ```sh
-npm ci
-npm link
+npm install --save-dev --save-exact block-beaver@0.4.0
 ```
 
 Then run one command for the project you want to build:
 
 ```sh
-block-beaver start --root /path/to/your-project
+npx --no-install block-beaver start --root /path/to/your-project
 ```
 
 Open the localhost URL it prints (port 4175 by default). This command installs project guidance for editors using `AGENTS.md`, Claude Code, Cursor, and GitHub Copilot; creates `.blocks/WORKFLOW.md`; generates `.blocks/view/index.html` and `graph.json`; and refreshes both the files and the open browser view as source and manifests change. Existing instructions outside the marked Block Beaver section are preserved. Repeating setup does not duplicate instructions. Keep the process running for live updates; Ctrl+C stops it. No hand-editing of instruction files or HTML is required.
@@ -68,6 +77,14 @@ Open the localhost URL it prints (port 4175 by default). This command installs p
 The installed rules tell the AI editor to read the registry, work within a feature boundary, use proposals/checks/review, and regenerate the map after changes. These are project files that travel with the repository. Each machine still needs Block Beaver installed, and each editor must have its project instructions enabled. The rules guide the agent; Block Beaver's workflow commands enforce scope and approval. The live map shows the current checkout and does not itself approve or validate arbitrary edits.
 
 For setup without a live session, use `block-beaver init --root /path/to/your-project`. For a one-time regeneration, use `block-beaver update --root /path/to/your-project`. The generated HTML also opens offline. To install only one editor's instructions, add `--editor agents`, `claude`, `cursor`, or `copilot` to `init` or `start`; the default is `all`. A source-only install can use `node /path/to/block-beaver/bin/block-beaver.mjs start --root /path/to/your-project`, but putting the command on PATH with `npm link` lets future editor sessions use the portable commands in the installed guide.
+
+## Install, upgrade and audit
+
+For a repository-local installation, run `npx block-beaver@0.4.0 install`. Installation pins Block Beaver as a development dependency, detects npm, pnpm, Yarn or Bun, and plans managed editor skills, native hooks, Git hooks, CI and generated views. Use `--agents claude,codex` to select editors and `--dry-run` to inspect planned changes first.
+
+`block-beaver upgrade` preserves owner content and refuses edited managed sections; `--force` repairs the owned sections. `block-beaver uninstall` removes owned integration while preserving project data. Removing `.blocks/` requires `--remove-data --yes`. Ignore/exclusion adjustments are opt-in through `--fix-ignores` and `--fix-excludes`.
+
+`block-beaver audit --staged` checks the staged snapshot; CI uses `audit --base merge-base --strict` after fetching its target branch and regenerating the view. Stable rules include `config-valid`, `manifest-valid`, `managed-current`, `view-fresh`, `undeclared-link`, `coverage-ratchet`, `resolution-ratchet`, `exception-valid`, `family-drift`, `lint-baseline-ratchet` and `reviewed-content`. Resolution is strict on request; coverage and opt-in lint allowances can only go down. Approved slices are applied and receipted with `block-beaver integrate ROADMAP BLOCK`. Native `hook-check` uses cached context and fails open on missing or invalid cache; audit and workflow commands enforce the recorded gates.
 
 ## How it works
 
@@ -79,7 +96,7 @@ flowchart LR
   D --> E[Review and decide]
 ```
 
-Scanning does not change the target repository. `init` and `start` explicitly install project instructions and generated views; creating a roadmap writes `.blocks/` workflow records. A proposal cannot advance after failed checks or source drift. [Read the original plan](docs/tasks/block-studio.md), written under the working title “Block Studio,” for the intended stages and boundaries.
+The first scan writes detected apps to `.blocks/config.json`; it does not edit source. `init` and `start` install project instructions and generated views; creating a roadmap writes `.blocks/` workflow records. A proposal cannot advance after failed checks or source drift. [Read the original plan](docs/tasks/block-studio.md), written under the working title “Block Studio,” for the intended stages and boundaries.
 
 ## Explore from the CLI
 
@@ -87,17 +104,100 @@ Scanning does not change the target repository. `init` and `start` explicitly in
 node bin/block-beaver.mjs scan --root /path/to/project
 node bin/block-beaver.mjs search Button --root /path/to/project
 node bin/block-beaver.mjs inspect 'symbol:src/Button.tsx#Button' --root /path/to/project
-# Optional TeaCake adapter: delegate a read-only query to its own dev kit
-node bin/block-beaver.mjs kit list_blocks --root /path/to/teacake
+node bin/block-beaver.mjs kit list --root /path/to/project
 ```
 
 `scan --full true` prints the complete normalized graph. The graph has `schemaVersion`, a source fingerprint, nodes (`file`, `function`, `component`, `hook`, `class`, and optional `block`), and typed edges. Every edge includes `evidence.file`, `line`, `column`, and source text. The scanner reads JS, JSX, TS, TSX, MJS, CJS, MTS, and CTS; it ignores build output, dependencies, Git metadata, and `.blocks/`.
 
-The scanner host accepts language plugins with `accepts`, `parse`, `declarations`, `evidence`, and `links` methods. The included [JS/TS/React plugin](src/plugins/js-ts-react.mjs) uses the TypeScript parser. A later language can emit the same graph contract without changing the console or workflow.
+The scanner host accepts language plugins with `accepts`, `parse`, `declarations`, `evidence`, and `links` methods. The included [JS/TS/React plugin](src/plugins/js-ts-react.mjs) uses the TypeScript parser and resolver. A later language can emit the same graph contract without changing the console or workflow.
+
+## Optional typed families
+
+Projects that need typed block records can opt in by adding families to `.blocks/config.json`. With no `families` key, Block Beaver uses the base file-boundary workflow. Family order is the map floor order; IDs, fields, manifest locations, suffixes, and link kinds belong to the adopting project.
+
+```json
+{
+  "schemaVersion": 1,
+  "families": [
+    {
+      "id": "widget",
+      "contract": "blocks/widget.family.ts",
+      "manifests": "blocks/widgets/*.item.ts"
+    }
+  ]
+}
+```
+
+A family contract exports a definition from `block-beaver/kernel`. Its schema describes that family's fields, while the kernel supplies `id`, `family`, `version`, `name`, `description`, `rationale`, and `implementation`:
+
+```ts
+import { defineFamily, s } from 'block-beaver/kernel';
+
+export default defineFamily({
+  id: 'widget',
+  fields: s.object({ label: s.string() }),
+  implementation: ['module', 'none'],
+  links: [{ field: 'parent', to: 'widget', kind: 'contains' }],
+  map: { title: 'Widgets', blurb: 'Project-defined widget records.' }
+});
+```
+
+Each manifest module has one export and its ID must match the single `*` captured by the configured manifest glob. Use `implementation: { kind: 'module', module: './widget.js' }` for code-backed blocks or `{ kind: 'none' }` for data-only blocks. The `.blocks/index.json` generator writes the canonical JSON index; request it by setting `generators: ['index']` in the family contract. `registry` also requires `registry.out` in that family's config. Config-level `generators` can name custom generator modules.
+
+```sh
+block-beaver gen                 # write generated outputs
+block-beaver gen --check         # report drift without writing
+block-beaver kit list
+block-beaver kit describe widget
+block-beaver kit validate --json '{"family":"widget","manifest":{}}'
+block-beaver kit create widget new-widget --json '{"rationale":"Keeps one widget record cohesive."}' --dry-run
+```
+
+Kit commands return JSON. `kit create` requires a configured scaffold, refuses existing output paths, lists manual steps, and runs generation after writing. `--dry-run` reports planned scaffold, generated and cache files without writing them. `history import FILE --map MAPPING.json` imports an existing history using explicit old-key to `family:id` mappings. The family map is generated with the ordinary project view and includes configured floors, typed links, app/folder slabs, and available history. A repository may supply `map.skin` and `map.tokens` in config; external CSS resources are not embedded.
+
+The runtime-only package entry point is `block-beaver/kernel`. It exports the JSON schema DSL (`s`), `validate`, `coerce`, `createRegistry`, `compose`, and `validateManifest`. Runtime validation rejects module implementations and source file lists. `block-beaver/eslint` provides the opt-in `no-block-id-literal` rule. TypeScript consumers should use `moduleResolution` `node16`, `nodenext`, or `bundler` so the package `exports` type condition is resolved; legacy `node` and `classic` resolution do not read that condition. The package version matches the CLI. An unbundled production app importing generated registries from `block-beaver/kernel` must have `block-beaver` available at runtime: the installer defaults to a devDependency, so move it to `dependencies` (or otherwise provide it in the production image) when deploying without bundling.
+
+## Multi-app projects and embedding
+
+Graph schema 2 records apps, each file's home app and `usedBy`, cross-app edges, and a
+resolution report. Resolution follows each home app's tsconfig, including extends,
+aliases and workspace package symlinks. Files outside apps remain visible.
+`block-beaver detect` previews newly found apps; `detect --write` adds them while
+preserving owner entries and reporting disappeared apps. Commit `.blocks/config.json`.
+Commit `.blocks/detection.json` too: it stores the last detected app entries so owner
+edits can be recognized without replacing them. View module paths are tracked in
+`.blocks/view-exports.json`, which must travel with committed snapshots.
+Use `scan --strict` to fail on configuration or unresolved-import problems.
+
+The generated map and console group folders under apps. App health opens a report of
+unresolved imports, unreachable files and tsconfig errors; cross-app links show evidence.
+
+For a build-time snapshot, run:
+
+```sh
+block-beaver view --format module --out src/generated/block-map.mjs
+```
+
+The module exports `BLOCK_BEAVER_VIEW`; the CLI reports its byte size. Registered view
+exports are excluded from source scans to avoid a snapshot scanning itself. The HTML
+loads no external assets. Scripts and styles carry `nonce="__BLOCK_BEAVER_NONCE__"`.
+Serve it as a whole document under your host's CSP:
+
+```js
+import { prepareView } from 'block-beaver/view';
+import { BLOCK_BEAVER_VIEW } from './src/generated/block-map.mjs';
+const html = prepareView(BLOCK_BEAVER_VIEW, { nonce: requestNonce, headerHtml: trustedNavigation });
+```
+
+`prepareView` is pure and replaces only nonce attributes and the
+`<!--block-beaver:host-header-->` slot. The host must trust or escape `headerHtml`.
+Without options, the helper removes the nonce attributes and slot. With a nonce, allow
+`'self'` and that nonce in both `script-src` and `style-src`. The local viewing server
+uses a fresh request nonce.
 
 ## Propose a block
 
-A target repository opts in when you create a roadmap. The scope is an explicit list of scanned source files. Block Beaver writes its roadmap, proposals, checks and ordered event log to that repository's `.blocks/roadmaps/` directory. It never writes to TeaCake during the scans described above.
+A target repository opts in when you create a roadmap. The scope is an explicit list of scanned source files. Block Beaver writes its roadmap, proposals, checks and ordered event log to that repository's `.blocks/roadmaps/` directory.
 
 ```sh
 node bin/block-beaver.mjs plan account-card --root /path/to/project --scope src/account/Card.tsx,src/account/data.ts --create src/account/card.json
@@ -156,16 +256,16 @@ It binds to `127.0.0.1:4174` and requires `Authorization: Bearer <token>` on eve
 ## Contracts and boundaries
 
 - `.blocks/manifests/*.json` in a target repository are feature contracts. They describe a cohesive boundary, implementation files, dependencies, rationale, and verification commands. Functions and components remain observed pieces, not forced into individual manifests.
-- Existing TeaCake manifests remain authoritative. The adapter reads `docs/blocks/index.json` and its generated map, and adds those blocks to the graph with links to their implementation files. It delegates read-only `kit` queries to TeaCake's own dev kit, and a migration `check` in an isolated TeaCake worktree includes `pnpm blocks:check`. It does not generate a parallel TeaCake registry. TeaCake codegen remains an explicit step inside a proposed worktree; generated changes must be reviewed within that slice's scope.
+- A project's configured family manifests are authoritative for that family. Families are optional and project-defined; there are no built-in domain names, fields, paths, or link kinds. Legacy registries should be migrated by configuring the existing contract and manifest locations and comparing generated output before adopting it.
 - CLI JSON is the agent-neutral interface. An agent can generate a proposal file, but scope, validation, review and approval use the same commands as a person.
 - `verification` commands run in the isolated worktree during `check`, without a shell. Use simple command-and-argument strings such as `npm test`; shell operators and substitutions are rejected. Review the branch and its test output before merging it.
-- The scanner resolves local relative imports and the common `@/` → `src/` alias. Dynamic imports, runtime calls, arbitrary path aliases, and relationships hidden behind reexports may be absent. Edges are observations, not a claim that every runtime dependency has been found.
+- The scanner uses each app’s TypeScript configuration and compiler resolver for static imports, including configured path aliases and workspace package links. Dynamic imports, runtime calls and relationships hidden behind reexports may still be absent. Edges are source observations, not a complete inventory of runtime dependencies.
 
 ## Verify
 
 ```sh
 npm run check
-node bin/block-beaver.mjs scan --root /path/to/teacake
+node bin/block-beaver.mjs scan --root /path/to/project
 node bin/block-beaver.mjs scan --root /path/to/another/js-app
 ```
 

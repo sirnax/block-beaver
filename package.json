@@ -1,13 +1,29 @@
 {
   "name": "block-beaver",
-  "version": "0.1.1",
+  "version": "0.4.0",
   "description": "Local architecture workspace for JavaScript, TypeScript, and React repositories",
-  "private": true,
+  "private": false,
   "license": "Apache-2.0",
-  "repository": { "type": "git", "url": "https://github.com/sirnax/block-beaver.git" },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/sirnax/block-beaver.git"
+  },
   "homepage": "https://sirnax.github.io/block-beaver/",
-  "bin": { "block-beaver": "bin/block-beaver.mjs" },
+  "bin": {
+    "block-beaver": "bin/block-beaver.mjs"
+  },
   "type": "module",
+  "exports": {
+    ".": "./src/scanner.mjs",
+    "./view": "./src/view.mjs",
+    "./kernel": {
+      "types": "./src/kernel/index.d.ts",
+      "import": "./src/kernel/index.mjs",
+      "default": "./src/kernel/index.mjs"
+    },
+    "./eslint": "./src/eslint/index.mjs",
+    "./package.json": "./package.json"
+  },
   "scripts": {
     "start": "node server.mjs",
     "dev": "node server.mjs",
@@ -16,6 +32,19 @@
     "check": "node scripts/check.mjs",
     "scan": "node bin/block-beaver.mjs scan"
   },
-  "engines": { "node": ">=22" },
-  "dependencies": { "typescript": "^5.9.3" }
+  "engines": {
+    "node": ">=22.18"
+  },
+  "sideEffects": false,
+  "dependencies": {
+    "typescript": "^5.9.3"
+  },
+  "files": [
+    "bin/",
+    "src/",
+    "templates/",
+    "README.md",
+    "CHANGELOG.md",
+    "LICENSE"
+  ]
 }

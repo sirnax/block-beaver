@@ -1,6 +1,7 @@
 import { readdir } from 'node:fs/promises';
 import { join } from 'node:path';
 import { execFileSync } from 'node:child_process';
+import { checkKernelBudget } from './kernel-budget.mjs';
 
 async function sourceFiles(directory) {
   const files = [];
@@ -15,4 +16,6 @@ async function sourceFiles(directory) {
 for (const path of ['server.mjs', 'worker.mjs', ...await sourceFiles('bin'), ...await sourceFiles('src'), ...await sourceFiles('scripts'), ...await sourceFiles('tests')]) {
   execFileSync(process.execPath, ['--check', path], { stdio: 'inherit' });
 }
+const kernel = await checkKernelBudget();
+console.log(`Kernel gzip: ${kernel.gzipBytes}/${kernel.budgetBytes} bytes; relative imports only`);
 execFileSync(process.execPath, ['--test'], { stdio: 'inherit' });
