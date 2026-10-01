@@ -77,8 +77,7 @@ Kernel gzip 4504/6144 bytes on 24 and 26 (4511 on 22.18.0).
 - `src/project-integration.mjs` needed no change: it writes `templates/block-workflow.md`, so `init` already gets the new section.
 - The disposable target's local dependency had to be normalized to exact `0.5.0` after tarball transport so `install` would not ask the registry for the unpublished version, as in the 0.4.0 acceptance.
 
-**Console check:** Slice C's worker scanned a fixture (`reactflow/dist/style.css` present, `reactflow/dist/gone.css` and `./nope` missing) in the local console and clicked app health. Status read "2 unresolved imports (1 missing asset)"; the report heading read "Unresolved imports (2, 1 missing asset)" and listed `[asset]` and `[module]` entries; the resolving import was not listed. The worker saw one Playwright console error and did not investigate it (see open items).
+**Console check:** Slice C's worker scanned a fixture (`reactflow/dist/style.css` present, `reactflow/dist/gone.css` and `./nope` missing) in the local console and clicked app health. Status read "2 unresolved imports (1 missing asset)"; the report heading read "Unresolved imports (2, 1 missing asset)" and listed `[asset]` and `[module]` entries; the resolving import was not listed. The one console error recorded in that session was a `favicon.ico` 404 from the local server, which is unrelated to these changes.
 
 ## Open items
-- Investigate the one console error seen during the Slice C console check.
 - Closing #10 and #11, `npm publish` and the `v0.5.0` tag push need owner authorization.
