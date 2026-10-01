@@ -6,6 +6,22 @@ All notable user visible changes are recorded here. Releases follow semantic ver
 
 - No additional changes recorded.
 
+## 0.5.0 — 2026-10-01
+
+Fixes from the first real use of 0.4.0 (#14–#18). Upgrading from 0.4.0 is `block-beaver upgrade`.
+
+**Compatibility notes**
+- New installs write `enforcement.receipts: "optional"`. Configs without the key keep today's behavior, which is `required`. The stricter of the base revision's level and the audited tree's level applies, so one commit cannot loosen the gate and pass under its own new rules.
+- Resolution report entries gain `category` (`module` or `asset`), and scan summaries and app health gain `missingAssets`. `unresolvedImports` is still the total, so `--strict` and the resolution ratchet behave as before.
+- Managed CI now uses `actions/checkout@v7`, `actions/setup-node@v7` and the repository's Node version (`.nvmrc`, `.node-version`, `engines.node`, then 24). `upgrade` rewrites the managed CI region. Unmarked 0.1.x files are still adopted.
+
+- Fix truncated piped JSON: every command now flushes stdout before exiting, so large `audit`, `install --dry-run` and other reports parse intact (#14).
+- Make the managed CI job use the repository's Node version and current action majors, and warn (`ci-node-below-minimum`) when it is below 22 (#15).
+- Resolve bare package asset imports such as `reactflow/dist/style.css` through `node_modules` and package `exports`; real misses are reported with the `asset` category and counted separately (#16).
+- Record a managed-setup exception from `install` and `upgrade`, so a fresh install passes its own audit and the first commit goes through the pre-commit hook (#17).
+- Add `enforcement.receipts` (`required`, `optional`, `off`) so a repository can adopt the structural gate before mandatory review receipts. Invalid evidence and review that went stale against the change in hand still fail under `optional`; under `off` the review requirement is skipped but invalid evidence still fails. Install and upgrade results report the active level (#18).
+- Pin CodeQL `init` and `analyze` to the same 4.38.2 commit and group their Dependabot updates so they cannot drift apart again.
+
 ## 0.4.0 — 2026-10-01
 
 Versions 0.2.0 and 0.3.0 were local development versions and were never published. The upgrade path from the previous GitHub release, 0.1.1, is directly to 0.4.0.

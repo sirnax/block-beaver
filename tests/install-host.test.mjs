@@ -629,3 +629,118 @@ test('unverified and malformed hashes cannot authorize replacement of managed co
   await apply(root, await plan(root, { operation: 'upgrade', force: true }));
   assert.equal(await text(root, '.husky/pre-commit'), before);
 });
+
+const ciFixtures = { '.github/workflows/owner.yml': 'name: owner\n', '.gitlab-ci.yml': 'owner:\n  script: true\n' };
+const githubPath = '.github/workflows/block-beaver.yml';
+const gitlabPath = '.blocks/ci/gitlab.yml';
+
+test('managed CI uses the repository Node version: .nvmrc, .node-version, engines, then the default', async (t) => {
+  const cases = [
+    { name: '.nvmrc', files: { '.nvmrc': '24\n' }, yaml: 'node-version-file: .nvmrc', image: 'node:24' },
+    { name: '.node-version', files: { '.node-version': '22.18.0\n' }, yaml: 'node-version-file: .node-version', image: 'node:22' },
+    { name: 'engines', files: { 'package.json': JSON.stringify({ engines: { node: '24.x' } }) }, yaml: "node-version: '24.x'", image: 'node:24' },
+    { name: 'nothing', files: {}, yaml: "node-version: '24'", image: 'node:24' },
+    { name: 'nvmrc wins over node-version and engines', files: { '.nvmrc': 'v26.1.0\n', '.node-version': '22\n', 'package.json': JSON.stringify({ engines: { node: '>=22.18' } }) }, yaml: 'node-version-file: .nvmrc', image: 'node:26' },
+    { name: 'node-version wins over engines', files: { '.node-version': '22.18.0\n', 'package.json': JSON.stringify({ engines: { node: '>=24' } }) }, yaml: 'node-version-file: .node-version', image: 'node:22' },
+    { name: 'engines range with quotes', files: { 'package.json': JSON.stringify({ engines: { node: ">=22.18 <25 || '26'" } }) }, yaml: "node-version: '>=22.18 <25 || ''26'''", image: 'node:22' },
+    { name: 'alias without a major', files: { '.nvmrc': 'lts/*\n' }, yaml: 'node-version-file: .nvmrc', image: 'node:24' },
+    { name: 'blank version file falls through', files: { '.nvmrc': '\n', 'package.json': JSON.stringify({ engines: { node: '26.x' } }) }, yaml: "node-version: '26.x'", image: 'node:26' },
+  ];
+  for (const item of cases) {
+    const root = await repo(t, { ...ciFixtures, ...item.files });
+    const result = await plan(root);
+    const workflow = file(result, githubPath).content;
+    assert.ok(workflow.includes(`      - uses: actions/setup-node@v7\n        with:\n          ${item.yaml}\n`), `${item.name}: ${workflow}`);
+    assert.ok(workflow.includes('      - uses: actions/checkout@v7\n'), item.name);
+    assert.ok(!workflow.includes('@v4'), item.name);
+    assert.ok(file(result, gitlabPath).content.includes(`\n  image: ${item.image}\n`), `${item.name}: ${file(result, gitlabPath).content}`);
+    assert.deepEqual(result.diagnostics.filter((entry) => entry.code === 'ci-node-below-minimum'), [], item.name);
+  }
+});
+
+test('managed CI keeps the Bun setup action unchanged and settles after install', async (t) => {
+  const bun = await repo(t, { ...ciFixtures, 'bun.lock': '{}' });
+  assert.ok(file(await plan(bun), githubPath).content.includes('      - uses: oven-sh/setup-bun@v2\n'));
+  const root = await repo(t, { ...ciFixtures, '.nvmrc': '24\n', 'package-lock.json': '{}' });
+  await apply(root, await plan(root));
+  const settled = await plan(root, { operation: 'upgrade', force: true });
+  assert.deepEqual(settled.files, [], 'The audit managed-current rule plans an upgrade and finds nothing to change.');
+  assert.deepEqual(settled.conflicts, []);
+});
+
+test('a repository Node version below the Block Beaver minimum is reported but still planned', async (t) => {
+  for (const files of [{ '.nvmrc': '20\n' }, { 'package.json': JSON.stringify({ engines: { node: '>=18' } }) }]) {
+    const root = await repo(t, { ...ciFixtures, ...files });
+    const result = await plan(root);
+    const warnings = result.diagnostics.filter((entry) => entry.code === 'ci-node-below-minimum');
+    assert.equal(warnings.length, 1, 'One warning even though both GitHub and GitLab are planned.');
+    assert.equal(warnings[0].severity, 'warning');
+    assert.match(warnings[0].message, /22\.18/);
+    assert.ok(file(result, githubPath));
+  }
+  const supported = await repo(t, { ...ciFixtures, '.nvmrc': '22.18.0\n' });
+  assert.deepEqual((await plan(supported)).diagnostics.filter((entry) => entry.code === 'ci-node-below-minimum'), []);
+  const removal = await plan(await repo(t, { ...ciFixtures, '.nvmrc': '18\n' }), { operation: 'uninstall' });
+  assert.deepEqual(removal.diagnostics.filter((entry) => entry.code === 'ci-node-below-minimum'), []);
+});
+
+const legacyWorkflow = (nodeLine = 'node-version: 22') => `# block-beaver:managed-ci
+name: Block Beaver audit
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+permissions:
+  contents: read
+jobs:
+  block-beaver-audit:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          ${nodeLine}
+      - run: npm ci
+      - name: Fetch the pull request base
+        env:
+          BASE_REF: \${{ github.base_ref }}
+        run: git fetch --no-tags origin "+refs/heads/\${BASE_REF}:refs/remotes/origin/\${BASE_REF}"
+      - name: Audit against the merge base
+        env:
+          BLOCK_BEAVER_BASE_REF: origin/\${{ github.base_ref }}
+        run: npx --no-install block-beaver audit --base merge-base --strict
+`;
+const legacyGitlab = '# block-beaver:managed-ci\nblock_beaver_audit:\n  image: node:22\n  stage: .pre\n  variables:\n    GIT_DEPTH: \'0\'\n  rules:\n    - if: \'$CI_PIPELINE_SOURCE == "merge_request_event"\'\n  script:\n    - npm ci\n    - git fetch --no-tags origin "+refs/heads/$CI_MERGE_REQUEST_TARGET_BRANCH_NAME:refs/remotes/origin/$CI_MERGE_REQUEST_TARGET_BRANCH_NAME"\n    - BLOCK_BEAVER_BASE_REF="origin/$CI_MERGE_REQUEST_TARGET_BRANCH_NAME" npx --no-install block-beaver audit --base merge-base --strict\n';
+
+test('unmarked 0.1.x and 0.4.0 CI files with the old v4 and node 22 bytes are still adopted, even in a repository that pins another Node', async (t) => {
+  for (const pinned of [{}, { '.nvmrc': '26\n' }]) {
+    const root = await repo(t, { ...pinned, 'package-lock.json': '{}', '.github/workflows/block-beaver.yml': legacyWorkflow(), '.gitlab-ci.yml': 'owner:\n  script: true\n', '.blocks/ci/gitlab.yml': legacyGitlab });
+    const result = await plan(root, { operation: 'upgrade', version: '0.5.0' });
+    assert.deepEqual(result.conflicts, [], JSON.stringify(pinned));
+    const workflow = file(result, githubPath);
+    assert.equal(workflow.before, legacyWorkflow());
+    assert.ok(workflow.content.includes('actions/checkout@v7') && workflow.content.includes('actions/setup-node@v7'));
+    assert.ok(workflow.content.includes('# block-beaver:version 0.5.0\n'));
+    assert.ok(file(result, gitlabPath).content.includes(`  image: node:${pinned['.nvmrc'] ? '26' : '24'}\n`));
+    await apply(root, result);
+    assert.deepEqual((await plan(root, { operation: 'upgrade', version: '0.5.0' })).files, []);
+  }
+  const quoted = await repo(t, { 'package-lock.json': '{}', '.github/workflows/block-beaver.yml': legacyWorkflow("node-version: '22'") });
+  assert.deepEqual(codes((await plan(quoted, { operation: 'upgrade' })).conflicts), ['managed-edited'], 'Only the exact old bytes are adopted.');
+});
+
+test('a hashed 0.4.0 CI region upgrades cleanly to the current actions and Node setup', async (t) => {
+  const body = legacyWorkflow().replace('# block-beaver:managed-ci\n', '# block-beaver:start\n# block-beaver:version 0.4.0\n')
+    .replace('      - name: Audit against', '      - name: Regenerate the block view\n        run: npx --no-install block-beaver update --root .\n      - name: Audit against') + '# block-beaver:end\n';
+  const [first, ...rest] = body.split('\n');
+  const stamped = `# block-beaver:managed-ci\n${first}\n# block-beaver:hash ${createHash('sha256').update(body).digest('hex')}\n${rest.join('\n')}`;
+  const root = await repo(t, { '.nvmrc': '24\n', 'package-lock.json': '{}', '.github/workflows/block-beaver.yml': stamped });
+  const result = await plan(root, { operation: 'upgrade', version: '0.5.0' });
+  assert.deepEqual(result.conflicts, []);
+  const upgraded = file(result, githubPath).content;
+  assert.ok(upgraded.includes('actions/checkout@v7') && upgraded.includes('actions/setup-node@v7\n        with:\n          node-version-file: .nvmrc\n'));
+  assert.ok(!upgraded.includes('@v4') && !upgraded.includes('node-version: 22'));
+  await apply(root, result);
+  assert.deepEqual((await plan(root, { operation: 'upgrade', version: '0.5.0' })).files, []);
+});

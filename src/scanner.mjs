@@ -86,7 +86,7 @@ export async function scanRepository(inputRoot, options = {}) {
       if (edge.to.startsWith('symbol:') && changed.has(edge.to.slice(7).split('#')[0])) relink.add(edge.evidence.file);
     }
     for (const edge of previous.edges) if (!relink.has(edge.evidence.file)) addEdge(edge.from, edge.to, edge.kind, edge.evidence);
-    resolutionReport.push(...previous.resolutionReport.filter((report) => !relink.has(report.file)));
+    resolutionReport.push(...previous.resolutionReport.filter((report) => !relink.has(report.file)).map((report) => ({ ...report, category: report.category || 'module' })));
     for (const path of paths) if (!relink.has(path)) files.get(path).packages = previous.files.get(path)?.packages || [];
   }
   const context = {
@@ -96,8 +96,8 @@ export async function scanRepository(inputRoot, options = {}) {
       if (result.package) files.get(path).packages.push(result.package);
       return result;
     },
-    reportUnresolved(path, specifier, proof, message) {
-      resolutionReport.push({ app: project.ownerByFile.get(path) ?? null, file: path, line: proof.line, column: proof.column, specifier, message });
+    reportUnresolved(path, specifier, proof, message, category = 'module') {
+      resolutionReport.push({ app: project.ownerByFile.get(path) ?? null, file: path, line: proof.line, column: proof.column, specifier, message, category });
     },
   };
   for (const plugin of plugins) plugin.links(files, fileSet, addEdge, context);
@@ -136,12 +136,13 @@ export async function scanRepository(inputRoot, options = {}) {
   const apps = project.apps.map((app) => {
     const owned = nodes.filter((node) => node.app === app.id);
     const unresolvedImports = resolutionReport.filter((report) => report.app === app.id).length;
+    const missingAssets = resolutionReport.filter((report) => report.app === app.id && report.category === 'asset').length;
     const unreachable = owned.filter((node) => node.kind === 'file' && unreachableSet.has(node.path)).length;
     const tsconfigErrors = app.errors || [];
     return {
       id: app.id, root: app.root, ...(app.tsconfig ? { tsconfig: app.tsconfig } : {}), entries: app.entries, packages: app.packages,
       counts: { files: owned.filter((node) => node.kind === 'file').length, pieces: owned.filter((node) => node.kind !== 'file').length, blocks: 0, unreachable },
-      health: { status: tsconfigErrors.length ? 'error' : unresolvedImports || unreachable ? 'warning' : 'healthy', unresolvedImports, unreachableFiles: unreachable, tsconfigErrors },
+      health: { status: tsconfigErrors.length ? 'error' : unresolvedImports || unreachable ? 'warning' : 'healthy', unresolvedImports, missingAssets, unreachableFiles: unreachable, tsconfigErrors },
     };
   });
   scanCaches.delete(root);
@@ -157,5 +158,5 @@ export async function scanRepository(inputRoot, options = {}) {
   }
   const hashes = Object.fromEntries([...files].map(([path, value]) => [path, value.hash]));
   const fingerprint = fileHash(JSON.stringify(hashes));
-  return { schemaVersion: 2, root, apps, resolutionReport, diagnostics: project.diagnostics, unreachableFiles, scannedAt: new Date().toISOString(), fingerprint, summary: { files: paths.length, pieces: nodes.length - paths.length, relationships: resolvedEdges.length, unresolvedImports: resolutionReport.length, unreachableFiles: unreachableFiles.length, tsconfigErrors: project.diagnostics.length }, nodes, edges: resolvedEdges, hashes };
+  return { schemaVersion: 2, root, apps, resolutionReport, diagnostics: project.diagnostics, unreachableFiles, scannedAt: new Date().toISOString(), fingerprint, summary: { files: paths.length, pieces: nodes.length - paths.length, relationships: resolvedEdges.length, unresolvedImports: resolutionReport.length, missingAssets: resolutionReport.filter((report) => report.category === 'asset').length, unreachableFiles: unreachableFiles.length, tsconfigErrors: project.diagnostics.length }, nodes, edges: resolvedEdges, hashes };
 }

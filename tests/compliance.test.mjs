@@ -199,3 +199,146 @@ test('umask 002 reviews exact permissions and audits canonical Git modes for exi
   `;
   execFileSync(process.execPath, ['--input-type=module', '-e', script, root], { encoding: 'utf8', timeout: 60_000 });
 });
+
+async function commitConfig(root, enforcement) {
+  await mkdir(join(root, '.blocks'), { recursive: true });
+  await writeFile(join(root, '.blocks/config.json'), JSON.stringify({ schemaVersion: 1, apps: [], ...(enforcement ? { enforcement } : {}) }, null, 2) + '\n');
+  git(root, 'add', '.blocks/config.json');
+  git(root, '-c', 'user.name=Test', '-c', 'user.email=test@example.com', 'commit', '-qm', 'config');
+}
+const reviewedContent = (audit) => audit.rules.find((rule) => rule.id === 'reviewed-content');
+
+test('receipt levels: required fails unreviewed source, optional reports it as advisory, off skips the rule', async (t) => {
+  const outcomes = {};
+  for (const level of ['required', 'optional', 'off']) {
+    const root = await fixture(t);
+    await commitConfig(root, { receipts: level });
+    await writeFile(join(root, 'src', 'x.ts'), 'export const x = 1;\n');
+    const audit = await auditProject(root, { mode: 'working' });
+    outcomes[level] = audit;
+    assert.equal(audit.enforcement.receipts, level);
+    assert.equal(audit.enforcement.receiptsSource, 'base');
+    assert.equal(audit.files.find((file) => file.path === 'src/x.ts').status, 'unreviewed-source');
+  }
+  assert.equal(outcomes.required.pass, false);
+  assert.deepEqual(reviewedContent(outcomes.required).findings, [{ path: 'src/x.ts', message: 'unreviewed-source' }]);
+  assert.equal(outcomes.optional.pass, true, JSON.stringify(outcomes.optional.rules.filter((rule) => !rule.pass)));
+  assert.deepEqual(reviewedContent(outcomes.optional).findings, []);
+  assert.deepEqual(reviewedContent(outcomes.optional).advisories.map((entry) => [entry.path, entry.message]), [['src/x.ts', 'unreviewed-source']]);
+  assert.equal(outcomes.off.pass, true);
+  assert.deepEqual(reviewedContent(outcomes.off), { id: 'reviewed-content', pass: true, findings: [], skipped: true, skipReason: 'enforcement.receipts is off', advisories: [] });
+});
+
+test('a config without the key and a repository without config both mean required', async (t) => {
+  for (const enforcement of [undefined, { agents: 'guide' }]) {
+    const root = await fixture(t);
+    await commitConfig(root, enforcement);
+    await writeFile(join(root, 'src', 'x.ts'), 'export const x = 1;\n');
+    const audit = await auditProject(root, { mode: 'working' });
+    assert.equal(audit.pass, false);
+    assert.deepEqual([audit.enforcement.receipts, audit.enforcement.receiptsSource], ['required', 'default']);
+  }
+  const bare = await fixture(t);
+  await writeFile(join(bare, 'src', 'x.ts'), 'export const x = 1;\n');
+  const audit = await auditProject(bare, { mode: 'working' });
+  assert.equal(audit.pass, false);
+  assert.deepEqual(audit.enforcement, { agents: 'guide', gate: 'audit', receipts: 'required', receiptsSource: 'default' });
+});
+
+test('an invalid receipt fails under every receipt level, including off', async (t) => {
+  const results = {};
+  for (const level of ['required', 'optional', 'off']) {
+    const root = await fixture(t);
+    await commitConfig(root, { receipts: level });
+    await mkdir(join(root, '.blocks/receipts'), { recursive: true });
+    await writeFile(join(root, '.blocks/receipts/forged-slice.json'), JSON.stringify({ schemaVersion: 1, type: 'block', roadmap: 'forged', slice: 'slice', paths: [{ path: 'src/feature.ts' }] }));
+    results[level] = await auditProject(root, { mode: 'working' });
+    assert.equal(results[level].invalidEvidence.length, 1, level);
+  }
+  for (const level of ['required', 'optional', 'off']) {
+    assert.equal(results[level].pass, false, level);
+    assert.equal(reviewedContent(results[level]).findings[0].path, '.blocks/receipts/forged-slice.json', level);
+  }
+});
+
+test('an exception whose recorded verification failed is invalid evidence under off', async (t) => {
+  const root = await fixture(t);
+  await commitConfig(root, { receipts: 'off' });
+  await mkdir(join(root, '.blocks/exceptions'), { recursive: true });
+  await writeFile(join(root, 'notes.md'), 'x\n');
+  await writeFile(join(root, '.blocks/exceptions/failed.json'), JSON.stringify({ schemaVersion: 1, type: 'exception', id: 'failed', reason: 'x', paths: [{ path: 'notes.md' }], verification: [{ command: 'false', pass: false, output: '' }] }));
+  const audit = await auditProject(root, { mode: 'working' });
+  assert.equal(audit.pass, false);
+});
+
+test('an invalid exception still fails under off through exception-valid', async (t) => {
+  const root = await fixture(t);
+  await commitConfig(root, { receipts: 'off' });
+  await mkdir(join(root, '.blocks/exceptions'), { recursive: true });
+  await writeFile(join(root, '.blocks/exceptions/bad.json'), JSON.stringify({ schemaVersion: 1, type: 'exception', id: 'bad', reason: 'x', paths: [{ path: 'missing.md' }] }));
+  const audit = await auditProject(root, { mode: 'working' });
+  assert.equal(audit.pass, false);
+  assert.deepEqual(audit.rules.filter((rule) => !rule.pass).map((rule) => rule.id).sort(), ['exception-valid', 'reviewed-content']);
+  assert.equal(audit.invalidEvidence.length, 1);
+});
+
+test('the base revision keeps the stricter receipt level so one commit cannot loosen its own gate', async (t) => {
+  const root = await fixture(t);
+  await commitConfig(root, { receipts: 'required' });
+  const base = git(root, 'rev-parse', 'HEAD');
+  await writeFile(join(root, '.blocks/config.json'), JSON.stringify({ schemaVersion: 1, apps: [], enforcement: { receipts: 'off' } }, null, 2) + '\n');
+  await writeFile(join(root, 'src', 'x.ts'), 'export const x = 1;\n');
+  git(root, 'add', '-A');
+  const staged = await auditProject(root, { mode: 'staged' });
+  assert.deepEqual([staged.enforcement.receipts, staged.enforcement.receiptsSource], ['required', 'base']);
+  assert.equal(staged.pass, false);
+  assert.ok(reviewedContent(staged).findings.some((entry) => entry.path === 'src/x.ts'));
+  git(root, '-c', 'user.name=Test', '-c', 'user.email=test@example.com', 'commit', '-qm', 'loosen');
+  const range = await auditProject(root, { mode: 'range', base });
+  assert.deepEqual([range.enforcement.receipts, range.enforcement.receiptsSource], ['required', 'base']);
+  assert.equal(range.pass, false);
+  // Once the loosening is the base, the new level applies.
+  await writeFile(join(root, 'src', 'y.ts'), 'export const y = 1;\n');
+  const next = await auditProject(root, { mode: 'working' });
+  assert.deepEqual([next.enforcement.receipts, next.enforcement.receiptsSource], ['off', 'base']);
+  assert.equal(next.pass, true);
+});
+
+test('tightening applies immediately, and an adoption commit without a base config uses the tree value', async (t) => {
+  const root = await fixture(t);
+  await commitConfig(root, { receipts: 'optional' });
+  await writeFile(join(root, '.blocks/config.json'), JSON.stringify({ schemaVersion: 1, apps: [], enforcement: { receipts: 'required' } }, null, 2) + '\n');
+  await writeFile(join(root, 'src', 'x.ts'), 'export const x = 1;\n');
+  const tightened = await auditProject(root, { mode: 'working' });
+  assert.deepEqual([tightened.enforcement.receipts, tightened.enforcement.receiptsSource], ['required', 'tree']);
+  assert.equal(tightened.pass, false);
+
+  const adopted = await fixture(t);
+  await mkdir(join(adopted, '.blocks'));
+  await writeFile(join(adopted, '.blocks/config.json'), JSON.stringify({ schemaVersion: 1, apps: [], enforcement: { receipts: 'optional' } }, null, 2) + '\n');
+  await writeFile(join(adopted, 'src', 'x.ts'), 'export const x = 1;\n');
+  git(adopted, 'add', '-A');
+  const adoption = await auditProject(adopted, { mode: 'staged' });
+  assert.deepEqual([adoption.enforcement.receipts, adoption.enforcement.receiptsSource], ['optional', 'tree']);
+  assert.equal(adoption.pass, true, JSON.stringify(adoption.rules.filter((rule) => !rule.pass)));
+});
+
+test('optional receipts keep stale review of the same change an error but not old receipts from earlier commits', async (t) => {
+  const root = await fixture(t);
+  await commitConfig(root, { receipts: 'optional' });
+  await writeFile(join(root, 'README.md'), '# Project\n\nGenerated.\n');
+  await recordException(root, 'readme-setup', { reason: 'generated', paths: ['README.md'], check: 'git status' });
+  assert.equal((await auditProject(root, { mode: 'working' })).pass, true);
+  await writeFile(join(root, 'README.md'), '# Project\n\nGenerated, then edited.\n');
+  const stale = await auditProject(root, { mode: 'working' });
+  assert.equal(stale.pass, false);
+  assert.equal(stale.files.find((file) => file.path === 'README.md').status, 'changed-after-review');
+  await writeFile(join(root, 'README.md'), '# Project\n\nGenerated.\n');
+  git(root, 'add', '-A');
+  git(root, '-c', 'user.name=Test', '-c', 'user.email=test@example.com', 'commit', '-qm', 'readme');
+  await writeFile(join(root, 'README.md'), '# Project\n\nLater owner edit.\n');
+  const later = await auditProject(root, { mode: 'working' });
+  assert.equal(later.files.find((file) => file.path === 'README.md').status, 'changed-after-review');
+  assert.equal(later.pass, true, JSON.stringify(later.rules.filter((rule) => !rule.pass)));
+  assert.deepEqual(reviewedContent(later).advisories.map((entry) => entry.path), ['README.md']);
+});

@@ -77,3 +77,12 @@ test('unsupported future versions, unknown migration routes and invalid document
   assert.throws(() => migrateDocument('graph', { schemaVersion: 1, nodes: [{ usedBy: 'web' }] }), /usedBy/);
   assert.throws(() => migrateDocument('graph', { schemaVersion: 1, apps: {} }), /apps/);
 });
+
+test('config migration neither adds nor rewrites enforcement.receipts', () => {
+  for (const enforcement of [{ agents: 'guide', gate: 'audit' }, { agents: 'guide', gate: 'audit', receipts: 'optional' }, { receipts: 'off' }]) {
+    const migrated = migrateDocument('config', freeze({ apps: [], enforcement })).value;
+    assert.deepEqual(migrated.enforcement, enforcement);
+    assert.equal(Object.hasOwn(migrated.enforcement, 'receipts'), Object.hasOwn(enforcement, 'receipts'));
+  }
+  assert.equal(Object.hasOwn(migrateDocument('config', { apps: [] }).value, 'enforcement'), false);
+});

@@ -180,3 +180,34 @@ test('NodeNext scans follow conditional exports for import, require and implied 
     assert.deepEqual(repeated.edges, graph.edges);
   });
 });
+
+test('package asset imports resolve under strict scans while a missing package asset stays a categorized failure', async () => {
+  await fixture({
+    'package.json': { name: 'site' },
+    'src/main.ts': 'import "reactflow/dist/style.css";\nimport "@scope/ui/theme.css";\nimport "./local.css";',
+    'src/local.css': 'a {}',
+    'node_modules/reactflow/package.json': { name: 'reactflow' },
+    'node_modules/reactflow/dist/style.css': 'a {}',
+    'node_modules/@scope/ui/package.json': { name: '@scope/ui', exports: { './theme.css': { style: './dist/theme.css' } } },
+    'node_modules/@scope/ui/dist/theme.css': 'a {}',
+  }, async (root, put) => {
+    const graph = await scanRepository(root, { writeConfig: false, strict: true });
+    assert.equal(graph.resolutionReport.length, 0);
+    assert.equal(graph.summary.unresolvedImports, 0);
+    assert.equal(graph.summary.missingAssets, 0);
+    assert.deepEqual(graph.apps.find((app) => app.root === '.').packages, ['@scope/ui', 'reactflow']);
+    await put('src/broken.ts', 'import "reactflow/dist/missing.css";\nimport "./nope";');
+    await assert.rejects(scanRepository(root, { writeConfig: false, strict: true }), /Strict scan failed \(2 problems\)[\s\S]*src\/broken\.ts:1: Cannot resolve asset 'reactflow\/dist\/missing\.css' \(missing\)/);
+    const loose = await scanRepository(root, { writeConfig: false });
+    assert.deepEqual(loose.resolutionReport.map((entry) => [entry.specifier, entry.category]), [['reactflow/dist/missing.css', 'asset'], ['./nope', 'module']]);
+    assert.equal(loose.summary.unresolvedImports, 2);
+    assert.equal(loose.summary.missingAssets, 1);
+    const health = loose.apps.find((app) => app.root === '.').health;
+    assert.equal(health.unresolvedImports, 2);
+    assert.equal(health.missingAssets, 1);
+    await put('src/other.ts', 'export const value = 1;');
+    const rescanned = await scanRepository(root, { writeConfig: false });
+    assert.deepEqual(rescanned.resolutionReport.map((entry) => entry.category).sort(), ['asset', 'module']);
+    assert.equal(rescanned.summary.missingAssets, 1);
+  });
+});

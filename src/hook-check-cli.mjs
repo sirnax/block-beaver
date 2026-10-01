@@ -31,4 +31,6 @@ try {
     if (output && remaining() > 0) process.stdout.write(JSON.stringify(output) + '\n');
   }
 } catch { /* Agent context must fail open, including malformed flags and cache state. */ }
-process.exit(0);
+// Flush stdout before the forced exit so a piped hook response is not truncated.
+process.exitCode = 0;
+process.stdout.write('', () => process.exit(0));

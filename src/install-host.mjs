@@ -437,19 +437,56 @@ function installCommands(pm, { runner }) {
 
 const versionLine = (ctx) => (typeof ctx.version === 'string' && ctx.version ? `# block-beaver:version ${ctx.version}\n` : '');
 
+export const DEFAULT_CI_NODE = '24';
+const MINIMUM_CI_NODE = 22;
+
+function majorFrom(text) {
+  const match = typeof text === 'string' ? text.match(/(?<!\d)(\d{1,2})(?!\d)/) : null;
+  return match ? match[1] : null;
+}
+
+/**
+ * Pure node-version selection for managed CI, in order: .nvmrc, .node-version, package.json
+ * engines.node, then the default. `image` is the major the GitLab image tag uses, or null.
+ */
+export function nodeSetupFrom({ nvmrc = null, nodeVersion = null, engines = null } = {}) {
+  if (typeof nvmrc === 'string' && nvmrc.trim()) return { yaml: 'node-version-file: .nvmrc', image: majorFrom(nvmrc) };
+  if (typeof nodeVersion === 'string' && nodeVersion.trim()) return { yaml: 'node-version-file: .node-version', image: majorFrom(nodeVersion) };
+  if (typeof engines === 'string' && engines.trim()) return { yaml: `node-version: '${engines.trim().replace(/\s+/g, ' ').replaceAll("'", "''")}'`, image: majorFrom(engines) };
+  return { yaml: `node-version: '${DEFAULT_CI_NODE}'`, image: DEFAULT_CI_NODE };
+}
+
+/** The repository's Node version for CI; unreadable version files fall through to the next source. */
+async function ciNodeSetup(ctx) {
+  const optional = async (path) => {
+    if (!await exists(ctx, path)) return null;
+    try { return await readProjectFile(ctx.root, path); }
+    catch { return null; }
+  };
+  const setup = nodeSetupFrom({ nvmrc: await optional('.nvmrc'), nodeVersion: await optional('.node-version'), engines: ctx.manifest?.engines?.node });
+  if (setup.image !== null && Number(setup.image) < MINIMUM_CI_NODE) {
+    diagnose(ctx, 'ci-node-below-minimum', 'warning', `The repository's Node version (${setup.image}) is below ${MINIMUM_CI_NODE}, and Block Beaver requires Node >=22.18, so the managed CI job will fail.`,
+      { remediation: 'Raise the Node version in .nvmrc, .node-version or package.json engines, or run the audit in your own CI.' });
+  }
+  return setup;
+}
+
 function githubWorkflow(ctx, pm, legacy = false) {
   const steps = [];
   if (pm.id === 'bun') steps.push('      - uses: oven-sh/setup-bun@v2');
   for (const command of installCommands(pm, { runner: 'github' })) steps.push(`      - run: ${command}`);
   const local = legacy ? 'npx --no-install block-beaver' : localBlockBeaverCommand(pm);
   const refresh = legacy ? '' : `      - name: Regenerate the block view\n        run: ${local} update --root .\n`;
-  return `${ciMarker}\n${legacy ? '' : `${begin}\n`}${versionLine(ctx)}name: Block Beaver audit\non:\n  pull_request:\n    types: [opened, synchronize, reopened]\npermissions:\n  contents: read\njobs:\n  block-beaver-audit:\n    runs-on: ubuntu-latest\n    steps:\n      - uses: actions/checkout@v4\n        with:\n          fetch-depth: 0\n      - uses: actions/setup-node@v4\n        with:\n          node-version: 22\n${steps.join('\n')}\n      - name: Fetch the pull request base\n        env:\n          BASE_REF: \${{ github.base_ref }}\n        run: git fetch --no-tags origin "+refs/heads/\${BASE_REF}:refs/remotes/origin/\${BASE_REF}"\n${refresh}      - name: Audit against the merge base\n        env:\n          BLOCK_BEAVER_BASE_REF: origin/\${{ github.base_ref }}\n        run: ${local} audit --base merge-base --strict\n${legacy ? '' : `${end}\n`}`;
+  // Unmarked 0.1.x and 0.4.0 files carry the old bytes; they are matched exactly so they can be adopted.
+  const [actionMajor, nodeLine] = legacy ? ['v4', 'node-version: 22'] : ['v7', (ctx.nodeSetup ?? nodeSetupFrom()).yaml];
+  return `${ciMarker}\n${legacy ? '' : `${begin}\n`}${versionLine(ctx)}name: Block Beaver audit\non:\n  pull_request:\n    types: [opened, synchronize, reopened]\npermissions:\n  contents: read\njobs:\n  block-beaver-audit:\n    runs-on: ubuntu-latest\n    steps:\n      - uses: actions/checkout@${actionMajor}\n        with:\n          fetch-depth: 0\n      - uses: actions/setup-node@${actionMajor}\n        with:\n          ${nodeLine}\n${steps.join('\n')}\n      - name: Fetch the pull request base\n        env:\n          BASE_REF: \${{ github.base_ref }}\n        run: git fetch --no-tags origin "+refs/heads/\${BASE_REF}:refs/remotes/origin/\${BASE_REF}"\n${refresh}      - name: Audit against the merge base\n        env:\n          BLOCK_BEAVER_BASE_REF: origin/\${{ github.base_ref }}\n        run: ${local} audit --base merge-base --strict\n${legacy ? '' : `${end}\n`}`;
 }
 
 function gitlabJob(ctx, pm, legacy = false) {
   const install = installCommands(pm, { runner: 'gitlab' }).map((command) => `    - ${command}`).join('\n');
   const local = legacy ? 'npx --no-install block-beaver' : localBlockBeaverCommand(pm);
-  return `${ciMarker}\n${legacy ? '' : `${begin}\n`}${versionLine(ctx)}block_beaver_audit:\n  image: node:22\n  stage: .pre\n  variables:\n    GIT_DEPTH: '0'\n  rules:\n    - if: '$CI_PIPELINE_SOURCE == "merge_request_event"'\n  script:\n${install}\n    - git fetch --no-tags origin "+refs/heads/$CI_MERGE_REQUEST_TARGET_BRANCH_NAME:refs/remotes/origin/$CI_MERGE_REQUEST_TARGET_BRANCH_NAME"\n${legacy ? '' : `    - ${local} update --root .\n`}    - BLOCK_BEAVER_BASE_REF="origin/$CI_MERGE_REQUEST_TARGET_BRANCH_NAME" ${local} audit --base merge-base --strict\n${legacy ? '' : `${end}\n`}`;
+  const image = legacy ? '22' : ((ctx.nodeSetup ?? nodeSetupFrom()).image ?? DEFAULT_CI_NODE);
+  return `${ciMarker}\n${legacy ? '' : `${begin}\n`}${versionLine(ctx)}block_beaver_audit:\n  image: node:${image}\n  stage: .pre\n  variables:\n    GIT_DEPTH: '0'\n  rules:\n    - if: '$CI_PIPELINE_SOURCE == "merge_request_event"'\n  script:\n${install}\n    - git fetch --no-tags origin "+refs/heads/$CI_MERGE_REQUEST_TARGET_BRANCH_NAME:refs/remotes/origin/$CI_MERGE_REQUEST_TARGET_BRANCH_NAME"\n${legacy ? '' : `    - ${local} update --root .\n`}    - BLOCK_BEAVER_BASE_REF="origin/$CI_MERGE_REQUEST_TARGET_BRANCH_NAME" ${local} audit --base merge-base --strict\n${legacy ? '' : `${end}\n`}`;
 }
 
 function ciContent(ctx, path, before, desired, pm, render) {
@@ -511,6 +548,7 @@ async function planCi(ctx) {
     return;
   }
   const pm = await detectPackageManager(ctx);
+  ctx.nodeSetup = await ciNodeSetup(ctx);
 
   if (github) {
     if (pm.ambiguous) conflict(ctx, 'ambiguous-package-manager', workflowPath, `Several lockfiles exist (${pm.ambiguous.join(', ')}), so the CI install command is ambiguous.`, 'Keep one lockfile, or add the audit step to your CI yourself.');

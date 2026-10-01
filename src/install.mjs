@@ -11,8 +11,11 @@ import { preflightHostHooks, applyHostHooks, preflightProjectModes, applyProject
 import { detectPackageManager, planPackageChange, runPackageChange } from './package-manager.mjs';
 import { migrateDocument } from './migrations.mjs';
 import { auditCounts } from './audit-rules.mjs';
+import { recordManagedSetup } from './compliance.mjs';
+import { gitHead } from './compliance-git.mjs';
 
 const json = (value) => `${JSON.stringify(value, null, 2)}\n`;
+const packageManagerFiles = ['package-lock.json', 'npm-shrinkwrap.json', 'pnpm-lock.yaml', 'pnpm-workspace.yaml', 'yarn.lock', 'bun.lock', 'bun.lockb'];
 const agentTargets = { claude: ['CLAUDE.md', '.claude'], codex: ['AGENTS.md', '.codex', '.agents'], cursor: ['.cursor'], copilot: ['.github/copilot-instructions.md'] };
 
 async function document(root, path) {
@@ -105,6 +108,16 @@ function combine(plans) {
   return [...files.values()];
 }
 
+function enforcementSummary(config) {
+  const { agents, gate, receipts = 'required' } = config.enforcement;
+  const message = {
+    required: 'Structural rules gate commits; review receipts are required. Set enforcement.receipts to "optional" in .blocks/config.json to make them advisory.',
+    optional: 'Structural rules gate commits; review receipts are optional (advisory). Set enforcement.receipts to "required" in .blocks/config.json to require them.',
+    off: 'Structural rules gate commits; review receipts are off. Set enforcement.receipts to "optional" or "required" in .blocks/config.json to use them.',
+  };
+  return { enforcement: { agents, gate, receipts }, gate: message[receipts] };
+}
+
 async function execute(root, operation, options) {
   const version = options.version ?? JSON.parse(await readFile(new URL('../package.json', import.meta.url), 'utf8')).version;
   const marker = await document(root, '.blocks/install.json');
@@ -126,8 +139,12 @@ async function execute(root, operation, options) {
     if (config.enforcement !== undefined && (!config.enforcement || typeof config.enforcement !== 'object' || Array.isArray(config.enforcement))) throw new Error('config enforcement must be an object.');
     if (config.enforcement?.agents !== undefined && !['guide', 'block'].includes(config.enforcement.agents)) throw new Error('config enforcement.agents must be guide or block.');
     if (config.enforcement?.gate !== undefined && config.enforcement.gate !== 'audit') throw new Error('config enforcement.gate must be audit.');
+    if (config.enforcement?.receipts !== undefined && !['required', 'optional', 'off'].includes(config.enforcement.receipts)) throw new Error('config enforcement.receipts must be required, optional, or off.');
+    // A new config or a fresh adoption starts with advisory receipts. An existing install, or an
+    // upgrade of an existing config, keeps the stricter "required" default when the key is absent.
+    const freshAdoption = configFile.before === null || (operation === 'install' && marker.before === null);
     config.blockBeaver = version;
-    config.enforcement = { agents: 'guide', gate: 'audit', ...config.enforcement };
+    config.enforcement = { agents: 'guide', gate: 'audit', ...(freshAdoption ? { receipts: 'optional' } : {}), ...config.enforcement };
   }
   config ??= { schemaVersion: 1, apps: [] };
   const manager = options.manager ?? await detectPackageManager(root);
@@ -172,7 +189,10 @@ async function execute(root, operation, options) {
   await preflightProjectModes(root, host.files);
   const diff = [...files, ...hooks].filter((file) => file.before !== file.content);
   const result = { operation, version, agents, changed: [], diff, diagnostics, conflicts, commands: packagePlan.commands, dryRun: Boolean(options.dryRun), complete: false, view: view && '.blocks/view/index.html' };
+  if (operation !== 'uninstall') Object.assign(result, enforcementSummary(config));
   if (options.dryRun || conflicts.length) return result;
+  const packageOwned = new Map();
+  for (const path of packageManagerFiles) packageOwned.set(path, await readProjectFile(root, path).catch(() => undefined));
   result.executions = await runPackageChange(root, packagePlan, { runner: options.runner, dryRun: false });
   const pkg = (await document(root, 'package.json')).value;
   if (operation === 'uninstall' ? (pkg.devDependencies?.['block-beaver'] !== undefined || pkg.dependencies?.['block-beaver'] !== undefined)
@@ -181,6 +201,8 @@ async function execute(root, operation, options) {
   result.changed.push(...await applyProjectModes(root, host.files));
   result.changed.push(...await applyHostHooks(root, hooks));
   for (const file of files.filter((item) => item.commandOwned)) if (await readProjectFile(root, file.path) !== file.before) result.changed.push(file.path);
+  // The package manager also rewrites its lockfile and workspace file; the setup exception must cover them.
+  for (const [path, before] of packageOwned) if (await readProjectFile(root, path).catch(() => undefined) !== before) result.changed.push(path);
   result.changed = [...new Set(result.changed)];
   if (operation === 'uninstall' && options.removeData) {
     const directories = dataDirectories;
@@ -194,6 +216,16 @@ async function execute(root, operation, options) {
     }
   }
   result.complete = true;
+  if (operation !== 'uninstall') {
+    // Written last so it covers the final bytes; later owner edits correctly become stale. Uninstall
+    // records none because it also removes the hook, which is a known limit.
+    try { result.exception = await recordManagedSetup(root, { label: operation, paths: result.changed }); }
+    catch (error) {
+      result.exception = { status: 'incomplete', reason: error.message };
+      // Without a committed base there is nothing to gate yet, so the install still counts.
+      if (await gitHead(root).then(() => true, () => false)) result.complete = false;
+    }
+  }
   return result;
 }
 

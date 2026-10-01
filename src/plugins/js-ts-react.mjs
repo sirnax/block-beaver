@@ -56,7 +56,7 @@ function links(files, fileSet, addEdge, context = {}) {
       const target = resolution?.path;
       const proof = evidence(path, source, statement);
       if (!target || !fileSet.has(target)) {
-        if (!resolution?.external) context.reportUnresolved?.(path, specifier, proof, resolution?.error || (target ? `Resolved file is outside scanned source: ${target}` : `Cannot resolve module '${specifier}'`));
+        if (!resolution?.external) context.reportUnresolved?.(path, specifier, proof, resolution?.error || (target ? `Resolved file is outside scanned source: ${target}` : `Cannot resolve module '${specifier}'`), resolution?.category);
         continue;
       }
       addEdge(`file:${path}`, `file:${target}`, kind, proof);

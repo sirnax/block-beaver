@@ -6,6 +6,7 @@ import { changedPaths, git, gitHead, sha256, versionBytes } from './compliance-g
 import { recordException } from './compliance.mjs';
 import { readProjectFile, writeProjectFiles } from './project-files.mjs';
 import { remoteProvider } from './git-remote.mjs';
+import { DEFAULT_CI_NODE, nodeSetupFrom } from './install-host.mjs';
 
 const marker = '# block-beaver:managed-ci';
 const begin = '# block-beaver:start';
@@ -27,15 +28,22 @@ async function sourceInstallSpec() {
   return { version, spec: `block-beaver@${version}` };
 }
 
-function githubWorkflow(spec) {
-  return `${marker}\nname: Block Beaver compliance\non:\n  pull_request:\n    types: [opened, synchronize, reopened]\npermissions:\n  contents: read\njobs:\n  audit:\n    runs-on: ubuntu-latest\n    steps:\n      - uses: actions/checkout@v4\n        with:\n          fetch-depth: 0\n      - uses: actions/setup-node@v4\n        with:\n          node-version: '22'\n      - run: npm install --no-save --ignore-scripts '${spec}'\n      - run: npx --no-install block-beaver audit --root . --base "\u0024{{ github.event.pull_request.base.sha }}"\n`;
+async function ciNode(root) {
+  const optional = async (path) => { try { return await readProjectFile(root, path); } catch { return null; } };
+  let engines = null;
+  try { engines = JSON.parse(await optional('package.json') ?? 'null')?.engines?.node ?? null; } catch { /* no usable manifest */ }
+  return nodeSetupFrom({ nvmrc: await optional('.nvmrc'), nodeVersion: await optional('.node-version'), engines });
 }
 
-function gitlabJob(spec) {
-  return `${marker}\nblock_beaver_audit:\n  image: node:22\n  stage: .pre\n  variables:\n    GIT_DEPTH: '0'\n  script:\n    - npm install --no-save --ignore-scripts '${spec}'\n    - npx --no-install block-beaver audit --root . --base "$CI_MERGE_REQUEST_DIFF_BASE_SHA"\n  rules:\n    - if: '$CI_PIPELINE_SOURCE == "merge_request_event"'\n`;
+function githubWorkflow(spec, node) {
+  return `${marker}\nname: Block Beaver compliance\non:\n  pull_request:\n    types: [opened, synchronize, reopened]\npermissions:\n  contents: read\njobs:\n  audit:\n    runs-on: ubuntu-latest\n    steps:\n      - uses: actions/checkout@v7\n        with:\n          fetch-depth: 0\n      - uses: actions/setup-node@v7\n        with:\n          ${node.yaml}\n      - run: npm install --no-save --ignore-scripts '${spec}'\n      - run: npx --no-install block-beaver audit --root . --base "\u0024{{ github.event.pull_request.base.sha }}"\n`;
 }
 
-async function installGitlab(root, spec) {
+function gitlabJob(spec, node) {
+  return `${marker}\nblock_beaver_audit:\n  image: node:${node.image ?? DEFAULT_CI_NODE}\n  stage: .pre\n  variables:\n    GIT_DEPTH: '0'\n  script:\n    - npm install --no-save --ignore-scripts '${spec}'\n    - npx --no-install block-beaver audit --root . --base "$CI_MERGE_REQUEST_DIFF_BASE_SHA"\n  rules:\n    - if: '$CI_PIPELINE_SOURCE == "merge_request_event"'\n`;
+}
+
+async function installGitlab(root, spec, node) {
   const job = '.blocks/ci/gitlab.yml';
   const beforeJob = await readProjectFile(root, job);
   if (beforeJob !== null && !beforeJob.startsWith(`${marker}\n`)) throw new Error(`Existing CI file is not Block Beaver managed: ${job}`);
@@ -51,7 +59,7 @@ async function installGitlab(root, spec) {
     if (/^include\s*:/m.test(before)) throw new Error('Existing GitLab include needs manual integration; CI gate is incomplete.');
     content = before + (before.endsWith('\n') ? '\n' : '\n\n') + section + '\n';
   }
-  return await writeProjectFiles(root, [{ path: job, before: beforeJob, content: gitlabJob(spec) }, { path: config, before, content }]);
+  return await writeProjectFiles(root, [{ path: job, before: beforeJob, content: gitlabJob(spec, node) }, { path: config, before, content }]);
 }
 
 async function installHook(root) {
@@ -133,12 +141,13 @@ export async function installCompliance(root, integrationChanged = []) {
   try { spec = (await sourceInstallSpec()).spec; }
   catch (error) { ci.status = 'incomplete'; ci.reason = `Cannot resolve Block Beaver source commit: ${error.message}`; }
   if (spec) {
+    const node = await ciNode(root);
     if (detected.github) {
-      try { ci.github = { status: 'installed', changed: await managedFile(root, '.github/workflows/block-beaver.yml', githubWorkflow(spec)) }; }
+      try { ci.github = { status: 'installed', changed: await managedFile(root, '.github/workflows/block-beaver.yml', githubWorkflow(spec, node)) }; }
       catch (error) { ci.github = { status: 'incomplete', reason: error.message }; }
     }
     if (detected.gitlab) {
-      try { ci.gitlab = { status: 'installed', changed: await installGitlab(root, spec) }; }
+      try { ci.gitlab = { status: 'installed', changed: await installGitlab(root, spec, node) }; }
       catch (error) { ci.gitlab = { status: 'incomplete', reason: error.message }; }
     }
     if (!detected.github && !detected.gitlab) ci.status = 'incomplete', ci.reason = 'No GitHub or GitLab project was detected. Use block-beaver audit in your CI.';
