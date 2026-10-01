@@ -42,6 +42,10 @@ const samePaths = (left, right) => {
   return left.length === right.length && [...left].sort().every((path, i) => path === sorted[i]);
 };
 
+// Only managed: true exceptions carry this verification command, so an owner-authored exception cannot pose as setup.
+const MANAGED_SETUP_COMMAND = 'Block Beaver managed setup';
+const isManagedSetup = (receipt) => receipt.type === 'exception' && receipt.verification?.some((check) => check.command === MANAGED_SETUP_COMMAND);
+
 // Strictness ascends so the stricter of two configured levels is the larger rank.
 const RECEIPT_LEVELS = ['off', 'optional', 'required'];
 const receiptLevel = (document) => {
@@ -249,6 +253,29 @@ async function snapshotDependencies(source, target) {
   await discover(source);
 }
 
+/**
+ * Managed paths that Git ignores in the audit snapshot and that the snapshot does not contain.
+ * They exist only on the machine that installed them, so staged and range audits cannot check
+ * them; working audits read the real files and never use this.
+ */
+async function localOnlyPaths(root, mode, paths) {
+  const candidates = [...new Set(paths.filter((path) => typeof path === 'string' && validPath(path)))];
+  if (mode === 'working' || !candidates.length) return new Set();
+  const { ignoredPaths } = await import('./install-host.mjs');
+  const ignored = await ignoredPaths(root, candidates, { isolated: true });
+  const local = new Set();
+  for (const path of ignored || []) if (await readProjectFile(root, path).catch(() => undefined) === null) local.add(path);
+  return local;
+}
+
+function routeManaged(finding, local, findings, advisories) {
+  if (!finding.path || !local.has(finding.path)) { findings.push(finding); return; }
+  if (advisories.some((entry) => entry.code === 'ignored-managed-local' && entry.path === finding.path)) return;
+  advisories.push({ code: 'ignored-managed-local', severity: 'info', path: finding.path,
+    message: `${finding.path} is managed but ignored by git, so it exists only on that machine and staged or CI audits cannot check it.`,
+    remediation: 'Run block-beaver install --fix-ignores to un-ignore only the managed paths so they can be committed and checked.' });
+}
+
 async function structuralRules(root, { strict, familyDrift, mode, priorBaseline }) {
   const configDocument = await readJson(root, '.blocks/config.json');
   const installDocument = await readJson(root, '.blocks/install.json');
@@ -287,14 +314,17 @@ async function structuralRules(root, { strict, familyDrift, mode, priorBaseline 
     try {
       const { planManagedFiles } = await import('./managed-files.mjs');
       const plan = await planManagedFiles({ root, version, config: configDocument.value || {}, agents: installDocument.value?.agents || [], operation: 'upgrade', force: true });
-      for (const file of plan.files) if (file.before !== file.content) managedFindings.push({ path: file.path, message: 'Managed content differs from this package version.', remediation: 'block-beaver upgrade' });
-      for (const conflict of plan.conflicts || []) managedFindings.push(typeof conflict === 'string' ? { message: conflict } : conflict);
+      const differing = plan.files.filter((file) => file.before !== file.content);
+      const local = await localOnlyPaths(root, mode, [...differing.map((file) => file.path), ...(plan.conflicts || []).map((conflict) => conflict?.path)]);
+      for (const file of differing) routeManaged({ path: file.path, message: 'Managed content differs from this package version.', remediation: 'block-beaver upgrade' }, local, managedFindings, managedAdvisories);
+      for (const conflict of plan.conflicts || []) routeManaged(typeof conflict === 'string' ? { message: conflict } : conflict, local, managedFindings, managedAdvisories);
     } catch (error) { managedFindings.push({ message: `Cannot validate managed content: ${error.message}`, remediation: 'block-beaver upgrade' }); }
     try {
       const { planHostSetup } = await import('./install-host.mjs');
       const host = await planHostSetup(root, { version, config: configDocument.value || {}, agents: installDocument.value?.agents || [], operation: 'upgrade', force: true, isolatedGit: mode !== 'working' });
+      const hostLocal = await localOnlyPaths(root, mode, [...host.files.filter((file) => file.before !== file.content).map((file) => file.path), ...(host.conflicts || []).map((conflict) => conflict?.path)]);
       for (const file of host.files) {
-        if (file.before !== file.content) managedFindings.push({ path: file.path, message: 'Managed host content differs from this package version.', remediation: 'block-beaver upgrade' });
+        if (file.before !== file.content) routeManaged({ path: file.path, message: 'Managed host content differs from this package version.', remediation: 'block-beaver upgrade' }, hostLocal, managedFindings, managedAdvisories);
         if (file.mode !== undefined && file.before !== null && !fileModeMatches((await lstat(join(root, file.path))).mode, file.mode)) managedFindings.push({ path: file.path, message: 'Managed host file has an incorrect executable mode.', remediation: 'block-beaver upgrade' });
       }
       if (mode === 'range') managedAdvisories.push({ code: 'bare-hook-range-skip', severity: 'info', message: 'Bare Git metadata hook availability and mode are skipped in range audits because fresh CI clones do not contain installed .git/hooks; tracked hooks and CI remain checked.' });
@@ -302,7 +332,7 @@ async function structuralRules(root, { strict, familyDrift, mode, priorBaseline 
         const current = await safeHookBytes(hook.absolutePath);
         if (current?.content !== hook.content || !current || !fileModeMatches(current.mode, hook.mode ?? 0o755)) managedFindings.push({ path: hook.path, message: 'Git pre-commit hook differs from the required managed step.', remediation: 'block-beaver upgrade' });
       }
-      for (const conflict of host.conflicts || []) managedFindings.push(conflict);
+      for (const conflict of host.conflicts || []) routeManaged(conflict, hostLocal, managedFindings, managedAdvisories);
       for (const diagnostic of host.diagnostics || []) {
         if (diagnostic.severity === 'error' || ['git-unavailable', 'invalid-config', 'unknown-agent'].includes(diagnostic.code)) managedFindings.push(diagnostic);
         else managedAdvisories.push(diagnostic);
@@ -363,8 +393,12 @@ export async function auditProject(inputRoot, { mode = 'working', base = null, s
     const after = hash(await versionBytes(root, item.path, mode, base));
     const previousMode = await baseMode(root, item.path, mode, base);
     const currentMode = await versionMode(root, item.path, mode, base);
-    const candidates = evidence.valid.filter((receipt) => receipt.paths.some((entry) => entry.path === item.path));
-    const matches = candidates.filter((receipt) => receipt.paths.some((entry) => entry.path === item.path && entry.beforeSha256 === before && entry.afterSha256 === after && entry.beforeMode === previousMode && entry.afterMode === currentMode));
+    const covering = evidence.valid.filter((receipt) => receipt.paths.some((entry) => entry.path === item.path));
+    // Config is owner-controlled and validated by config-valid. A managed setup exception that
+    // covers it may accept the exact bytes install wrote, but it never goes stale when the owner
+    // edits it afterwards; the edit follows the effective receipts level like any other change.
+    const candidates = item.path === '.blocks/config.json' ? covering.filter((receipt) => !isManagedSetup(receipt)) : covering;
+    const matches = covering.filter((receipt) => receipt.paths.some((entry) => entry.path === item.path && entry.beforeSha256 === before && entry.afterSha256 === after && entry.beforeMode === previousMode && entry.afterMode === currentMode));
     const kind = sourceExtensions.test(item.path) ? 'source' : item.path.startsWith('.blocks/manifests/') ? 'manifest' : 'other';
     const accepted = matches.find((receipt) => kind === 'other' ? receipt.type === 'exception' : receipt.type === 'block');
     let status = accepted ? (accepted.type === 'block' ? 'approved-block' : 'verified-exception')
@@ -479,7 +513,7 @@ export async function recordException(inputRoot, id, { reason, paths, check = nu
     if (!changed.has(path)) throw new Error(`Exception path has no current change: ${path}`);
     if (sourceExtensions.test(path) || internalPath(path)) throw new Error(`Exception cannot cover source or evidence file: ${path}`);
   }
-  const verification = managed ? [{ command: 'Block Beaver managed setup', pass: true, output: managedOutput }] : [await runCheck(root, check || '')];
+  const verification = managed ? [{ command: MANAGED_SETUP_COMMAND, pass: true, output: managedOutput }] : [await runCheck(root, check || '')];
   if (verification.some((item) => !item.pass)) throw new Error(`Exception verification failed: ${verification[0].output}`);
   const entries = [];
   for (const path of unique) {

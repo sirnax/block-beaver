@@ -57,6 +57,10 @@ explicit mapping from old keys to `family:id`.
 
 The structural rules (declared links, ratchets, view freshness, managed files, config and exception validity) gate commits at every level. The stricter of the base revision's level and the checked tree's level applies, so loosening the gate needs a commit that passes under the old level first. `audit` output reports the active level under `enforcement`.
 
+Edits to `.blocks/config.json` are owner-controlled: the managed setup exception never goes stale when you change it, and `config-valid` checks its contents. Such an edit follows the active level like any other changed file, so it needs a receipt or recorded exception only under `"required"`.
+
+Managed files that Git ignores (for example a fully ignored `.claude/`) exist only on the machine that installed them. Pre-commit and CI audits cannot see them, so they report an `ignored-managed-local` advisory instead of failing `managed-current`; working-tree audits still check the local files. Run `block-beaver install --fix-ignores` to un-ignore only the managed paths so they can be committed and checked.
+
 ## Project portability
 
 Commit the editor instructions, this workflow, and adopted manifests according to the project's versioning policy. Generated views and worktrees are ignored inside `.blocks/`. Another machine needs Node.js 22.18+ for family contract loading (or a configured loader package). Install this project’s locked dependencies using its package manager, then run its pinned Block Beaver through the local package-manager command (for npm, `npx --no-install block-beaver`). Source-checkout development can use `npm link`; installed projects use their pinned dependency. No machine-specific installation path belongs in these project instructions.

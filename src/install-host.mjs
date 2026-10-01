@@ -198,6 +198,18 @@ async function checkIgnore(ctx, paths) {
   return answers;
 }
 
+/**
+ * Which of these paths Git ignores in the repository at root, or null when Git could not answer.
+ * Tracked paths are never ignored. Audit snapshots use this to tell local-only managed files
+ * from ones that are genuinely missing.
+ */
+export async function ignoredPaths(root, paths, { isolated = false } = {}) {
+  if (!paths.length) return new Set();
+  const answers = await checkIgnore({ root, isolatedGit: isolated }, paths);
+  if (!answers) return null;
+  return new Set([...answers].filter(([, answer]) => answer.ignored).map(([path]) => path));
+}
+
 // ---- shell hooks (bare Git hook, Husky, in-repository hooksPath) ------------------------------
 
 function splitHead(text) {
@@ -674,7 +686,7 @@ async function planIgnores(ctx, agents) {
       continue;
     }
     if (!ctx.fixIgnores) {
-      diagnose(ctx, 'ignored-target', 'warning', `Block Beaver writes ${unit.path}, but it is ignored by ${answer.source}; without a change it exists only on this machine.`,
+      diagnose(ctx, 'ignored-target', 'warning', `Block Beaver writes ${unit.path}, but it is ignored by ${answer.source}, so it exists only on this machine: pre-commit and CI audits cannot see it and treat it as local-only. Run with --fix-ignores to commit it.`,
         { path: unit.path, source: answer.source, remediation: 'Run with --fix-ignores to un-ignore only the managed paths, keeping local settings and worktrees ignored.' });
       continue;
     }
