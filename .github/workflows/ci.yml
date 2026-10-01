@@ -78,6 +78,9 @@ jobs:
         run: npm ci --ignore-scripts
       - name: Install kernel bundle acceptance tooling
         run: npm install --no-save --package-lock=false --ignore-scripts esbuild@0.28.2
+      - name: Diagnose Windows workspace dependency loading
+        if: runner.os == 'Windows'
+        run: node --test --test-name-pattern="declaration resolutions" tests/family-loader.test.mjs
       - name: Validate release notes
         shell: bash
         run: node scripts/release-notes.mjs "v$(node -p 'require("./package.json").version')" release-notes.md
