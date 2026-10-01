@@ -6,7 +6,7 @@ Current branch: `codex/block-beaver-v0.4-design`.
 
 ## Status
 
-**A–C and release readiness are complete at 0.4.0.** Remote Linux/macOS/Windows CI, trusted native Codex execution, package checks and independent release reviews passed. The candidate branch is pushed; no package or GitHub release has been published. E remains deferred.
+**A–C and release readiness are complete at 0.4.0.** Remote Linux/macOS/Windows CI, trusted native Codex execution, package checks and independent release reviews passed. Block Beaver 0.4.0 is published to npm and GitHub. Fresh public-registry installation and complete onboarding checks passed. E remains deferred.
 Detailed current evidence: [final release acceptance](docs/tasks/2026-10-01-block-beaver-release-readiness.md#final-acceptance--complete).
 
 The owner approved CLI, scan/graph, generated/installed files and exported view/kernel public test seams, plus full local A–C scope. Workers did not delegate, commit, merge or publish. The primary integrated and committed reviewed changes. Only useful independent workers ran within the 16-worker limit.
@@ -87,16 +87,21 @@ Final 67-file tarball SHA1: `1044cc8a19fd727a34c29525cbb5d88d438ca4e1`; actual i
 
 Completed readiness workers: Sol medium CI portability, Codex trust and package smoke; Luna medium release documentation; Sol xhigh reviewed receipt integrity (escalated for cross-platform byte/mode attestation). Claude Sonnet 5.5 high and Opus 5.5 medium independently reviewed GPT changes. Primary integrated Windows native-path/module-identity fixes and final evidence. No workers remain active.
 
-Publication and Teacake adoption are the next separate steps; neither was performed. Follow [RELEASING](docs/RELEASING.md) for the concrete publication procedure. E stays deferred. Original browser/adoption evidence above remains the A–C snapshot; it is not presented as a new release-readiness browser run.
+Publication was subsequently authorized and completed as recorded below. Teacake adoption remains the next separate step. Follow [RELEASING](docs/RELEASING.md) for the concrete publication procedure. E stays deferred. Original browser/adoption evidence above remains the A–C snapshot; it is not presented as a new release-readiness browser run.
 
-## Publication in progress — owner authorized
+## Publication — complete
 
 - [x] Confirm npm/GitHub authentication and final published-install wording.
 - [x] Repack/dry-run final documentation artifact and independently verify exact tarball installation.
 - [x] Create protected-main release PR #13.
-- [ ] Resolve PR CodeQL findings: exact provider detection, legacy hook read race and ESLint cache consistency; independently classify false positives.
-- [ ] Refresh final source checks/live/package evidence and merge protected main.
-- [ ] Publish npm 0.4.0, verify registry integrity and onboarding.
-- [ ] Push immutable release tag and verify GitHub release.
+- [x] Fix exact provider detection, legacy hook read race and ESLint cache consistency; independently classify findings.
+- [x] Apply explicitly approved rescan dispositions for alerts18/19/20.
+- [x] Refresh final source platform checks, eight live-editor cases and package evidence at `5423ddc`.
+- [x] Merge protected main at `ffa9eef` after all PR checks passed.
+- [x] Publish npm 0.4.0 and verify public version integrity.
+- [x] Complete fresh standard registry installation/onboarding after index propagation.
+- [x] Push immutable release tag and verify public [GitHub release](https://github.com/sirnax/block-beaver/releases/tag/v0.4.0).
 
 The earlier readiness result covered successful CodeQL analysis; PR creation exposed its separate findings check. Publishing is held until those findings are resolved. Current owners: Sol medium provider/hook fixes, Sol xhigh ESLint cache and filesystem investigation, Claude Opus medium independent classification/review; primary integration/publication.
+
+Published: [npm block-beaver 0.4.0](https://www.npmjs.com/package/block-beaver/v/0.4.0) and [GitHub v0.4.0](https://github.com/sirnax/block-beaver/releases/tag/v0.4.0). Release commit `ffa9eef`; final artifact SHA1 `7f5d25b3806158a40044c604bd79f4b149a86877`. Public registry `latest` is 0.4.0 and exact integrity matches. Normal registry installation (no URL substitution or dependency normalization), all exports/types, custom generation, reviewed Claude/Codex onboarding, repeat/upgrade/uninstall and owner preservation passed. Teacake was not modified. All workers finished. Future test maintenance: make disposable Git-fixture cleanup resilient to transient ENOTEMPTY; the unchanged exact failed main job passed on rerun.
