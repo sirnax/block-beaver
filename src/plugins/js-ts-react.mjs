@@ -1,20 +1,14 @@
 import ts from 'typescript';
-import { extname, posix } from 'node:path';
+import { extname } from 'node:path';
 
 const extensions = new Set(['.js', '.jsx', '.mjs', '.cjs', '.ts', '.tsx', '.mts', '.cts']);
 const sourceKind = (name) => name.endsWith('.tsx') ? ts.ScriptKind.TSX : name.endsWith('.jsx') ? ts.ScriptKind.JSX : name.endsWith('.js') || name.endsWith('.mjs') || name.endsWith('.cjs') ? ts.ScriptKind.JS : ts.ScriptKind.TS;
+const sourceLines = new WeakMap();
 const evidence = (file, source, node) => {
+  if (!sourceLines.has(source)) sourceLines.set(source, source.text.split(/\r?\n/));
   const { line, character } = source.getLineAndCharacterOfPosition(node.getStart(source));
-  return { file, line: line + 1, column: character + 1, text: source.text.split(/\r?\n/)[line]?.trim().slice(0, 240) || '' };
+  return { file, line: line + 1, column: character + 1, text: sourceLines.get(source)[line]?.trim().slice(0, 240) || '' };
 };
-function resolveImport(from, specifier, fileSet) {
-  let base;
-  if (specifier.startsWith('.')) base = posix.normalize(posix.join(posix.dirname(from), specifier));
-  else if (specifier.startsWith('@/')) base = `src/${specifier.slice(2)}`;
-  else return null;
-  for (const path of [base, ...[...extensions].map((e) => base + e), ...[...extensions].map((e) => `${base}/index${e}`)]) if (fileSet.has(path)) return path;
-  return null;
-}
 function symbolKind(name, node, source) {
   if (ts.isClassDeclaration(node)) return 'class';
   if (/^use[A-Z]/.test(name)) return 'hook';
@@ -38,18 +32,34 @@ function declarations(source, path) {
   }
   return found.map((d) => ({ ...d, id: `symbol:${path}#${d.name}`, kind: symbolKind(d.name, d.node, source) }));
 }
-function links(files, fileSet, addEdge) {
+function links(files, fileSet, addEdge, context = {}) {
   for (const [path, file] of files) {
-    if (file.plugin !== jsTsReactPlugin) continue;
+    if (file.plugin !== jsTsReactPlugin || context.shouldLink?.(path) === false) continue;
     const { source, declarations } = file;
     const local = new Map(declarations.map((d) => [d.name, d.id]));
     const imported = new Map();
-    for (const statement of source.statements) {
-      if (!ts.isImportDeclaration(statement) && !ts.isExportDeclaration(statement)) continue;
-      if (!statement.moduleSpecifier || !ts.isStringLiteral(statement.moduleSpecifier)) continue;
-      const target = resolveImport(path, statement.moduleSpecifier.text, fileSet);
-      if (!target) continue;
-      addEdge(`file:${path}`, `file:${target}`, ts.isImportDeclaration(statement) ? 'imports' : 'reexports', evidence(path, source, statement));
+    const imports = [];
+    function collect(node) {
+      if ((ts.isImportDeclaration(node) || ts.isExportDeclaration(node)) && node.moduleSpecifier && ts.isStringLiteralLike(node.moduleSpecifier)) {
+        imports.push({ node, specifier: node.moduleSpecifier.text, kind: ts.isImportDeclaration(node) ? 'imports' : 'reexports' });
+      } else if (ts.isCallExpression(node) && node.arguments.length === 1 && ts.isStringLiteralLike(node.arguments[0]) &&
+        (node.expression.kind === ts.SyntaxKind.ImportKeyword || (ts.isIdentifier(node.expression) && node.expression.text === 'require'))) {
+        imports.push({ node, specifier: node.arguments[0].text, kind: 'imports', mode: node.expression.kind === ts.SyntaxKind.ImportKeyword ? 'import' : 'require' });
+      } else if (ts.isImportEqualsDeclaration(node) && ts.isExternalModuleReference(node.moduleReference) && node.moduleReference.expression && ts.isStringLiteralLike(node.moduleReference.expression)) {
+        imports.push({ node, specifier: node.moduleReference.expression.text, kind: 'imports', mode: 'require' });
+      }
+      ts.forEachChild(node, collect);
+    }
+    collect(source);
+    for (const { node: statement, specifier, kind, mode } of imports) {
+      const resolution = context.resolveImport?.(path, specifier, { mode });
+      const target = resolution?.path;
+      const proof = evidence(path, source, statement);
+      if (!target || !fileSet.has(target)) {
+        if (!resolution?.external) context.reportUnresolved?.(path, specifier, proof, resolution?.error || (target ? `Resolved file is outside scanned source: ${target}` : `Cannot resolve module '${specifier}'`));
+        continue;
+      }
+      addEdge(`file:${path}`, `file:${target}`, kind, proof);
       if (!ts.isImportDeclaration(statement) || !statement.importClause || statement.importClause.isTypeOnly) continue;
       const clause = statement.importClause;
       if (clause.name) {

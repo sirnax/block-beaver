@@ -1,8 +1,6 @@
 # Block Beaver v0.2 design: multi-app projects, install and upgrades, families
 
-**Status:** design agreed with the owner on 2026-10-01. Not yet planned or implemented.
-Each sub-project below gets its own implementation plan, in order: A, then B, then C.
-E is a direction for later versions, not a design.
+**Status:** design agreed with the owner on 2026-10-01. A–C implementation is in progress locally; release verification and gates remain pending. See the linked A/B/C implementation plans and `ROADMAP.md` for live status. E is a direction for later versions, not a design.
 
 ## Why
 

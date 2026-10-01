@@ -1,5 +1,5 @@
 import { constants } from 'node:fs';
-import { lstat, mkdir, open, realpath } from 'node:fs/promises';
+import { lstat, mkdir, open, realpath, unlink } from 'node:fs/promises';
 import { dirname, join, resolve } from 'node:path';
 
 async function projectPath(root, relative) {
@@ -38,6 +38,18 @@ export async function writeProjectFiles(root, files) {
   for (const file of files) {
     if (file.before === file.content) continue;
     const { base, path } = await projectPath(root, file.path);
+    if (file.content === null) {
+      const handle = await open(path, constants.O_RDONLY | constants.O_NOFOLLOW);
+      try {
+        const info = await handle.stat();
+        if (!info.isFile() || info.nlink !== 1 || await handle.readFile('utf8') !== file.before) throw new Error(`File changed during integration: ${file.path}`);
+        const current = await lstat(path);
+        if (current.ino !== info.ino || current.dev !== info.dev) throw new Error(`File changed during integration: ${file.path}`);
+        await unlink(path);
+        changed.push(file.path);
+      } finally { await handle.close(); }
+      continue;
+    }
     await mkdir(dirname(path), { recursive: true });
     if (await realpath(dirname(path)) !== dirname(path)) throw new Error(`Integration parent changed: ${file.path}`);
     const flags = file.before === null ? constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL | constants.O_NOFOLLOW : constants.O_RDWR | constants.O_NOFOLLOW;

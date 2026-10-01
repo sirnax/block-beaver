@@ -282,7 +282,7 @@ export async function checkSlice(root, roadmapId, sliceId, graph, { recordEvent 
       const legacyPass = !previousEvidence && [...await events(root, roadmapId)].reverse().find((event) => event.slice === sliceId && event.type === 'checks-passed' && !event.result?.snapshot);
       const prepared = await prepareWorktree(root, roadmapId, sliceId, proposal, roadmap, previousEvidence, legacyPass);
       result.worktree = prepared.worktree;
-      const commands = graph.adapter === 'teacake' ? [...(proposal.manifest.verification || []), 'pnpm blocks:check'] : proposal.manifest.verification;
+      const commands = proposal.manifest.verification;
       result.verification = await runVerification(result.worktree, commands);
       result.pass = result.verification.every((check) => check.pass);
       const snapshot = await captureWorktreeSnapshot(prepared.worktree, prepared.baseCommit, prepared.manifestPath);
@@ -305,6 +305,7 @@ export async function review(root, roadmapId, sliceId, graph) {
   const check = await checkSlice(root, roadmapId, sliceId, graph, { recordEvent: false, prepare: false });
   const sliceEvents = (await events(root, roadmapId)).filter((event) => event.slice === sliceId);
   const lastPass = [...sliceEvents].reverse().find((event) => event.type === 'checks-passed');
+  const lastCheck = [...sliceEvents].reverse().find((event) => event.type === 'checks-passed' || event.type === 'checks-failed');
   const currentStatus = (await resume(root, roadmapId)).slices[sliceId]?.status;
   const worktree = worktreeAt(root, roadmapId, sliceId);
   let snapshot;
@@ -335,7 +336,9 @@ export async function review(root, roadmapId, sliceId, graph) {
     if (patchOp(patch) !== 'create') before = await readFile(join(root, patch.path), 'utf8');
     return { path: patch.path, op: patchOp(patch), before, after: patch.content, baseHash: patch.baseHash };
   }));
-  return { slice: sliceId, check, target: manifestRelativePath(sliceId), proposedContent: JSON.stringify(proposal.manifest, null, 2) + '\n', patches, changeSet, integrity, files: proposal.manifest.files, events: sliceEvents };
+  return { slice: sliceId, check, readyForApproval: check.pass && integrity.matches && currentStatus === 'checked',
+    lastVerification: lastCheck ? { pass: lastCheck.type === 'checks-passed', verification: lastCheck.result?.verification || [] } : null,
+    target: manifestRelativePath(sliceId), proposedContent: JSON.stringify(proposal.manifest, null, 2) + '\n', patches, changeSet, integrity, files: proposal.manifest.files, events: sliceEvents };
 }
 
 function reviewBytes(value, sha256) {

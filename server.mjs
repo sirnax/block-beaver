@@ -3,7 +3,7 @@ import { readFile, readdir } from 'node:fs/promises';
 import { fileURLToPath } from 'node:url';
 import { dirname, extname, join, normalize, resolve, sep } from 'node:path';
 import { scanRepository } from './src/scanner.mjs';
-import { attachTeacakeRegistry, attachLocalRegistry } from './src/adapter.mjs';
+import { attachProjectRegistry } from './src/adapter.mjs';
 import { inspect, search } from './src/graph.mjs';
 import { suggestBoundaries, makeProposal, connectionProposal } from './src/contracts.mjs';
 import { resume } from './src/workflow.mjs';
@@ -29,7 +29,7 @@ createServer(async (request, response) => {
     if (url.pathname === '/api/meta') return json(response, 200, { root: initialRoot, hasGraph: !!graph });
     if (url.pathname === '/api/scan' && request.method === 'POST') {
       const input = await body(request);
-      graph = await attachTeacakeRegistry(await attachLocalRegistry(await scanRepository(resolve(input.root || initialRoot))));
+      graph = await attachProjectRegistry(await scanRepository(resolve(input.root || initialRoot), { writeConfig: false }));
       return json(response, 200, graph);
     }
     if (url.pathname === '/api/graph') return json(response, graph ? 200 : 404, graph || { error: 'Scan a repository first.' });

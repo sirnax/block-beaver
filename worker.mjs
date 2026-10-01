@@ -2,7 +2,7 @@ import { createServer } from 'node:http';
 import { resolve } from 'node:path';
 import { timingSafeEqual } from 'node:crypto';
 import { scanRepository } from './src/scanner.mjs';
-import { attachLocalRegistry, attachTeacakeRegistry } from './src/adapter.mjs';
+import { attachProjectRegistry } from './src/adapter.mjs';
 import { inspect, search } from './src/graph.mjs';
 import { makeProposal, suggestBoundaries } from './src/contracts.mjs';
 import { createRoadmap, propose, repair, checkSlice, review, approve, reject, resume } from './src/workflow.mjs';
@@ -25,7 +25,7 @@ async function body(request) {
   for await (const chunk of request) { raw += chunk; if (raw.length > 2_000_000) throw new Error('Request too large.'); }
   return raw ? JSON.parse(raw) : {};
 }
-async function graph() { return attachTeacakeRegistry(await attachLocalRegistry(await scanRepository(root))); }
+async function graph() { return attachProjectRegistry(await scanRepository(root)); }
 
 export async function dispatch(action, input = {}) {
   if (action === 'resume') return resume(root, input.roadmapId);
