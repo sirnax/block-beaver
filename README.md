@@ -17,11 +17,11 @@ Block Beaver makes the shape of a codebase visible. Scan a JavaScript, TypeScrip
 
 **[Project page](https://sirnax.github.io/block-beaver/)** · **[Get started](#quick-start)** · **[How it works](#how-it-works)** · **[Working in blocks](docs/BLOCK_WORKFLOW.md)** · **[CLI and workflow](#propose-a-block)** · **[Plan](docs/tasks/block-studio.md)** · **[Contribute](CONTRIBUTING.md)**
 
-> **This is an early release.** The graph is an aid to review, not a complete static analysis. Block Beaver is [Apache-2.0 licensed](LICENSE). The package and release changes described here are local until a release is published.
+> **This is an early release.** The graph is an aid to review, not a complete static analysis. Block Beaver is [Apache-2.0 licensed](LICENSE).
 
 ## Supported environments
 
-The CLI and local browser console run with **Node.js 22.18+, 24, or 26**. Family contract loading uses Node's built-in TypeScript stripping and `module.registerHooks`, so it requires Node 22.18+ (or a compatible newer release). A repository can configure its own TypeScript loader package with `.blocks/config.json`'s `loader` field. CI checks Linux on Node 22.18.0, 22, 24, and 26 and macOS and Windows on Node 24. The scanner reads JavaScript, JSX, TypeScript, and TSX, including MJS, CJS, MTS, and CTS files. Git is needed for roadmap checks and worktrees. Install from this checkout with `npm ci` and `npm link` until a release is published.
+The CLI and local browser console run with **Node.js 22.18+, 24, or 26**. Family contract loading uses Node's built-in TypeScript stripping and `module.registerHooks`, so it requires Node 22.18+ (or a compatible newer release). A repository can configure its own TypeScript loader package with `.blocks/config.json`'s `loader` field. CI checks Linux on Node 22.18.0, 22, 24, and 26 and macOS and Windows on Node 24. The scanner reads JavaScript, JSX, TypeScript, and TSX, including MJS, CJS, MTS, and CTS files. Git is needed for roadmap checks and worktrees. Install the published CLI with `npm install --save-dev --save-exact block-beaver@0.4.0`. Source contributors can use `npm ci` and `npm link` from this checkout.
 
 ## Why use it?
 
@@ -33,7 +33,17 @@ The visual console explores and previews. The CLI and optional authenticated wor
 
 ## Quick start
 
-Requires **Node.js 22.18+**. Install dependencies, then launch the local console:
+Requires **Node.js 22.18+**. From your project repository, inspect and install the managed integration:
+
+```sh
+npx block-beaver@0.4.0 install --agents claude,codex --dry-run
+npx block-beaver@0.4.0 install --agents claude,codex
+npx --no-install block-beaver start
+```
+
+`start` generates the project map and watches for changes. Open the generated HTML map to inspect your repository.
+
+For the development repository’s interactive localhost console, clone Block Beaver and run from its source checkout:
 
 ```sh
 npm ci
@@ -45,22 +55,21 @@ Open **http://127.0.0.1:4173**, enter an absolute path to a project, and select 
 For a terminal first look:
 
 ```sh
-node bin/block-beaver.mjs scan --root /path/to/project
+npx block-beaver@0.4.0 scan --root /path/to/project
 ```
 
 ## Use it with your AI editor
 
-Set up the command once from your Block Beaver source checkout:
+Install the command in the project you want to build:
 
 ```sh
-npm ci
-npm link
+npm install --save-dev --save-exact block-beaver@0.4.0
 ```
 
 Then run one command for the project you want to build:
 
 ```sh
-block-beaver start --root /path/to/your-project
+npx --no-install block-beaver start --root /path/to/your-project
 ```
 
 Open the localhost URL it prints (port 4175 by default). This command installs project guidance for editors using `AGENTS.md`, Claude Code, Cursor, and GitHub Copilot; creates `.blocks/WORKFLOW.md`; generates `.blocks/view/index.html` and `graph.json`; and refreshes both the files and the open browser view as source and manifests change. Existing instructions outside the marked Block Beaver section are preserved. Repeating setup does not duplicate instructions. Keep the process running for live updates; Ctrl+C stops it. No hand-editing of instruction files or HTML is required.
@@ -71,7 +80,7 @@ For setup without a live session, use `block-beaver init --root /path/to/your-pr
 
 ## Install, upgrade and audit
 
-For a repository-local installation after publication, run `npx block-beaver@0.4.0 install`. Before publication, build the candidate tarball with `npm pack` from this checkout, install that `.tgz` into a disposable target project with `npm install /path/to/block-beaver-0.4.0.tgz`, then inspect its local CLI with `npx --no-install block-beaver install --dry-run`. The full installer pins the registry version, so use it after publication; `init` and `update` can exercise a tarball-installed CLI beforehand. Installation pins Block Beaver as a development dependency, detects npm, pnpm, Yarn or Bun, and plans managed editor skills, native hooks, Git hooks, CI and generated views. Use `--agents claude,codex` to select editors and `--dry-run` to inspect planned changes first.
+For a repository-local installation, run `npx block-beaver@0.4.0 install`. Installation pins Block Beaver as a development dependency, detects npm, pnpm, Yarn or Bun, and plans managed editor skills, native hooks, Git hooks, CI and generated views. Use `--agents claude,codex` to select editors and `--dry-run` to inspect planned changes first.
 
 `block-beaver upgrade` preserves owner content and refuses edited managed sections; `--force` repairs the owned sections. `block-beaver uninstall` removes owned integration while preserving project data. Removing `.blocks/` requires `--remove-data --yes`. Ignore/exclusion adjustments are opt-in through `--fix-ignores` and `--fix-excludes`.
 

@@ -8,7 +8,7 @@ All notable user visible changes are recorded here. Releases follow semantic ver
 
 ## 0.4.0 — 2026-10-01
 
-Release candidate; not yet published. Versions 0.2.0 and 0.3.0 were local development versions and were never published. The upgrade path from the latest published release, 0.1.1, is directly to 0.4.0.
+Versions 0.2.0 and 0.3.0 were local development versions and were never published. The upgrade path from the previous GitHub release, 0.1.1, is directly to 0.4.0.
 
 **Breaking changes:** the generated graph contract is now schema version 2, with app ownership and reachability data. The minimum supported Node.js version is 22.18.0; Node 24 and 26 are also supported. Consumers that read graph JSON or run Block Beaver on Node 22 before 22.18 must update.
 
