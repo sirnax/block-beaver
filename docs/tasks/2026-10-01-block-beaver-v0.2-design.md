@@ -145,6 +145,49 @@ The generated view (`.blocks/view/index.html`) and the live console both gain an
 `graph.json` moves to `schemaVersion: 2`, which adds a top-level
 `apps: [{ id, root, entries, counts, health }]`. Single-app repos look the same as today.
 
+### A.3b Embedding the view in a host app
+
+An adopting app may want to show its own map inside the product, for example on an
+operator page behind the app's own sign-in, deployed with the app. The view supports this
+without the host having to rewrite Block Beaver's HTML:
+
+- **Self-contained.** The view loads no external assets: no remote fonts, scripts or
+  styles. It uses system font stacks unless the repo's skin supplies fonts the host serves
+  itself. Every script and style is inline, so the page is a single document.
+- **Strict-CSP ready.** Every inline `<script>` carries a documented nonce placeholder
+  (`nonce="__BLOCK_BEAVER_NONCE__"`). The host swaps in the request's nonce. The view
+  doesn't depend on `eval`, inline event handlers or `javascript:` URLs, so it runs under
+  a policy that allows only `'self'` plus a nonce. The view can't be iframed by a host whose
+  policy sets `frame-ancestors 'none'`, so it is served as a whole document.
+- **A host header slot.** The view's header has one documented slot,
+  `<!--block-beaver:host-header-->`, where a host can insert its own navigation as static
+  HTML. The layout makes room when the slot is filled and collapses when it isn't. Block
+  Beaver never needs to know anything about the host's navigation.
+- **A build-time export.** `block-beaver view --format module --out <path>` writes the
+  page as an ES module exporting one string (`export const BLOCK_BEAVER_VIEW = "…"`), so a
+  host can compile a snapshot into its own build and serve it without reading the
+  filesystem. The module is a generated output: it has the "do not edit" header, and
+  `view-fresh` (B) and `gen --check` (C) treat it like any other.
+- **A small serving helper.** `block-beaver/view` exports
+  `prepareView(html, { nonce?, headerHtml? })`. It:
+  - fills in or removes the nonce placeholders;
+  - puts `headerHtml` into the slot, or removes the slot;
+  - returns the HTML.
+
+  It is pure: no I/O, no framework and no dependencies. Escaping `headerHtml` is the
+  host's job, and the helper's documentation says so.
+- **Size is visible.** The scan summary reports the size of the exported module, so a host
+  with a bundle budget sees growth before shipping it.
+
+**Tests:**
+- An exported view contains no external URLs.
+- Every inline script carries the placeholder.
+- `prepareView` fills in or removes the nonce placeholders and the slot, and never touches
+  anything else.
+- The page renders, with no console CSP violations, under a strict policy that allows
+  only `'self'` plus a nonce.
+- The module output stays byte-identical when its inputs haven't changed.
+
 ### A.4 Errors, performance and testing
 
 **Errors fail soft per app.**
@@ -445,6 +488,9 @@ scripts. Commands:
 - links coloured by kind;
 - grey slabs for ordinary code, grouped by app and folder using A's ownership;
 - a history slider.
+
+The floors are part of the same view, so everything in A.3b also applies to them:
+self-contained, strict-CSP ready, the host header slot and the module export.
 
 The default look is Block Beaver's own. A repo can supply a **skin**:
 `"map": { "skin": "path/to/skin.css", "tokens": { … } }`. The map hard-codes no titles or
