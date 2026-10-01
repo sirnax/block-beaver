@@ -200,16 +200,16 @@ async function safeHookBytes(path) {
 
 async function snapshotGitState(inputRoot, target, { copyBare = true } = {}) {
   const root = await realpath(inputRoot);
-  await git(target, ['init', '-q']);
+  await git(target, ['init', '-q'], { isolated: true });
   try {
     const origin = (await git(root, ['remote', 'get-url', 'origin'])).trim();
-    if (origin) await git(target, ['remote', 'add', 'origin', origin]);
+    if (origin) await git(target, ['remote', 'add', 'origin', origin], { isolated: true });
   } catch (error) { if (![2, 128].includes(error.code)) throw error; }
   let configured = null;
   try { configured = (await git(root, ['config', '--get', 'core.hooksPath'])).trim(); } catch (error) { if (error.code !== 1) throw error; }
   if (configured) {
     if (isAbsolute(configured) || configured.split(/[\\/]/).includes('..')) throw new Error('Audit snapshot cannot reproduce external core.hooksPath.');
-    await git(target, ['config', 'core.hooksPath', configured]);
+    await git(target, ['config', 'core.hooksPath', configured], { isolated: true });
     // Tracked hook-manager files remain the selected index/HEAD version.
     return;
   }
@@ -292,7 +292,7 @@ async function structuralRules(root, { strict, familyDrift, mode, priorBaseline 
     } catch (error) { managedFindings.push({ message: `Cannot validate managed content: ${error.message}`, remediation: 'block-beaver upgrade' }); }
     try {
       const { planHostSetup } = await import('./install-host.mjs');
-      const host = await planHostSetup(root, { version, config: configDocument.value || {}, agents: installDocument.value?.agents || [], operation: 'upgrade', force: true });
+      const host = await planHostSetup(root, { version, config: configDocument.value || {}, agents: installDocument.value?.agents || [], operation: 'upgrade', force: true, isolatedGit: mode !== 'working' });
       for (const file of host.files) {
         if (file.before !== file.content) managedFindings.push({ path: file.path, message: 'Managed host content differs from this package version.', remediation: 'block-beaver upgrade' });
         if (file.mode !== undefined && file.before !== null && !fileModeMatches((await lstat(join(root, file.path))).mode, file.mode)) managedFindings.push({ path: file.path, message: 'Managed host file has an incorrect executable mode.', remediation: 'block-beaver upgrade' });
@@ -308,7 +308,7 @@ async function structuralRules(root, { strict, familyDrift, mode, priorBaseline 
         else managedAdvisories.push(diagnostic);
       }
       if (mode !== 'range' && installDocument.value?.paths?.includes('.git/hooks/pre-commit')) {
-        const raw = (await git(root, ['rev-parse', '--git-path', 'hooks'])).trim();
+        const raw = (await git(root, ['rev-parse', '--git-path', 'hooks'], { isolated: mode !== 'working' })).trim();
         const current = await safeHookBytes(join(resolve(await realpath(root), raw), 'pre-commit'));
         if (!current || !fileModeMatches(current.mode, 0o755)) managedFindings.push({ path: '.git/hooks/pre-commit', message: 'Installed Git pre-commit hook is missing or not executable.', remediation: 'block-beaver upgrade' });
       }

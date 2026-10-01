@@ -7,13 +7,14 @@ import ts from 'typescript';
 import { readProjectFile } from './project-files.mjs';
 import { localBlockBeaverCommand } from './package-manager.mjs';
 import { remoteProvider } from './git-remote.mjs';
+import { isolatedGitEnv } from './compliance-git.mjs';
 
 /**
  * Host setup planning for install, upgrade and uninstall. Nothing here writes: callers apply
  * `files` through the safe project writer and `hooks` (Git hook files, often outside the
  * project writer's reach) themselves.
  *
- * planHostSetup(root, { config, agents, fixIgnores, fixExcludes, operation, version, force }) resolves to
+ * planHostSetup(root, { config, agents, fixIgnores, fixExcludes, operation, version, force, isolatedGit }) resolves to
  *   files:       [{ path, before, content, kind, mode? }]  repository-relative; content null deletes;
  *                kind is 'hook' | 'ci' | 'gitignore' | 'exclude'; mode (0o755) is set on new executable files
  *   hooks:       [{ path, absolutePath, before, content, mode, kind: 'hook' }]  bare Git hook files; path is
@@ -57,9 +58,9 @@ const isObject = (value) => Boolean(value) && typeof value === 'object' && !Arra
 const unique = (list) => [...new Set(list)];
 const escapeRegex = (text) => text.replace(/[\\^$.*+?()[\]{}|]/g, '\\$&');
 
-function git(root, args, input = '') {
+function git(root, args, input = '', isolated = false) {
   return new Promise((done) => {
-    const child = execFile('git', ['-C', root, ...args], { maxBuffer: 64 * 1024 * 1024 }, (error, stdout) => {
+    const child = execFile('git', ['-C', root, ...args], { maxBuffer: 64 * 1024 * 1024, ...(isolated ? { env: isolatedGitEnv() } : {}) }, (error, stdout) => {
       done({ code: error ? (Number.isInteger(error.code) ? error.code : -1) : 0, stdout: stdout || '' });
     });
     child.stdin.on('error', () => {});
@@ -171,21 +172,21 @@ function protectRegion(ctx, path, before, after) {
 
 // ---- Git ------------------------------------------------------------------------------------
 
-async function inspectGit(root) {
-  const top = await git(root, ['rev-parse', '--show-toplevel']);
+async function inspectGit(root, isolated = false) {
+  const top = await git(root, ['rev-parse', '--show-toplevel'], '', isolated);
   if (top.code !== 0) return { ok: false, reason: 'is not inside a Git checkout, or Git is unavailable' };
   let same = false;
   try { same = await realpath(top.stdout.trim()) === root; } catch { /* treated as a different root */ }
   if (!same) return { ok: false, reason: 'is not the Git checkout root' };
   const [hooks, configured, remote] = await Promise.all([
-    git(root, ['rev-parse', '--git-path', 'hooks']), git(root, ['config', '--get', 'core.hooksPath']), git(root, ['remote', 'get-url', 'origin'])]);
+    git(root, ['rev-parse', '--git-path', 'hooks'], '', isolated), git(root, ['config', '--get', 'core.hooksPath'], '', isolated), git(root, ['remote', 'get-url', 'origin'], '', isolated)]);
   const raw = hooks.stdout.trim();
   return { ok: true, hooksDir: raw ? (isAbsolute(raw) ? raw : resolve(root, raw)) : join(root, '.git', 'hooks'),
     hooksPath: configured.code === 0 ? configured.stdout.trim() : '', origin: remote.code === 0 ? remote.stdout.trim() : '' };
 }
 
 async function checkIgnore(ctx, paths) {
-  const result = await git(ctx.root, ['check-ignore', '-z', '-v', '-n', '--stdin'], `${paths.join('\0')}\0`);
+  const result = await git(ctx.root, ['check-ignore', '-z', '-v', '-n', '--stdin'], `${paths.join('\0')}\0`, ctx.isolatedGit);
   if (result.code > 1) return null;
   const fields = result.stdout.split('\0');
   fields.pop();
@@ -1015,12 +1016,12 @@ async function planHostTools(ctx, uninstall) {
 
 // ---- entry point ------------------------------------------------------------------------------
 
-export async function planHostSetup(root, { config, agents = [], fixIgnores = false, fixExcludes = false, operation = 'install', version, force = false } = {}) {
+export async function planHostSetup(root, { config, agents = [], fixIgnores = false, fixExcludes = false, operation = 'install', version, force = false, isolatedGit = false } = {}) {
   if (!['install', 'upgrade', 'uninstall'].includes(operation)) throw new Error(`Unknown host setup operation: ${operation}`);
-  const ctx = { root: await realpath(resolve(root)), config: isObject(config) ? config : {}, operation, version, fixIgnores, fixExcludes, force,
+  const ctx = { root: await realpath(resolve(root)), config: isObject(config) ? config : {}, operation, version, fixIgnores, fixExcludes, force, isolatedGit,
     files: new Map(), hooks: [], diagnostics: [], conflicts: [] };
   const uninstall = operation === 'uninstall';
-  ctx.git = await inspectGit(ctx.root);
+  ctx.git = await inspectGit(ctx.root, isolatedGit);
   if (!ctx.git.ok && !uninstall) diagnose(ctx, 'git-unavailable', 'warning', `${ctx.root} ${ctx.git.reason}, so Git hooks and ignore checks were skipped.`);
   ctx.manifest = await readManifest(ctx);
   ctx.work = resolveWork(ctx);

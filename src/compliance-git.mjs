@@ -9,8 +9,16 @@ const exec = promisify(execFile);
 const decoder = new TextDecoder('utf-8', { fatal: true });
 export const sha256 = (bytes) => createHash('sha256').update(bytes).digest('hex');
 
-export async function git(root, args, { buffer = false } = {}) {
-  const result = await exec('git', ['-C', root, ...args], { encoding: buffer ? 'buffer' : 'utf8', maxBuffer: 64 * 1024 * 1024 });
+const repositoryVariables = ['GIT_DIR', 'GIT_WORK_TREE', 'GIT_INDEX_FILE', 'GIT_OBJECT_DIRECTORY', 'GIT_ALTERNATE_OBJECT_DIRECTORIES', 'GIT_COMMON_DIR', 'GIT_PREFIX', 'GIT_NAMESPACE', 'GIT_CEILING_DIRECTORIES'];
+// Hooks export these for the host repository; a command aimed at another repository must not inherit them.
+export function isolatedGitEnv(base = process.env) {
+  const env = { ...base };
+  for (const name of repositoryVariables) delete env[name];
+  return env;
+}
+
+export async function git(root, args, { buffer = false, isolated = false } = {}) {
+  const result = await exec('git', ['-C', root, ...args], { encoding: buffer ? 'buffer' : 'utf8', maxBuffer: 64 * 1024 * 1024, ...(isolated ? { env: isolatedGitEnv() } : {}) });
   return result.stdout;
 }
 
