@@ -417,7 +417,9 @@ test('ignored managed paths are local-only: staged audits advise, working audits
   // Working mode is unchanged: the local file exists and is checked.
   assert.equal(rule(await auditProject(root, { mode: 'working' }), 'managed-current').pass, true);
   const settings = join(root, '.claude/settings.json');
-  await writeFile(settings, (await readFile(settings, 'utf8')).replace('{', '{ "owner": true,'));
+  const owned = JSON.parse(await readFile(settings, 'utf8'));
+  owned.hooks.PreToolUse[0].hooks[0].timeout = 99;
+  await writeFile(settings, `${JSON.stringify(owned, null, 2)}\n`);
   const edited = await auditProject(root, { mode: 'working' });
   assert.equal(rule(edited, 'managed-current').pass, false);
   assert.ok(rule(edited, 'managed-current').findings.some((entry) => entry.path === '.claude/settings.json'));
