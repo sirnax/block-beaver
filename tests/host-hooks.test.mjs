@@ -8,6 +8,8 @@ import { join } from 'node:path';
 import { preflightHostHooks, applyHostHooks, preflightProjectModes, applyProjectModes } from '../src/host-hooks.mjs';
 
 const exec = promisify(execFile);
+const writableMode = process.platform === 'win32' ? 0o666 : 0o755;
+const disabledMode = process.platform === 'win32' ? 0o444 : 0o644;
 async function fixture(t) {
   const parent = await realpath(await mkdtemp(join(tmpdir(), 'block-beaver-host-hook-')));
   t.after(() => rm(parent, { recursive: true, force: true }));
@@ -25,11 +27,11 @@ test('host hooks create, preserve bytes, fix mode, repeat idempotently and remov
   await preflightHostHooks(root, [plan(null, content)]);
   assert.deepEqual(await applyHostHooks(root, [plan(null, content)]), ['.git/hooks/pre-commit']);
   assert.equal(await readFile(absolutePath, 'utf8'), content);
-  assert.equal((await lstat(absolutePath)).mode & 0o777, 0o755);
+  assert.equal((await lstat(absolutePath)).mode & 0o777, writableMode);
   assert.deepEqual(await applyHostHooks(root, [plan(content, content)]), []);
-  await chmod(absolutePath, 0o644);
+  await chmod(absolutePath, disabledMode);
   assert.deepEqual(await applyHostHooks(root, [plan(content, content)]), ['.git/hooks/pre-commit']);
-  assert.equal((await lstat(absolutePath)).mode & 0o777, 0o755);
+  assert.equal((await lstat(absolutePath)).mode & 0o777, writableMode);
   assert.deepEqual(await applyHostHooks(root, [plan(content, null)]), ['.git/hooks/pre-commit']);
   await assert.rejects(lstat(absolutePath), { code: 'ENOENT' });
   assert.deepEqual(await applyHostHooks(root, [plan(null, null)]), []);
@@ -44,6 +46,21 @@ test('changed preimages and arbitrary Git metadata paths are rejected without wr
   await assert.rejects(applyHostHooks(root, [plan('owner', 'new', { path: '.git/config' })]), /actual Git pre-commit/);
   await assert.rejects(applyHostHooks(root, [plan('owner', 'new'), plan('owner', 'other')]), /Duplicate/);
   assert.equal(await readFile(absolutePath, 'utf8'), 'owner');
+});
+
+test('Git executes the installed hook and rejects a commit on every supported platform', async (t) => {
+  const { root, plan } = await fixture(t);
+  const content = '#!/bin/sh\necho block-beaver-hook-executed >&2\nexit 1\n';
+  await applyHostHooks(root, [plan(null, content)]);
+  assert.deepEqual(await applyHostHooks(root, [plan(content, content)]), []);
+  await writeFile(join(root, 'source.txt'), 'review me\n');
+  await exec('git', ['-C', root, 'add', 'source.txt']);
+  await assert.rejects(exec('git', ['-C', root, '-c', 'user.name=Fixture', '-c', 'user.email=fixture@example.test', 'commit', '-qm', 'must be rejected']), (error) => {
+    assert.equal(error.code, 1);
+    assert.match(error.stderr, /block-beaver-hook-executed/);
+    return true;
+  });
+  await assert.rejects(exec('git', ['-C', root, 'rev-parse', '--verify', 'HEAD']));
 });
 
 test('missing hook directory is created safely and malformed plans cannot write', async (t) => {
@@ -73,7 +90,7 @@ test('symlink hook parents are rejected even when the planned file is absent', a
   await rm(join(root, '.git/hooks'), { recursive: true });
   const other = join(parent, 'external-hooks');
   await mkdir(other);
-  await symlink(other, join(root, '.git/hooks'));
+  await symlink(other, join(root, '.git/hooks'), process.platform === 'win32' ? 'junction' : 'dir');
   await assert.rejects(applyHostHooks(root, [plan(null, 'new')]), /Unsafe host hook parent/);
   await assert.rejects(lstat(join(other, 'pre-commit')), { code: 'ENOENT' });
 });
@@ -121,15 +138,15 @@ test('ordinary hook file modes validate writer preimages and exact outputs', asy
   const path = join(root, '.husky/pre-commit');
   const file = { path: '.husky/pre-commit', before: null, content: '#!/bin/sh\naudit\n', mode: 0o755 };
   await preflightProjectModes(root, [file]);
-  await writeFile(path, file.content, { mode: 0o644 });
+  await writeFile(path, file.content, { mode: disabledMode });
   assert.deepEqual(await applyProjectModes(root, [file]), ['.husky/pre-commit']);
-  assert.equal((await lstat(path)).mode & 0o777, 0o755);
+  assert.equal((await lstat(path)).mode & 0o777, writableMode);
   assert.deepEqual(await applyProjectModes(root, [file]), []);
   await assert.rejects(preflightProjectModes(root, [file]), /preimage/);
   await writeFile(path, 'changed owner bytes');
   await chmod(path, 0o644);
   await assert.rejects(applyProjectModes(root, [file]), /writer output changed/);
-  assert.equal((await lstat(path)).mode & 0o777, 0o644);
+  assert.equal((await lstat(path)).mode & 0o777, process.platform === 'win32' ? 0o666 : 0o644);
 });
 
 test('project mode plans preflight all outputs and refuse unsafe, shared and symlinked files', async (t) => {
@@ -138,7 +155,7 @@ test('project mode plans preflight all outputs and refuse unsafe, shared and sym
   await writeFile(first, 'first', { mode: 0o644 });
   const files = [{ path: 'first', before: 'first', content: 'first', mode: 0o755 }, { path: 'missing', before: null, content: 'missing', mode: 0o755 }];
   await assert.rejects(applyProjectModes(root, files), /writer output changed/);
-  assert.equal((await lstat(first)).mode & 0o777, 0o644);
+  assert.equal((await lstat(first)).mode & 0o777, process.platform === 'win32' ? 0o666 : 0o644);
   for (const path of ['../outside', '.git/config', '/tmp/outside', 'bad\\path']) {
     await assert.rejects(applyProjectModes(root, [{ path, content: 'first', mode: 0o755 }]), /Unsafe project mode path/);
   }

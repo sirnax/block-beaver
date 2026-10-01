@@ -2,7 +2,9 @@
 
 All notable user visible changes are recorded here. Releases follow semantic versioning. Before 1.0, behavior and graph contracts may change between minor versions.
 
-## 0.4.0 local candidate — release verification pending; not published
+## 0.4.0 — 2026-10-01
+
+Release candidate; not yet published.
 
 - Add optional project-defined typed families, TS contract/manifest loading, family graph links and map floors; expose `block-beaver/kernel`, JSON kit commands, `gen --check`, history import, and the opt-in `block-beaver/eslint` rule. No domain family is bundled.
 - Add multi-app detection and owner-controlled `.blocks/config.json`, compiler-based

@@ -18,7 +18,7 @@ test('install previews complete onboarding without writes or package commands, t
   const installed = await installProject(root, { version: '0.3.0', runner });
   assert.equal(installed.complete, true);
   assert.match(await readFile(join(root, '.git/hooks/pre-commit'), 'utf8'), /block-beaver audit --staged/);
-  assert.equal((await stat(join(root, '.git/hooks/pre-commit'))).mode & 0o111, 0o111);
+  assert.equal((await stat(join(root, '.git/hooks/pre-commit'))).mode & (process.platform === 'win32' ? 0o200 : 0o111), process.platform === 'win32' ? 0o200 : 0o111);
   const config = JSON.parse(await readFile(join(root, '.blocks/config.json'), 'utf8'));
   assert.equal(config.blockBeaver, '0.3.0');
   assert.deepEqual(config.enforcement, { agents: 'guide', gate: 'audit' });

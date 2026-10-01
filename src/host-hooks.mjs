@@ -2,6 +2,7 @@ import { constants } from 'node:fs';
 import { lstat, mkdir, open, realpath, unlink } from 'node:fs/promises';
 import { dirname, isAbsolute, join, relative, resolve } from 'node:path';
 import { git } from './compliance-git.mjs';
+import { fileModeMatches } from './file-mode.mjs';
 
 const sameFile = (left, right) => left.dev === right.dev && left.ino === right.ino;
 const inside = (base, path) => {
@@ -121,9 +122,10 @@ export async function applyHostHooks(root, hooks = []) {
       continue;
     }
     const mode = plan.mode ?? 0o755;
-    if (plan.content === plan.before && (plan.stat.mode & 0o777) === mode) continue;
+    if (plan.content === plan.before && fileModeMatches(plan.stat.mode, mode)) continue;
     await parents(plan.anchor, path, { create: true });
-    const flags = plan.before === null ? constants.O_RDWR | constants.O_CREAT | constants.O_EXCL | constants.O_NOFOLLOW : constants.O_RDWR | constants.O_NOFOLLOW;
+    const access = plan.content === plan.before ? constants.O_RDONLY : constants.O_RDWR;
+    const flags = plan.before === null ? constants.O_RDWR | constants.O_CREAT | constants.O_EXCL | constants.O_NOFOLLOW : access | constants.O_NOFOLLOW;
     const handle = await open(path, flags, mode);
     try {
       const stat = await handle.stat();
@@ -179,7 +181,7 @@ export async function applyProjectModes(inputRoot, files = []) {
   }
   const changed = [];
   for (const { file, path, stat } of checked) {
-    if ((stat.mode & 0o777) === file.mode) continue;
+    if (fileModeMatches(stat.mode, file.mode)) continue;
     const handle = await open(path, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK);
     try {
       const current = await handle.stat();

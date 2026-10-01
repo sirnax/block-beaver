@@ -1,4 +1,5 @@
 import { constants } from 'node:fs';
+import { fileModeMatches } from './file-mode.mjs';
 import { readFile, readdir, mkdir, mkdtemp, rm, symlink, writeFile, lstat, open, realpath } from 'node:fs/promises';
 import { join, resolve, dirname, relative, isAbsolute, basename } from 'node:path';
 import { tmpdir } from 'node:os';
@@ -266,12 +267,12 @@ async function structuralRules(root, { strict, familyDrift, mode, priorBaseline 
       const host = await planHostSetup(root, { version, config: configDocument.value || {}, agents: installDocument.value?.agents || [], operation: 'upgrade', force: true });
       for (const file of host.files) {
         if (file.before !== file.content) managedFindings.push({ path: file.path, message: 'Managed host content differs from this package version.', remediation: 'block-beaver upgrade' });
-        if (file.mode !== undefined && file.before !== null && (await lstat(join(root, file.path))).mode % 0o1000 !== file.mode) managedFindings.push({ path: file.path, message: 'Managed host file has an incorrect executable mode.', remediation: 'block-beaver upgrade' });
+        if (file.mode !== undefined && file.before !== null && !fileModeMatches((await lstat(join(root, file.path))).mode, file.mode)) managedFindings.push({ path: file.path, message: 'Managed host file has an incorrect executable mode.', remediation: 'block-beaver upgrade' });
       }
       if (mode === 'range') managedAdvisories.push({ code: 'bare-hook-range-skip', severity: 'info', message: 'Bare Git metadata hook availability and mode are skipped in range audits because fresh CI clones do not contain installed .git/hooks; tracked hooks and CI remain checked.' });
       for (const hook of mode === 'range' ? [] : host.hooks) {
         const current = await safeHookBytes(hook.absolutePath);
-        if (current?.content !== hook.content || current?.mode !== (hook.mode ?? 0o755)) managedFindings.push({ path: hook.path, message: 'Git pre-commit hook differs from the required managed step.', remediation: 'block-beaver upgrade' });
+        if (current?.content !== hook.content || !current || !fileModeMatches(current.mode, hook.mode ?? 0o755)) managedFindings.push({ path: hook.path, message: 'Git pre-commit hook differs from the required managed step.', remediation: 'block-beaver upgrade' });
       }
       for (const conflict of host.conflicts || []) managedFindings.push(conflict);
       for (const diagnostic of host.diagnostics || []) {
@@ -281,7 +282,7 @@ async function structuralRules(root, { strict, familyDrift, mode, priorBaseline 
       if (mode !== 'range' && installDocument.value?.paths?.includes('.git/hooks/pre-commit')) {
         const raw = (await git(root, ['rev-parse', '--git-path', 'hooks'])).trim();
         const current = await safeHookBytes(join(resolve(await realpath(root), raw), 'pre-commit'));
-        if (!current || current.mode !== 0o755) managedFindings.push({ path: '.git/hooks/pre-commit', message: 'Installed Git pre-commit hook is missing or not executable.', remediation: 'block-beaver upgrade' });
+        if (!current || !fileModeMatches(current.mode, 0o755)) managedFindings.push({ path: '.git/hooks/pre-commit', message: 'Installed Git pre-commit hook is missing or not executable.', remediation: 'block-beaver upgrade' });
       }
     } catch (error) { managedFindings.push({ message: `Cannot validate managed host content: ${error.message}`, remediation: 'block-beaver upgrade' }); }
 

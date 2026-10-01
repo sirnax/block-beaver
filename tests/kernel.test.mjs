@@ -32,11 +32,18 @@ test('package kernel subpath exposes the runtime without importing CLI dependenc
 });
 
 test('bundlers discard unused schema exports while keeping registry behavior', async t => {
+  let esbuild;
+  try { esbuild = createRequire(import.meta.url)('esbuild'); }
+  catch (error) { if (error.code !== 'MODULE_NOT_FOUND') throw error; }
   const available = spawnSync('esbuild',['--version'],{encoding:'utf8'});
-  if (available.error?.code === 'ENOENT') { t.skip('esbuild unavailable; install esbuild to run the bundle acceptance check'); return; }
-  assert.equal(available.status,0,available.stderr);
+  if (!esbuild && available.error?.code === 'ENOENT') {
+    assert.notEqual(process.env.BLOCK_BEAVER_REQUIRE_ESBUILD, '1', 'CI requires installed esbuild for the bundle acceptance check');
+    t.skip('esbuild unavailable; install esbuild to run the bundle acceptance check'); return;
+  }
+  if (!esbuild) assert.equal(available.status,0,available.stderr);
   const cwd = fileURLToPath(new URL('../',import.meta.url));
   function bundle(source) {
+    if (esbuild) return esbuild.buildSync({ stdin: { contents: source, resolveDir: cwd }, bundle: true, format: 'esm', platform: 'neutral', treeShaking: true, minify: true, write: false }).outputFiles[0].text;
     const result = spawnSync('esbuild',['--bundle','--format=esm','--platform=neutral','--tree-shaking=true','--minify'],{cwd,input:source,encoding:'utf8'});
     assert.equal(result.status,0,result.stderr);
     return result.stdout;

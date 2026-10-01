@@ -29,8 +29,12 @@ jobs:
           cache: npm
       - name: Install dependencies
         run: npm ci --ignore-scripts
+      - name: Install kernel bundle acceptance tooling
+        run: npm install --no-save --package-lock=false --ignore-scripts esbuild@0.28.2
       - name: Check source and tests
         run: npm run check
+        env:
+          BLOCK_BEAVER_REQUIRE_ESBUILD: '1'
 
   audit:
     name: Dependency audit
@@ -69,5 +73,9 @@ jobs:
           cache: npm
       - name: Install dependencies
         run: npm ci --ignore-scripts
+      - name: Install kernel bundle acceptance tooling
+        run: npm install --no-save --package-lock=false --ignore-scripts esbuild@0.28.2
       - name: Check source and tests
         run: npm run check
+        env:
+          BLOCK_BEAVER_REQUIRE_ESBUILD: '1'

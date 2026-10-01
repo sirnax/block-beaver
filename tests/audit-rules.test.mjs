@@ -4,6 +4,7 @@ import { mkdtemp, mkdir, writeFile, readFile, rm, chmod } from 'node:fs/promises
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { execFileSync } from 'node:child_process';
+import { fileURLToPath } from 'node:url';
 import { evaluateAuditRules, auditCounts } from '../src/audit-rules.mjs';
 import { auditProject, recordException } from '../src/compliance.mjs';
 
@@ -123,7 +124,7 @@ test('installed audit detects managed drift and checks ignored view artifacts ag
   const clean = await auditProject(root, { mode: 'staged' });
   assert.equal(clean.rules.find((rule) => rule.id === 'managed-current').pass, true, JSON.stringify(clean.rules));
   assert.equal(clean.rules.find((rule) => rule.id === 'view-fresh').pass, true, JSON.stringify(clean.rules));
-  await chmod(join(root, '.git/hooks/pre-commit'), 0o644);
+  await chmod(join(root, '.git/hooks/pre-commit'), process.platform === 'win32' ? 0o444 : 0o644);
   const disabledHook = await auditProject(root, { mode: 'staged' });
   assert.equal(disabledHook.rules.find((rule) => rule.id === 'managed-current').pass, false);
   await chmod(join(root, '.git/hooks/pre-commit'), 0o755);
@@ -268,7 +269,7 @@ test('malformed export registries return structured audit failures and CLI exit 
       git(root, 'add', '.blocks/view-exports.json');
       const staged = await auditProject(root, { mode: 'staged' });
       assert.equal(staged.rules.find((rule) => rule.id === 'config-valid').pass, false);
-      assert.throws(() => execFileSync(process.execPath, [new URL('../bin/block-beaver.mjs', import.meta.url).pathname, 'audit', '--root', root], { encoding: 'utf8' }), (error) => {
+      assert.throws(() => execFileSync(process.execPath, [fileURLToPath(new URL('../bin/block-beaver.mjs', import.meta.url)), 'audit', '--root', root], { encoding: 'utf8' }), (error) => {
         assert.equal(error.status, 2);
         const output = JSON.parse(error.stdout);
         assert.equal(output.pass, false);

@@ -82,3 +82,14 @@ No A–C local implementation tasks remain. Remote Linux/Windows CI and a Codex 
 Known host boundaries and optional bundler availability are recorded in the verification document. Publication needs a separate instruction. E remains future work.
 
 Implementation commits:`1bc1779` (A–C),`d931eed` (CommonJS kernel export),`4ca5e9b` (release evidence scope). Completed disposable Claude worktrees and browser servers were cleaned up; the pre-existing compliance worktree was preserved.
+
+## Release readiness follow-up — 2026-10-01
+
+Requested: remote Linux/Windows CI,trusted Codex native hooks,and release review before publishing for Teacake adoption. Detailed boundary/acceptance: [release readiness](docs/tasks/2026-10-01-block-beaver-release-readiness.md).
+
+- [ ] Remote candidate CI.
+- [ ] Trusted native Codex execution.
+- [ ] Independent Claude release review and fixes.
+- [ ] Final package/release handoff.
+
+Active workers: Sol medium CI portability and Codex trust; Claude Sonnet5.5 high independent review after authentication/model preflight. Primary owns integration and remote CI.
