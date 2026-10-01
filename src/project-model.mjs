@@ -204,7 +204,7 @@ export async function loadProjectModel(inputRoot, { paths = [], writeConfig = tr
     for (const path of paths) if (app.fileNames.has(path)) ownerByFile.set(path, app.id);
   }
   const outside = { compilerOptions: rootParsed.options, cache: ts.createModuleResolutionCache(root, (path) => path, rootParsed.options), packages: [] };
-  const host = { ...ts.sys, realpath: (path) => { try { return realpathSync(path); } catch { return path; } } };
+  const host = { ...ts.sys, realpath: (path) => { try { return slash(realpathSync(path)); } catch { return path; } } };
   function resolveImport(from, specifier, { mode } = {}) {
     const app = apps.find((candidate) => candidate.id === ownerByFile.get(from)) || outside;
     if (builtins.has(specifier.replace(/^node:/, ''))) return { external: true, package: specifier };

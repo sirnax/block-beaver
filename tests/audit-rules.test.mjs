@@ -60,7 +60,9 @@ async function fixture(t) {
   await put('.blocks/config.json', { schemaVersion: 1, apps: [{ id: 'app', root: '.', entries: ['src/main.ts'] }] });
   await put('.blocks/baseline.json', { schemaVersion: 1, coverage: 1, resolution: 0 });
   await put('.gitignore', '.blocks/worktrees/\n.blocks/view/\n');
-  git(root, 'init', '-q'); git(root, 'add', '.'); git(root, '-c', 'user.name=Test', '-c', 'user.email=test@example.com', 'commit', '-qm', 'base');
+  git(root, 'init', '-q');
+  git(root, 'config', 'core.autocrlf', 'false');
+  git(root, 'add', '.'); git(root, '-c', 'user.name=Test', '-c', 'user.email=test@example.com', 'commit', '-qm', 'base');
   return { root, put };
 }
 
@@ -120,6 +122,8 @@ test('installed audit detects managed drift and checks ignored view artifacts ag
   await applyHostHooks(root, host.hooks);
   await put('.blocks/install.json', { schemaVersion: 1, version, agents: [], paths: [...plan.files.map((file) => file.path), ...host.files.map((file) => file.path), ...host.hooks.map((hook) => hook.path)] });
   await updateProject(root);
+  const workflowPath = join(root, '.blocks/WORKFLOW.md');
+  await writeFile(workflowPath, (await readFile(workflowPath, 'utf8')).replaceAll('\r\n', '\n').replaceAll('\n', '\r\n'));
   git(root, 'add', '.');
   const clean = await auditProject(root, { mode: 'staged' });
   assert.equal(clean.rules.find((rule) => rule.id === 'managed-current').pass, true, JSON.stringify(clean.rules));

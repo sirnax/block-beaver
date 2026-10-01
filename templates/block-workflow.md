@@ -49,6 +49,6 @@ explicit mapping from old keys to `family:id`.
 
 ## Project portability
 
-Commit the editor instructions, this workflow, and adopted manifests according to the project's versioning policy. Generated views and worktrees are ignored inside `.blocks/`. Another machine needs Node.js 22.18+ for family contract loading (or a configured loader package) and Block Beaver available on PATH: from its Block Beaver source checkout run `npm ci` and `npm link`. No machine-specific installation path belongs in these project instructions.
+Commit the editor instructions, this workflow, and adopted manifests according to the project's versioning policy. Generated views and worktrees are ignored inside `.blocks/`. Another machine needs Node.js 22.18+ for family contract loading (or a configured loader package). Install this project’s locked dependencies using its package manager, then run its pinned Block Beaver through the local package-manager command (for npm, `npx --no-install block-beaver`). Source-checkout development can use `npm link`; installed projects use their pinned dependency. No machine-specific installation path belongs in these project instructions.
 
 Editor guidance helps an agent follow the process; enforcement of scope, checks, and approval occurs when it uses Block Beaver's workflow commands. Refreshing the map does not certify architecture or validate an arbitrary edit made outside that workflow.

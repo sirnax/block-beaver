@@ -6,6 +6,7 @@ This is the release gate for changes to the agent workflow, audit, installed gui
 
 - The gate passes only when all eight cases (two tools times four scenarios) report `status: "pass"` and `casePass: true` for the release candidate.
 - A case is `pass`, `fail` or `blocked`. `blocked` means the case could not exercise the product: CLI missing or too old, not authenticated, a required option absent, a startup or sandbox failure, a timeout, an error result, a model other than the requested one, permission rules preventing the installed `block-beaver` command from ever being exercised, or candidate source changing during the run. `fail` means the case ran and the rubric was not met. Neither counts toward the gate. Review the logs to separate a product failure from an environment failure, then rerun.
+- For release readiness, run Codex cases with `--codex-hook-trust`. The normal Codex TUI must review and trust the installed hook; each case must record actual `PreToolUse` envelopes from native hook execution. Untrusted runs can exercise workflow commands but do not establish native editor enforcement.
 - Report partial results as partial. Record which of the eight cases passed, failed or were blocked, and keep the printed paths. Do not describe a blocked or skipped case as passing.
 - A passing run applies to the candidate content fingerprint recorded in `run.json` (`blockBeaver.sourceStart.sha256`). All eight passing cases must have the same starting fingerprint. The case is blocked if its fingerprint changes during the model run. HEAD and dirty-file count are retained as context; they do not identify an uncommitted candidate uniquely. Rerun after any change to the workflow, audit, hooks or installed guidance.
 
@@ -92,3 +93,9 @@ The source fingerprint covers all files under `bin/`, `src/`, `templates/` and `
 - Git hooks and shims need POSIX `sh`; Windows is not supported.
 - The fixture records the first model result only; a rerun creates a new directory. Compare the printed paths when repeating a case.
 - The harness is syntax-checked in development; its end-to-end behavior is established only by running the matrix.
+
+## Trusted Codex native hooks
+
+Run `node scripts/live-editor-battle.mjs codex normal --codex-hook-trust` in a terminal (repeat for bypass, failed and drift). The harness opens Codex against the disposable fixture. Accept the normal project trust prompt, use `/hooks`, inspect the installed command and trust it through the UI, then exit with `/quit`. The workflow case proceeds using that persisted trust; no hook trust bypass flag is used.
+
+The harness creates a private disposable Codex home, copies authentication with mode 0600 without printing its contents, and removes that copy when the run finishes. The real user home and trust configuration remain untouched. `run.json` records the normal trust method, hook path/hash and actual native invocation envelopes. Native commands receive the original stdin bytes unchanged; merely running `hook-check` manually does not satisfy the native execution check.

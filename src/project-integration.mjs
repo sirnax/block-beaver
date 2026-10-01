@@ -1,8 +1,7 @@
-import { readFile } from 'node:fs/promises';
 import { readProjectFile, writeProjectFiles } from './project-files.mjs';
 import { updateProject } from './block-map.mjs';
 import { installCompliance } from './compliance-setup.mjs';
-import { renderAgentInstructions } from './install-templates.mjs';
+import { readInstallTemplates, renderAgentInstructions } from './install-templates.mjs';
 
 const begin = '<!-- block-beaver:start -->';
 const end = '<!-- block-beaver:end -->';
@@ -25,7 +24,7 @@ function managedSection(before, body, path, prefix = '') {
 export async function initializeProject(root, { editor = 'all' } = {}) {
   const editors = editor === 'all' ? Object.keys(editorFiles) : [editor];
   if (editors.some((name) => !Object.hasOwn(editorFiles, name))) throw new Error('Editor must be all, agents, claude, cursor, or copilot.');
-  const guide = await readFile(new URL('../templates/block-workflow.md', import.meta.url), 'utf8');
+  const { workflow: guide } = await readInstallTemplates();
   const specifications = [
     { path: '.blocks/WORKFLOW.md', body: guide },
     { path: '.blocks/.gitignore', body: '/worktrees/\n/view/', ignore: true },

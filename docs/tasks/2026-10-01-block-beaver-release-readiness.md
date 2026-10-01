@@ -20,3 +20,13 @@ Each worker must report changes,verification,findings and limits. No worker may 
 - [ ] ROADMAP and verification evidence updated.
 
 Running remote CI requires making the committed candidate available on its GitHub branch. Package/GitHub release publication and Teacake repository changes are separate steps after readiness.
+
+## Progress and expanded boundaries
+
+- Baseline remote CI [36871508495](https://github.com/sirnax/block-beaver/actions/runs/36871508495) at `5e22fcf`: Linux22/24/26, macOS24 and dependency audit passed; Windows24 exposed16 failures and one optional bundler skip. This run is diagnostic, not final acceptance.
+- CI ownership expanded to `src/install-templates.mjs` (bundled LF normalization), `src/managed-files.mjs` (CRLF managed-hash and exact historical template equivalence), `src/project-model.mjs` (TypeScript canonical paths) and corresponding fixture tests. Raw owner bytes and reviewed snapshot checks remain strict.
+- Root owns template portability guidance and `src/project-integration.mjs`; installed editor guidance is mirrored through the shared renderer. Luna medium owns README/changelog completion; Sol medium package worker owns disposable tarball smoke evidence.
+- Codex normal `/hooks` UI trusted the actual installed command in an isolated home. Native probes observed guide context and allow, block denial and absent denied file. No bypass flags/private trust fabrication/real user auth writes. Final matrix waits for source freeze.
+- Claude Sonnet5.5 high independently reviewed package/release files with Read/Glob/Grep, actual canonical model confirmed, no permission denials. Findings drove release-note validation, B/breaking/upgrade notes, minimum Node CI, publishing procedure, fresh matrix and package evidence.
+- npm registry lookup returned404 for `block-beaver` on2026-10-01. This does not establish name ownership or publication credentials. Publication remains separate.
+- Actual active GitHub ruleset includes existing Linux22/24/26/platform/audit/security contexts. Versioned guidance adds minimum22.18.0 context; applying that additional protection on GitHub is a release settings follow-up. Existing required names are preserved.

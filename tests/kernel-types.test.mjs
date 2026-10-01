@@ -4,7 +4,7 @@ import ts from 'typescript';
 import { fileURLToPath } from 'node:url';
 
 test('kernel declarations infer family schemas and registry literal ids', () => {
-  const file = fileURLToPath(new URL('../src/kernel/type-fixture.ts',import.meta.url));
+  const file = fileURLToPath(new URL('../src/kernel/type-fixture.ts',import.meta.url)).replaceAll('\\', '/');
   const source = `
     import {s, type Infer, type ManifestOf, defineFamily, createRegistry, validate} from 'block-beaver/kernel';
     const schema = s.object({state:s.enum(['open','closed']), label:s.optional(s.string()), values:s.array(s.integer()), nullable:s.nullable(s.string())});

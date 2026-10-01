@@ -93,3 +93,5 @@ Requested: remote Linux/Windows CI,trusted Codex native hooks,and release review
 - [ ] Final package/release handoff.
 
 Active workers: Sol medium CI portability and Codex trust; Claude Sonnet5.5 high independent review after authentication/model preflight. Primary owns integration and remote CI.
+
+Progress: baseline remote CI passed Linux22/24/26/macOS/audit but Windows exposed path, CRLF and permission defects. Fixes preserve the checks. Native Codex guide/deny probes executed successfully through normal `/hooks` trust. Claude review found stale release notes/install guidance, now being corrected; Luna handles README/changelog, Sol handles fresh package smoke. Final matrix and artifact wait for the behavior-source freeze.

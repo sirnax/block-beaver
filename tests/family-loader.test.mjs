@@ -302,8 +302,12 @@ test('declaration resolutions use the JavaScript runtime sibling, including a wo
   assert.deepEqual(result.diagnostics, [], JSON.stringify(result.diagnostics));
   assert.deepEqual(result.manifests.map((item) => item.value.tag), ['blue', 'green']);
   assert.ok(result.loadedFiles.includes('shared/legacy.js'));
-  assert.ok(result.loadedFiles.includes('packages/fixture-tool/lib/index.js'));
+  assert.ok(result.loadedFiles.includes('packages/fixture-tool/lib/index.js'), JSON.stringify(result.loadedFiles));
   assert.ok(!result.loadedFiles.some((path) => path.endsWith('.d.ts')));
+  await writeFile(join(data.root, 'packages/fixture-tool/lib/index.js'), "export const tag = 'changed';");
+  const changed = await loadFamilies(data);
+  assert.deepEqual(changed.diagnostics, []);
+  assert.deepEqual(changed.manifests.map((item) => item.value.tag), ['blue', 'changed']);
 });
 
 test('a fallback that compiles to CommonJS preserves single default and named exports and rejects real duplicates', async (t) => {

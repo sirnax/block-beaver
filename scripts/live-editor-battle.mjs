@@ -1,10 +1,10 @@
 /** Opt-in live editor release gate. Each run uses a disposable project and keeps its logs and metadata for review. */
 import { execFile, spawn, spawnSync } from 'node:child_process';
-import { accessSync, appendFileSync, constants, createWriteStream, realpathSync, statSync } from 'node:fs';
-import { chmod, mkdir, mkdtemp, readdir, readFile, realpath, symlink, writeFile } from 'node:fs/promises';
+import { accessSync, appendFileSync, constants, createWriteStream, readFileSync, realpathSync, statSync } from 'node:fs';
+import { chmod, copyFile, mkdir, mkdtemp, readdir, readFile, realpath, symlink, unlink, writeFile } from 'node:fs/promises';
 import { createHash } from 'node:crypto';
 import { finished } from 'node:stream/promises';
-import { tmpdir } from 'node:os';
+import { homedir, tmpdir } from 'node:os';
 import { delimiter, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { promisify } from 'node:util';
@@ -13,7 +13,7 @@ const exec = promisify(execFile);
 const script = fileURLToPath(import.meta.url);
 const cli = fileURLToPath(new URL('../bin/block-beaver.mjs', import.meta.url));
 const repository = fileURLToPath(new URL('..', import.meta.url));
-const usage = 'Usage: node scripts/live-editor-battle.mjs codex|claude normal|bypass|failed|drift [--timeout SECONDS]\n';
+const usage = 'Usage: node scripts/live-editor-battle.mjs codex|claude normal|bypass|failed|drift [--timeout SECONDS] [--codex-hook-trust]\n';
 const scenarios = ['normal', 'bypass', 'failed', 'drift'];
 // Roster from AGENTS.md: GPT work uses gpt-6.1-sol at medium effort; Claude work uses Sonnet 5.5 at high effort.
 const roster = {
@@ -39,7 +39,13 @@ const bashRule = (prefix) => [`Bash(${prefix})`, `Bash(${prefix} *)`];
 function runShim(name, args) {
   const real = JSON.parse(process.env.BLOCK_BEAVER_LIVE_REAL);
   const startedAt = Date.now();
-  const result = spawnSync(real[0], [...real.slice(1), ...args], { stdio: ['inherit', 'pipe', 'pipe'], maxBuffer: 256 * 1024 * 1024 });
+  const hookInput = name === 'block-beaver' && args[0] === 'hook-check' && !process.stdin.isTTY ? readFileSync(0) : null;
+  let nativeEvent = null;
+  if (hookInput) {
+    try { nativeEvent = JSON.parse(hookInput.toString('utf8')); } catch { /* Invalid input is preserved for the real CLI. */ }
+  }
+  const result = spawnSync(real[0], [...real.slice(1), ...args], { stdio: [hookInput ? 'pipe' : 'inherit', 'pipe', 'pipe'],
+    ...(hookInput ? { input: hookInput } : {}), maxBuffer: 256 * 1024 * 1024 });
   if (result.stdout?.length) process.stdout.write(result.stdout);
   if (result.stderr?.length) process.stderr.write(result.stderr);
   let productResult = null;
@@ -51,7 +57,7 @@ function runShim(name, args) {
   }
   try {
     appendFileSync(process.env.BLOCK_BEAVER_LIVE_LOG, JSON.stringify({ tool: name, argv: args, cwd: process.cwd(), startedAt, endedAt: Date.now(),
-      productResult, status: result.status, signal: result.signal, error: result.error?.message ?? null,
+      productResult, nativeEvent, status: result.status, signal: result.signal, error: result.error?.message ?? null,
       // Git exports GIT_INDEX_FILE to its hooks, so this separates a hook's audit run from the agent's own.
       hook: Boolean(process.env.GIT_INDEX_FILE), gitDir: process.env.GIT_DIR ?? null, gitWorkTree: process.env.GIT_WORK_TREE ?? null, stdout: tail(result.stdout), stderr: tail(result.stderr) }) + '\n');
   } catch { /* A missing record makes the case fail its evidence checks. */ }
@@ -291,13 +297,15 @@ async function main() {
   const args = process.argv.slice(2);
   const positional = [];
   let timeoutSeconds = 300;
+  let codexHookTrust = false;
   for (let i = 0; i < args.length; i++) {
     if (args[i] === '--timeout') timeoutSeconds = Number(args[++i]);
     else if (args[i].startsWith('--timeout=')) timeoutSeconds = Number(args[i].slice(10));
+    else if (args[i] === '--codex-hook-trust') codexHookTrust = true;
     else positional.push(args[i]);
   }
   const [model, scenario] = positional;
-  if (positional.length !== 2 || !roster[model] || !scenarios.includes(scenario) || !Number.isInteger(timeoutSeconds) || timeoutSeconds < 30 || timeoutSeconds > 3600) {
+  if (positional.length !== 2 || !roster[model] || !scenarios.includes(scenario) || codexHookTrust && model !== 'codex' || !Number.isInteger(timeoutSeconds) || timeoutSeconds < 30 || timeoutSeconds > 3600) {
     process.stderr.write(usage);
     process.exit(2);
   }
@@ -312,6 +320,10 @@ async function main() {
   const block = (reason) => record.blockedReasons.push(reason);
   const check = (name, pass, detail = null) => record.checks.push({ name, pass: Boolean(pass), detail });
   const finish = async () => {
+    if (paths.codexHome) {
+      try { await unlink(join(paths.codexHome, 'auth.json')); if (record.nativeTrust) record.nativeTrust.authRemoved = true; }
+      catch (error) { if (error.code !== 'ENOENT') block(`Could not remove disposable authentication copy: ${error.message}`); }
+    }
     if (record.process && record.blockBeaver?.sourceStart) {
       try {
         record.blockBeaver.sourceEnd = await sourceFingerprint();
@@ -439,6 +451,34 @@ async function main() {
     const environment = { ...process.env, PATH: `${paths.bin}${delimiter}${process.env.PATH}`, GIT_TERMINAL_PROMPT: '0', GIT_EDITOR: 'true',
       ...(model === 'codex' ? { ZDOTDIR: paths.shell } : {}) };
 
+    if (codexHookTrust) {
+      // Persist trust only through Codex's normal interactive review UI. The
+      // disposable home keeps project/hook trust separate from the owner's home.
+      if (!process.stdin.isTTY || !process.stdout.isTTY) {
+        block('--codex-hook-trust requires a terminal for the normal Codex /hooks review.');
+        return await finish();
+      }
+      paths.codexHome = join(paths.run, 'codex-home');
+      await mkdir(paths.codexHome);
+      const auth = join(process.env.CODEX_HOME || join(homedir(), '.codex'), 'auth.json');
+      await copyFile(auth, join(paths.codexHome, 'auth.json'));
+      await chmod(join(paths.codexHome, 'auth.json'), 0o600);
+      environment.CODEX_HOME = paths.codexHome;
+      const trustArgs = ['--no-daemon', '--no-alt-screen', '--cd', root, '--model', requestedModel,
+        '--sandbox', 'workspace-write', '--config', `model_reasoning_effort="${effort}"`, '--config', 'check_for_update_on_startup=false'];
+      record.nativeTrust = { method: 'Codex TUI /hooks', home: paths.codexHome, authIsolation: 'private disposable copy (0600)',
+        hookPath: join(root, '.codex/hooks.json'), hookSha256: nativeBefore['.codex/hooks.json'], args: trustArgs };
+      await writeFile(files.metadata, JSON.stringify(record, null, 2) + '\n');
+      process.stderr.write(`\nReview ${record.nativeTrust.hookPath} (sha256 ${record.nativeTrust.hookSha256}).\nIn Codex, accept the disposable project trust prompt, run /hooks, review and trust the installed hook, then exit with /quit. The workflow test will then run.\n`);
+      const trustExit = await new Promise((done, reject) => {
+        const child = spawn(command, trustArgs, { cwd: root, env: environment, stdio: 'inherit' });
+        child.once('error', reject);
+        child.once('close', (code) => done(code));
+      });
+      record.nativeTrust.exitCode = trustExit;
+      if (trustExit !== 0) { block('Normal Codex hook trust setup did not exit successfully.'); return await finish(); }
+    }
+
     const commit = bashRule('git commit');
     const rules = {
       allow: ['Read', 'Glob', 'Grep', 'Edit(./**)', 'Write(./**)', ...bashRule('block-beaver'), ...bashRule('npx --no-install block-beaver'), ...['git status', 'git diff', 'git log', 'git show', 'git add', 'git ls-files', 'git rev-parse', 'node --check', 'cat', 'ls'].flatMap(bashRule),
@@ -447,7 +487,7 @@ async function main() {
         ...['git push', 'git config', 'git -c', 'git commit --no-verify', 'git commit -n'].flatMap(bashRule), ...(scenario === 'bypass' ? ['Bash(git commit * --no-verify*)', 'Bash(git commit * -n *)'] : commit)],
     };
     const cliArgs = model === 'codex'
-      ? ['exec', '--ephemeral', '--ignore-user-config', '--sandbox', 'workspace-write', '--cd', root, '--add-dir', paths.shimLog, '--add-dir', join(root, '.git'), '--model', requestedModel,
+      ? ['exec', '--ephemeral', ...(codexHookTrust ? [] : ['--ignore-user-config']), '--sandbox', 'workspace-write', '--cd', root, '--add-dir', paths.shimLog, '--add-dir', join(root, '.git'), '--model', requestedModel,
         '--config', `model_reasoning_effort="${effort}"`, '--config', 'approval_policy="never"', '--color', 'never', '--json', '--output-last-message', files.lastMessage, '-']
       : ['-p', '--model', requestedModel, '--effort', effort, '--output-format', 'json', '--no-session-persistence', '--append-system-prompt-file', files.guidance,
         '--permission-mode', 'dontAsk', '--tools', 'Read,Glob,Grep,Edit,Write,Bash', '--allowedTools', rules.allow.join(','), '--disallowedTools', rules.deny.join(','),
@@ -461,8 +501,13 @@ async function main() {
 
     const metadata = model === 'claude' ? parseClaude(stdoutText) : parseCodex(stdoutText);
     record.agent = metadata;
-    const models = metadata?.models ?? null;
-    record.models = { requested: requestedModel, actual: models, verified: Boolean(models), unexpected: models?.filter((name) => !name.startsWith(requestedModel)) ?? [] };
+    const nativeModels = [...new Set(invocations.filter((entry) => entry.nativeEvent?.hook_event_name === 'PreToolUse')
+      .map((entry) => entry.nativeEvent.model).filter((name) => typeof name === 'string' && name))];
+    const reportedModels = [...new Set([...(metadata?.models ?? []), ...nativeModels])];
+    const models = reportedModels.length ? reportedModels : null;
+    record.models = { requested: requestedModel, actual: models, verified: Boolean(models),
+      evidence: { editorEvents: metadata?.models ?? null, nativeHookEnvelopes: nativeModels },
+      unexpected: models?.filter((name) => !name.startsWith(requestedModel)) ?? [] };
     if (result.spawnError) block(`Could not start ${command}: ${result.spawnError}`);
     if (result.timedOut) block(`${command} timed out after ${timeoutSeconds}s.`);
     if (model === 'claude') {
@@ -480,7 +525,7 @@ async function main() {
       if (!metadata.completed) block('Codex finished no model turn.');
       if (metadata.failures.length) block(`Codex reported errors: ${metadata.failures.join('; ').slice(0, 300)}`);
       if (/failed to initialize|Operation not permitted/.test(stderrText) && !metadata.completed) block('Codex could not start in this execution environment (sandbox or app-server error); rerun outside the restricted runner.');
-      if (models && !models.some((name) => name.startsWith(requestedModel))) block(`Codex events name ${models.join(', ')}, not ${requestedModel}.`);
+      if (models?.some((name) => !name.startsWith(requestedModel))) block(`Codex model evidence names ${models.join(', ')}, not only ${requestedModel}.`);
     }
 
     // Filesystem evidence, independent of the model's narrative.
@@ -507,6 +552,9 @@ async function main() {
       hookAudits: invocations.filter((entry) => entry.tool === 'block-beaver' && entry.hook).map((entry) => ({ argv: entry.argv, status: entry.status, stdout: entry.stdout, stderr: entry.stderr })) };
 
     check('process-exit', result.exitCode === 0 && !result.timedOut, `exit ${result.exitCode}${result.signal ? ` signal ${result.signal}` : ''}`);
+    const nativeCalls = invocations.filter((entry) => entry.tool === 'block-beaver' && entry.argv[0] === 'hook-check' && entry.argv.includes('--hook-id') && entry.nativeEvent?.hook_event_name === 'PreToolUse');
+    record.evidence.nativeHookCalls = nativeCalls.map((entry) => ({ argv: entry.argv, nativeEvent: entry.nativeEvent, status: entry.status, stdout: entry.stdout, stderr: entry.stderr }));
+    if (codexHookTrust) check('native-hook-executed', nativeCalls.length > 0 && nativeCalls.every((entry) => entry.status === 0), `${nativeCalls.length} installed native hook invocation(s)`);
     const refsAfter = await refs();
     const workflowRefs = new Set(Object.entries(ledgers).flatMap(([roadmap, events]) => events.filter((event) => event.slice).map((event) => `refs/heads/block-beaver/${roadmap}/${event.slice}`)));
     const refsIntact = Object.entries(refsBefore).every(([name, hash]) => refsAfter[name] === hash) &&

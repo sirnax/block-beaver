@@ -2,24 +2,24 @@
 
 All notable user visible changes are recorded here. Releases follow semantic versioning. Before 1.0, behavior and graph contracts may change between minor versions.
 
+## Unreleased
+
+- No additional changes recorded.
+
 ## 0.4.0 — 2026-10-01
 
-Release candidate; not yet published.
+Release candidate; not yet published. Versions 0.2.0 and 0.3.0 were local development versions and were never published. The upgrade path from the latest published release, 0.1.1, is directly to 0.4.0.
 
-- Add optional project-defined typed families, TS contract/manifest loading, family graph links and map floors; expose `block-beaver/kernel`, JSON kit commands, `gen --check`, history import, and the opt-in `block-beaver/eslint` rule. No domain family is bundled.
-- Add multi-app detection and owner-controlled `.blocks/config.json`, compiler-based
-  resolution, graph schema 2 ownership and reachability, cross-app links and health reports.
-- Add app filters and grouping to the console and generated map, strict scan diagnostics,
-  incremental scanning, and deterministic view module export with pure nonce/header helper.
-- Add one-command target-project integration with native editor instructions, a portable block workflow, generated HTML/JSON maps, and automatic refresh through `block-beaver start`. Add `init` and `update` for setup and offline regeneration.
+**Breaking changes:** the generated graph contract is now schema version 2, with app ownership and reachability data. The minimum supported Node.js version is 22.18.0; Node 24 and 26 are also supported. Consumers that read graph JSON or run Block Beaver on Node 22 before 22.18 must update.
+
+- Add optional, project-defined typed families, TypeScript contract and manifest loading, family graph links and map floors; expose `block-beaver/kernel`, JSON kit commands, `gen --check`, history import, and the opt-in `block-beaver/eslint` rule. No domain family is bundled.
+- Add multi-app detection and owner-controlled `.blocks/config.json`, compiler-based resolution, graph schema 2 ownership and reachability, cross-app links, app filters and health reports.
+- Add `install`, `upgrade`, `uninstall` and `audit` workflows with managed editor instructions, native hooks, Git hooks, CI setup, versioned migrations, stable audit rules and configurable coverage, resolution and lint ratchets.
+- Add strict scan diagnostics, incremental scanning, deterministic view module export with pure nonce/header helper, and generated maps with automatic refresh through `block-beaver start`; add `init` and `update` for setup and offline regeneration.
 - Show declared local block dependencies as evidenced connections in the scanned graph and local Blocks view.
 - Support explicitly scoped file creation in roadmaps and agent requests, with safe `op: "create"` patches alongside existing replacements.
 - Bind review and approval to the complete verified worktree snapshot, including declared generated files and the `.blocks` manifest; reject out-of-scope or post-check changes.
 - Keep repair within the same implementation paths and patch operations while allowing content fixes.
-
-## Unreleased
-
-- No additional changes recorded.
 
 ## 0.1.1 — 2026-09-20
 
@@ -33,5 +33,3 @@ Release candidate; not yet published.
 - Add agent protocol and authenticated local worker.
 - Add the public project page, Apache-2.0 license, contributor and security guidance, CI, dependency audit, secret scanning, CodeQL, and tag based GitHub releases.
 - Restrict local HTTP requests to loopback hosts and matching browser origins.
-
-Known limitations: graph edges are source observations rather than complete runtime dependencies. Dynamic imports, arbitrary path aliases, and relationships hidden behind reexports can be missed. The console and worker are for trusted local use. The 0.3.0 and 0.4.0 changes are local and have not been published.

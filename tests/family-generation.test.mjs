@@ -78,7 +78,7 @@ const custom = (path, { out, inputs = [], cache = true, closureHash = 'c1', fami
 const byKey = (result) => Object.fromEntries(result.outputs.map((output) => [output.key, output]));
 const codes = (result) => result.diagnostics.map((item) => item.code);
 const generateCalls = (loader) => loader.calls.filter((call) => call.generate);
-const listing = async (root) => (await readdir(root, { recursive: true })).sort();
+const listing = async (root) => (await readdir(root, { recursive: true })).map(path => path.replaceAll('\\', '/')).sort();
 const kernelOnly = (text) => text.split('\n').filter((line) => line.startsWith('import ')).length;
 
 test('a repository with no families plans nothing and touches nothing', async (t) => {

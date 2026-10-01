@@ -33,7 +33,7 @@ The visual console explores and previews. The CLI and optional authenticated wor
 
 ## Quick start
 
-Requires **Node.js 22+**. Install dependencies, then launch the local console:
+Requires **Node.js 22.18+**. Install dependencies, then launch the local console:
 
 ```sh
 npm ci
@@ -71,7 +71,7 @@ For setup without a live session, use `block-beaver init --root /path/to/your-pr
 
 ## Install, upgrade and audit
 
-For a repository-local installation, run `npx block-beaver@0.4.0 install` after this version is published. The local candidate can be installed from its npm tarball. Installation pins the development dependency exactly, detects npm, pnpm, Yarn or Bun, and plans managed editor skills, native hooks, Git hooks, CI and generated views. Use `--agents claude,codex` to select editors and `--dry-run` to inspect planned changes first.
+For a repository-local installation after publication, run `npx block-beaver@0.4.0 install`. Before publication, build the candidate tarball with `npm pack` from this checkout, install that `.tgz` into a disposable target project with `npm install /path/to/block-beaver-0.4.0.tgz`, then inspect its local CLI with `npx --no-install block-beaver install --dry-run`. The full installer pins the registry version, so use it after publication; `init` and `update` can exercise a tarball-installed CLI beforehand. Installation pins Block Beaver as a development dependency, detects npm, pnpm, Yarn or Bun, and plans managed editor skills, native hooks, Git hooks, CI and generated views. Use `--agents claude,codex` to select editors and `--dry-run` to inspect planned changes first.
 
 `block-beaver upgrade` preserves owner content and refuses edited managed sections; `--force` repairs the owned sections. `block-beaver uninstall` removes owned integration while preserving project data. Removing `.blocks/` requires `--remove-data --yes`. Ignore/exclusion adjustments are opt-in through `--fix-ignores` and `--fix-excludes`.
 
@@ -146,7 +146,7 @@ block-beaver kit create widget new-widget --json '{"rationale":"Keeps one widget
 
 Kit commands return JSON. `kit create` requires a configured scaffold, refuses existing output paths, lists manual steps, and runs generation after writing. `--dry-run` reports planned scaffold, generated and cache files without writing them. `history import FILE --map MAPPING.json` imports an existing history using explicit old-key to `family:id` mappings. The family map is generated with the ordinary project view and includes configured floors, typed links, app/folder slabs, and available history. A repository may supply `map.skin` and `map.tokens` in config; external CSS resources are not embedded.
 
-The runtime-only package entry point is `block-beaver/kernel`. It exports the JSON schema DSL (`s`), `validate`, `coerce`, `createRegistry`, `compose`, and `validateManifest`. Runtime validation rejects module implementations and source file lists. `block-beaver/eslint` provides the opt-in `no-block-id-literal` rule. These exports use the same package version as the CLI: the local 0.4.0 candidate.
+The runtime-only package entry point is `block-beaver/kernel`. It exports the JSON schema DSL (`s`), `validate`, `coerce`, `createRegistry`, `compose`, and `validateManifest`. Runtime validation rejects module implementations and source file lists. `block-beaver/eslint` provides the opt-in `no-block-id-literal` rule. TypeScript consumers should use `moduleResolution` `node16`, `nodenext`, or `bundler` so the package `exports` type condition is resolved; legacy `node` and `classic` resolution do not read that condition. The package version matches the CLI. An unbundled production app importing generated registries from `block-beaver/kernel` must have `block-beaver` available at runtime: the installer defaults to a devDependency, so move it to `dependencies` (or otherwise provide it in the production image) when deploying without bundling.
 
 ## Multi-app projects and embedding
 
@@ -250,7 +250,7 @@ It binds to `127.0.0.1:4174` and requires `Authorization: Bearer <token>` on eve
 - A project's configured family manifests are authoritative for that family. Families are optional and project-defined; there are no built-in domain names, fields, paths, or link kinds. Legacy registries should be migrated by configuring the existing contract and manifest locations and comparing generated output before adopting it.
 - CLI JSON is the agent-neutral interface. An agent can generate a proposal file, but scope, validation, review and approval use the same commands as a person.
 - `verification` commands run in the isolated worktree during `check`, without a shell. Use simple command-and-argument strings such as `npm test`; shell operators and substitutions are rejected. Review the branch and its test output before merging it.
-- The scanner resolves local relative imports and the common `@/` → `src/` alias. Dynamic imports, runtime calls, arbitrary path aliases, and relationships hidden behind reexports may be absent. Edges are observations, not a claim that every runtime dependency has been found.
+- The scanner uses each app’s TypeScript configuration and compiler resolver for static imports, including configured path aliases and workspace package links. Dynamic imports, runtime calls and relationships hidden behind reexports may still be absent. Edges are source observations, not a complete inventory of runtime dependencies.
 
 ## Verify
 

@@ -20,6 +20,7 @@ async function fixture(t) {
   await writeFile(join(root, 'README.md'), '# Project\n');
   await writeFile(join(root, '.gitignore'), '.blocks/worktrees/\n.blocks/view/\n');
   execFileSync('git', ['init', '-q', root]);
+  git(root, 'config', 'core.autocrlf', 'false');
   git(root, 'add', '.');
   git(root, '-c', 'user.name=Test', '-c', 'user.email=test@example.com', 'commit', '-qm', 'base');
   return root;

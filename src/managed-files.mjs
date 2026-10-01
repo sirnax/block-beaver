@@ -4,6 +4,7 @@ import { detectPackageManager, localBlockBeaverCommand } from './package-manager
 import { AGENT_FILES, CURSOR_HEADER, LEGACY_AGENT_INSTRUCTIONS, LEGACY_APP_INSTRUCTION, readInstallTemplates, renderAgentHook, renderAgentInstructions } from './install-templates.mjs';
 
 const digest = (text) => createHash('sha256').update(text).digest('hex');
+const lf = (text) => text.replaceAll('\r\n', '\n');
 const statePath = '.blocks/managed-files.json';
 const marker = (name, ignore) => ignore ? `# block-beaver:${name}` : `<!-- block-beaver:${name} -->`;
 const normalizeAgents = (agents) => [...new Set(agents.map((agent) => agent === 'agents' ? 'codex' : agent))].sort();
@@ -36,14 +37,16 @@ function planText(before, spec, { version, operation, force }) {
   // Old init sections did not carry hashes. Only their exact known bodies may be
   // adopted; unknown unverified content needs explicit force.
   const legacyBodies = spec.legacyBodies || [spec.body];
-  const verified = bounds.hash ? digest(bounds.body) === bounds.hash : legacyBodies.some((body) => bounds.body === body.trimEnd() + '\n');
+  const verified = bounds.hash ? digest(bounds.body) === bounds.hash || digest(lf(bounds.body)) === bounds.hash : legacyBodies.some((body) => lf(bounds.body) === lf(body).trimEnd() + '\n');
   if (!verified && !force) throw new Error(`Owner edits inside managed content in ${spec.path}; review the diff and use --force to replace only the managed section.`);
   if (operation === 'uninstall') {
     const remaining = text.slice(0, bounds.start) + text.slice(bounds.finish).replace(/^\r?\n/, '');
     if (spec.owned && (!remaining.trim() || remaining.trim() === (spec.prefix || '').trim())) return null;
     return remaining;
   }
-  return text.slice(0, bounds.start) + renderSection(spec.body, version, spec.ignore) + text.slice(bounds.finish);
+  const rendered = renderSection(spec.body, version, spec.ignore);
+  if (lf(text.slice(bounds.start, bounds.finish)) === rendered) return before;
+  return text.slice(0, bounds.start) + rendered + text.slice(bounds.finish);
 }
 
 const ownsHook = (handler) => handler?.type === 'command' && typeof handler.command === 'string' && /^(?:(?:npx --no-install|pnpm exec|yarn exec|bunx --no-install) )?block-beaver hook-check(?:\s|$)/.test(handler.command) && /(?:^|\s)--hook-id\s+block-beaver(?:\s|$)/.test(handler.command);
