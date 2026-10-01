@@ -19,7 +19,8 @@ test('frozen 0.1.1 init files upgrade to the same current guidance as a fresh in
   await upgradeProject(historical, { version: '0.3.0', agents: ['codex'], runner: packageRunner(historical) });
   await installProject(fresh, { version: '0.3.0', agents: ['codex'], runner: packageRunner(fresh) });
   const upgraded = await snapshot(historical), installed = await snapshot(fresh);
-  assert.deepEqual(withoutScanTime(upgraded), withoutScanTime(installed));
+  const canonical = files => Object.fromEntries(Object.entries(withoutScanTime(files)).map(([path, content]) => [path, typeof content === 'string' ? content.replaceAll('\r\n', '\n') : content]));
+  assert.deepEqual(canonical(upgraded), canonical(installed));
 });
 
 test('an earlier install upgrades to fresh current managed bytes and a second upgrade is inert', async (t) => {

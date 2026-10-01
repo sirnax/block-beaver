@@ -1,5 +1,7 @@
 # Block Beaver 0.4.0 local verification
 
+This records the original A–C local acceptance snapshot. The active [release-readiness task](2026-10-01-block-beaver-release-readiness.md) supersedes its pending remote/native checks and will record the final candidate evidence.
+
 A–C from the agreed design are implemented locally. E remains deferred. Nothing has been published.
 
 ## Frozen candidate

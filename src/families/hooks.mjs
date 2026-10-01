@@ -15,6 +15,9 @@ export function repositoryPath(root, url) {
   if (!url?.startsWith('file:')) return undefined;
   let absolute;
   try { absolute = fileURLToPath(url); } catch { return undefined; }
+  // Native resolution may retain a node_modules junction spelling on Windows.
+  // Track its canonical repository source, while external packages stay excluded.
+  try { absolute = realpathSync(absolute); } catch { /* unresolved URLs retain their original spelling */ }
   const path = relative(root, absolute).split('\\').join('/');
   if (!path || path === '..' || path.startsWith('../') || isAbsolute(path) || path.split('/').includes('node_modules')) return undefined;
   return path;

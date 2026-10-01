@@ -5,6 +5,7 @@ import { AGENT_FILES, CURSOR_HEADER, LEGACY_AGENT_INSTRUCTIONS, LEGACY_APP_INSTR
 
 const digest = (text) => createHash('sha256').update(text).digest('hex');
 const lf = (text) => text.replaceAll('\r\n', '\n');
+const preserveLineEndings = (before, content) => typeof before === 'string' && typeof content === 'string' && lf(before) === content ? before : content;
 const statePath = '.blocks/managed-files.json';
 const marker = (name, ignore) => ignore ? `# block-beaver:${name}` : `<!-- block-beaver:${name} -->`;
 const normalizeAgents = (agents) => [...new Set(agents.map((agent) => agent === 'agents' ? 'codex' : agent))].sort();
@@ -88,7 +89,7 @@ function hookPlan(before, agent, operation, force, previousHash, manager) {
   const content = operation === 'uninstall' && empty ? null : JSON.stringify(settings, null, 2) + '\n';
   // Preserve the exact bytes of owner JSON when no managed handler was present.
   if (operation === 'uninstall' && !existing.length) return { content: before, hash: null };
-  return { content, hash: operation === 'uninstall' ? null : digest(JSON.stringify([desired])) };
+  return { content: preserveLineEndings(before, content), hash: operation === 'uninstall' ? null : digest(JSON.stringify([desired])) };
 }
 
 function codexFeaturePlan(before, options) {
@@ -187,7 +188,7 @@ export async function planManagedFiles({ root, version, config = {}, agents = []
     } catch (error) { conflicts.push({ path, message: error.message, before }); }
   }
   const content = operation === 'uninstall' && !Object.keys(nextHooks).length ? null : JSON.stringify({ ...state, version, hooks: nextHooks }, null, 2) + '\n';
-  files.push({ path: statePath, before: stateBefore, content, kind: 'managed-state' });
+  files.push({ path: statePath, before: stateBefore, content: preserveLineEndings(stateBefore, content), kind: 'managed-state' });
   if (config.enforcement?.agents === 'block') diagnostics.push('Agent enforcement is configured to block; hook-check still fails open on errors and timeouts.');
   return { files, conflicts, diagnostics };
 }

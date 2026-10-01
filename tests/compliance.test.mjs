@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtemp, mkdir, readFile, rm, symlink, writeFile } from 'node:fs/promises';
+import { createHash } from 'node:crypto';
+import { chmod, lstat, mkdtemp, mkdir, readFile, rm, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { execFileSync } from 'node:child_process';
@@ -77,6 +78,59 @@ test('new source, deletion, symlink, and stale CI base fail closed', async (t) =
   assert.equal((await auditProject(root)).files.find((file) => file.path === 'LINK.md').status, 'unsupported-file-type');
   await assert.rejects(recordException(root, 'linked', { reason: 'link', paths: ['LINK.md'], check: 'git status' }), /not a regular file/);
   await assert.rejects(auditProject(root, { mode: 'range', base: '0'.repeat(40) }), /not an ancestor/);
+});
+
+test('reviewed executable files retain Git mode and reject index or exact-byte changes after review', async (t) => {
+  const root = await fixture(t);
+  if (process.platform !== 'win32') await chmod(join(root, 'src/feature.ts'), 0o755);
+  git(root, 'update-index', '--chmod=+x', 'src/feature.ts');
+  git(root, '-c', 'user.name=Test', '-c', 'user.email=test@example.com', 'commit', '-qm', 'executable base');
+  git(root, 'config', 'core.filemode', 'false');
+  const graph = await scanRepository(root, { writeConfig: false });
+  await createRoadmap(root, 'executable-roadmap', graph, { scope: ['src/feature.ts'] });
+  const proposal = makeProposal({ id: 'feature', name: 'Executable feature', description: 'Retain executable metadata.', rationale: 'One feature.', files: ['src/feature.ts'],
+    patches: [{ path: 'src/feature.ts', baseHash: graph.hashes['src/feature.ts'], content: 'export const feature = 2;\n' }] }, graph);
+  assert.equal((await propose(root, 'executable-roadmap', proposal, graph)).accepted, true);
+  const checked = await checkSlice(root, 'executable-roadmap', 'feature', graph);
+  assert.equal(checked.pass, true);
+  const entry = checked.snapshot.files.find((file) => file.path === 'src/feature.ts');
+  assert.equal(entry.mode, (await lstat(join(checked.worktree, entry.path))).mode.toString(8), 'Review still records exact native permissions.');
+  assert.equal(entry.indexMode, '100755');
+  if (process.platform === 'win32') assert.equal(entry.gitMode, '100755');
+  assert.equal((await review(root, 'executable-roadmap', 'feature', graph)).readyForApproval, true);
+
+  git(checked.worktree, 'update-index', '--chmod=-x', 'src/feature.ts');
+  assert.equal((await review(root, 'executable-roadmap', 'feature', graph)).integrity.matches, false);
+  await assert.rejects(approve(root, 'executable-roadmap', 'feature', graph), /Worktree changed after checks/);
+  git(checked.worktree, 'update-index', '--chmod=+x', 'src/feature.ts');
+  assert.equal((await approve(root, 'executable-roadmap', 'feature', graph)).status, 'approved');
+  const ledgerPath = join(root, '.blocks/roadmaps/executable-roadmap/events.jsonl');
+  const originalLedger = await readFile(ledgerPath, 'utf8');
+  const legacyEvents = originalLedger.trim().split('\n').map((line) => JSON.parse(line));
+  const legacySnapshot = legacyEvents.findLast((event) => event.type === 'checks-passed').result.snapshot;
+  legacySnapshot.files = legacySnapshot.files.map(({ indexMode, gitMode, ...file }) => file);
+  legacySnapshot.digest = createHash('sha256').update(JSON.stringify({ baseCommit: legacySnapshot.baseCommit, files: legacySnapshot.files })).digest('hex');
+  await writeFile(ledgerPath, legacyEvents.map((event) => JSON.stringify(event)).join('\n') + '\n');
+  if (process.platform === 'win32') {
+    await assert.rejects(integrateApproved(root, 'executable-roadmap', 'feature'), /lacks Windows Git mode evidence/);
+    assert.equal(await readFile(join(root, 'src/feature.ts'), 'utf8'), 'export const feature = 1;\n', 'Legacy Windows evidence fails before integration writes.');
+    await writeFile(ledgerPath, originalLedger);
+  }
+  const integrated = await integrateApproved(root, 'executable-roadmap', 'feature');
+  const receipt = JSON.parse(await readFile(join(root, integrated.receipt), 'utf8'));
+  assert.equal(receipt.paths.find((file) => file.path === 'src/feature.ts').afterMode, '100755');
+  assert.equal((await auditProject(root)).pass, true);
+  git(root, 'add', 'src/feature.ts', '.blocks');
+  const staged = await auditProject(root, { mode: 'staged' });
+  assert.equal(staged.pass, true, JSON.stringify(staged));
+
+  git(root, 'update-index', '--chmod=-x', 'src/feature.ts');
+  assert.equal((await auditProject(root, { mode: 'staged' })).files.find((file) => file.path === 'src/feature.ts').status, 'changed-after-review');
+  git(root, 'update-index', '--chmod=+x', 'src/feature.ts');
+  await writeFile(join(root, 'src/feature.ts'), 'export const feature = 2;\r\n');
+  assert.equal((await auditProject(root)).files.find((file) => file.path === 'src/feature.ts').status, 'changed-after-review');
+  git(root, 'add', 'src/feature.ts');
+  assert.equal((await auditProject(root, { mode: 'staged' })).files.find((file) => file.path === 'src/feature.ts').status, 'changed-after-review');
 });
 
 test('non-source exceptions bind verification to exact changed content', async (t) => {

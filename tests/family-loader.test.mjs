@@ -291,7 +291,7 @@ test('declaration resolutions use the JavaScript runtime sibling, including a wo
     'shared/legacy.js': "export const tag = 'blue';",
     'shared/legacy.d.ts': 'export declare const tag: string;',
     'packages/fixture-tool/package.json': JSON.stringify({ name: 'fixture-tool', type: 'module', main: 'lib/index.js', types: 'lib/index.d.ts' }),
-    'packages/fixture-tool/lib/index.js': "export const tag = 'green';",
+    'packages/fixture-tool/lib/index.js': "export const tag = 'green'; export const identity = {};",
     'packages/fixture-tool/lib/index.d.ts': 'export declare const tag: string;',
     'catalog/widgets/alpha.item.ts': `import {tag} from '../../shared/legacy.js'; export default {...${JSON.stringify(value())},tag};`,
     'catalog/widgets/bravo.item.ts': `import {tag} from 'fixture-tool'; export default {...${JSON.stringify(value('bravo'))},tag};`,
@@ -304,7 +304,14 @@ test('declaration resolutions use the JavaScript runtime sibling, including a wo
   assert.ok(result.loadedFiles.includes('shared/legacy.js'));
   assert.ok(result.loadedFiles.includes('packages/fixture-tool/lib/index.js'), JSON.stringify(result.loadedFiles));
   assert.ok(!result.loadedFiles.some((path) => path.endsWith('.d.ts')));
-  await writeFile(join(data.root, 'packages/fixture-tool/lib/index.js'), "export const tag = 'changed';");
+  const nativeUrl = pathToFileURL(join(data.root, 'node_modules/fixture-tool/lib/index.js')).href;
+  await writeFile(join(data.root, 'catalog/widgets/bravo.item.ts'), `import {tag, identity} from ${JSON.stringify(nativeUrl)}; import {identity as direct} from '../../packages/fixture-tool/lib/index.js'; export default {...${JSON.stringify(value('bravo'))},tag: identity === direct ? tag : 'duplicate'};`);
+  const delegated = await loadFamilies(data);
+  assert.deepEqual(delegated.diagnostics, []);
+  assert.deepEqual(delegated.manifests.map(item => item.value.tag), ['blue', 'green']);
+  assert.equal(delegated.loadedFiles.filter(path => path === 'packages/fixture-tool/lib/index.js').length, 1);
+  assert.ok(delegated.fileHashes['packages/fixture-tool/lib/index.js']);
+  await writeFile(join(data.root, 'packages/fixture-tool/lib/index.js'), "export const tag = 'changed'; export const identity = {};");
   const changed = await loadFamilies(data);
   assert.deepEqual(changed.diagnostics, []);
   assert.deepEqual(changed.manifests.map((item) => item.value.tag), ['blue', 'changed']);

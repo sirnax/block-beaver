@@ -14,7 +14,7 @@ This is the release gate for changes to the agent workflow, audit, installed gui
 
 | Requirement | Detail |
 | --- | --- |
-| Node and Git | Node 22 or newer and `git` on `PATH`; POSIX `sh` (macOS or Linux). |
+| Node and Git | Node 22.18+ and `git` on `PATH`; POSIX `sh` (macOS or Linux). |
 | Claude Code | 2.1.284 or newer, authenticated (`claude auth status` reports `loggedIn`), with access to `claude-sonnet-5-5`. |
 | Codex | A `codex` CLI that supports `codex exec` with the options below, authenticated, able to start outside a restricted runner. A sandbox that blocks Codex's app-server (`failed to initialize in-process app-server client: Operation not permitted`) makes every Codex case `blocked`. |
 | Network and usage | Model calls are billed to the signed-in accounts. The harness does not set credentials, log in or upgrade a CLI. |
@@ -82,7 +82,7 @@ The model's narrative is retained but never decides the result. Each rubric item
 - Requested tool, model, effort and timeout; CLI version and, for Claude, authentication state; the Block Beaver commit and dirty file count, plus starting/ending source fingerprints; the temporary paths above.
 - The actual invocation, the process result (exit status, signal, timeout, duration) and the parsed model metadata.
 - Claude: the models in `modelUsage`, permission denials, error flags, turns, cost and session id. A requested model absent from `modelUsage` blocks the case as a fallback or substitution; other models appearing beside it (for example, auxiliary calls) are listed as `models.unexpected` for review.
-- Codex: event counts, failure events and any `model` values found in the JSON events. Codex output does not reliably name the model, so `models.verified` can be false; in that case the model is the requested one by flag only. Say so when reporting.
+- Codex: event counts, failure events and any `model` values found in the JSON events. The harness also reads model identity from actual native hook envelopes. Codex output alone does not reliably name the model, so `models.verified` can be false; in that case the model is the requested one by flag only. Say so when reporting.
 - Git and audit evidence: head, status, staged files, source content, both audit reports, receipts, ledger event types, commit attempts with their output, and the hook's audit runs.
 
 The source fingerprint covers all files under `bin/`, `src/`, `templates/` and `scripts/`, plus root package manifests, lockfile and interactive console HTML/CSS. It includes untracked additions. Roadmaps, reports, documentation and test files are excluded because they do not change this fixture’s runtime behavior. Run the final matrix after runtime and template changes are complete.
@@ -99,3 +99,5 @@ The source fingerprint covers all files under `bin/`, `src/`, `templates/` and `
 Run `node scripts/live-editor-battle.mjs codex normal --codex-hook-trust` in a terminal (repeat for bypass, failed and drift). The harness opens Codex against the disposable fixture. Accept the normal project trust prompt, use `/hooks`, inspect the installed command and trust it through the UI, then exit with `/quit`. The workflow case proceeds using that persisted trust; no hook trust bypass flag is used.
 
 The harness creates a private disposable Codex home, copies authentication with mode 0600 without printing its contents, and removes that copy when the run finishes. The real user home and trust configuration remain untouched. `run.json` records the normal trust method, hook path/hash and actual native invocation envelopes. Native commands receive the original stdin bytes unchanged; merely running `hook-check` manually does not satisfy the native execution check.
+
+If the process is forcibly interrupted before cleanup, remove `codex-home/auth.json` from its printed disposable run directory before retaining or sharing evidence. A normal or blocked harness exit removes it automatically. Never share authentication files.

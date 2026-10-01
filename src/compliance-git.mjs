@@ -3,6 +3,7 @@ import { execFile } from 'node:child_process';
 import { lstat, readFile, readlink, realpath } from 'node:fs/promises';
 import { join } from 'node:path';
 import { promisify } from 'node:util';
+import { gitModeForWorktreeFile } from './file-mode.mjs';
 
 const exec = promisify(execFile);
 const decoder = new TextDecoder('utf-8', { fatal: true });
@@ -54,7 +55,12 @@ export async function versionBytes(root, path, mode, base = null) {
 
 export async function versionMode(root, path, mode, base = null) {
   if (mode === 'working') {
-    try { return (await lstat(join(root, path))).mode.toString(8); }
+    try {
+      const info = await lstat(join(root, path));
+      const nativeMode = info.mode.toString(8);
+      return process.platform === 'win32' && info.isFile()
+        ? gitModeForWorktreeFile(nativeMode, await versionMode(root, path, 'staged')) : nativeMode;
+    }
     catch (error) { if (error.code === 'ENOENT') return null; throw error; }
   }
   const output = mode === 'staged' ? await git(root, ['ls-files', '--stage', '-z', '--', path], { buffer: true })

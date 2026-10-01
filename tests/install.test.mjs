@@ -2,7 +2,9 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { mkdir, writeFile, readFile, rm, symlink, stat } from 'node:fs/promises';
 import { join } from 'node:path';
-import { installProject } from '../src/install.mjs';
+import { execFileSync } from 'node:child_process';
+import { installProject, upgradeProject } from '../src/install.mjs';
+import { auditProject } from '../src/compliance.mjs';
 import { auditCounts } from '../src/audit-rules.mjs';
 import { installationFixture, packageRunner, snapshot } from './helpers/install-fixture.mjs';
 
@@ -30,6 +32,43 @@ test('install previews complete onboarding without writes or package commands, t
   assert.deepEqual(repeated.commands, []);
   assert.deepEqual(await snapshot(root), bytes);
   assert.equal(calls.length, 1);
+});
+
+test('CRLF native hook and state JSON stays current through install, upgrade and audit', async (t) => {
+  const root = await installationFixture(t), calls = [], runner = packageRunner(root, calls);
+  const { version } = JSON.parse(await readFile(new URL('../package.json', import.meta.url), 'utf8'));
+  await mkdir(join(root, '.claude'));
+  await writeFile(join(root, '.claude/settings.json'), JSON.stringify({ permissions: { allow: ['Read'] }, owner: 'keep me' }, null, 2) + '\n');
+  execFileSync('git', ['-C', root, 'add', '.']);
+  execFileSync('git', ['-C', root, '-c', 'user.name=Fixture', '-c', 'user.email=fixture@example.test', 'commit', '-qm', 'base']);
+  const options = { version, agents: ['claude', 'codex'], runner };
+  assert.equal((await installProject(root, options)).complete, true);
+  const paths = ['.claude/settings.json', '.codex/hooks.json', '.blocks/managed-files.json'];
+  const bytes = new Map();
+  for (const path of paths) {
+    const content = (await readFile(join(root, path), 'utf8')).replaceAll('\r\n', '\n').replaceAll('\n', '\r\n');
+    await writeFile(join(root, path), content);
+    bytes.set(path, content);
+  }
+  const managed = await auditProject(root);
+  assert.equal(managed.rules.find(rule => rule.id === 'managed-current').pass, true, JSON.stringify(managed.rules));
+  for (const action of [installProject, upgradeProject]) {
+    const result = await action(root, options);
+    assert.equal(result.complete, true, JSON.stringify(result.conflicts));
+    assert.deepEqual(result.changed, []);
+    for (const path of paths) assert.equal(await readFile(join(root, path), 'utf8'), bytes.get(path));
+  }
+  assert.equal(calls.length, 1);
+  const settings = JSON.parse(await readFile(join(root, '.claude/settings.json'), 'utf8'));
+  assert.deepEqual(settings.permissions, { allow: ['Read'] });
+  assert.equal(settings.owner, 'keep me');
+  settings.hooks.PreToolUse.find(group => group.hooks.some(hook => hook.command.includes('--hook-id block-beaver'))).hooks[0].timeout = 99;
+  const edited = JSON.stringify(settings, null, 2).replaceAll('\n', '\r\n') + '\r\n';
+  await writeFile(join(root, '.claude/settings.json'), edited);
+  const refused = await upgradeProject(root, options);
+  assert.equal(refused.complete, false);
+  assert.ok(refused.conflicts.some(conflict => conflict.path === '.claude/settings.json' && /Owner edits/.test(conflict.message)));
+  assert.equal(await readFile(join(root, '.claude/settings.json'), 'utf8'), edited);
 });
 
 test('installer refuses unsafe targets and package failures before installing guidance', async (t) => {

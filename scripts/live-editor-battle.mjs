@@ -388,7 +388,12 @@ async function main() {
     await writeShim(paths.bin, 'git', [realGit], files.invocations);
     await writeShim(paths.bin, 'block-beaver', [process.execPath, cli], files.invocations);
     await mkdir(join(root, 'node_modules/.bin'), { recursive: true });
-    await symlink(join(paths.bin, 'block-beaver'), join(root, 'node_modules/.bin/block-beaver'));
+    await mkdir(join(root, 'node_modules/block-beaver/bin'), { recursive: true });
+    const fixturePackage = JSON.stringify({ name: 'block-beaver', version, bin: { 'block-beaver': 'bin/block-beaver.mjs' } }, null, 2) + '\n';
+    await writeFile(join(root, 'node_modules/block-beaver/package.json'), fixturePackage);
+    await copyFile(join(paths.bin, 'block-beaver'), join(root, 'node_modules/block-beaver/bin/block-beaver.mjs'));
+    await chmod(join(root, 'node_modules/block-beaver/bin/block-beaver.mjs'), 0o755);
+    await symlink('../block-beaver/bin/block-beaver.mjs', join(root, 'node_modules/.bin/block-beaver'));
     await git('init', '-q');
     await git('config', 'user.name', 'Live Test');
     await git('config', 'user.email', 'live@example.com');
@@ -439,7 +444,7 @@ async function main() {
     record.guidance = { file: guidanceFile, sha256: sha(guidance), bytes: guidance.length, templateSha256: sha(template), workflowMatchesTemplate: installedWorkflow === null ? null : installedWorkflow.includes(template.trimEnd()) };
     if (record.guidance.workflowMatchesTemplate !== true) { block('Installed .blocks/WORKFLOW.md differs from templates/block-workflow.md; the fixture does not use the current guidance.'); return await finish(); }
     await writeFile(files.guidance, guidance);
-    const prompt = prompts[scenario] + ` The working repository is ${root}. Create proposal inputs inside that repository, for example ${join(root, 'proposal.json')}. Do not write beside the repository.` + ' Do not launch additional agents or background workers.' + (model === 'claude' ? claudeSuffix : '');
+    const prompt = prompts[scenario] + ` The working repository is ${root}. Create proposal inputs inside that repository, for example ${join(root, 'proposal.json')}. Do not write beside the repository.` + ' Dependencies are already provisioned for this fixture. Do not run dependency installation commands (including npm ci/install), or change node_modules; package transport is verified separately.' + ' Do not launch additional agents or background workers.' + (model === 'claude' ? claudeSuffix : '');
     await writeFile(files.prompt, prompt);
 
     // Shims record `git` and `block-beaver` use; the latter runs this checkout's CLI, so no published package is needed.
@@ -450,6 +455,13 @@ async function main() {
     await Promise.all(['.zshenv', '.zprofile', '.zlogin'].map((name) => writeFile(join(paths.shell, name), shellProfile)));
     const environment = { ...process.env, PATH: `${paths.bin}${delimiter}${process.env.PATH}`, GIT_TERMINAL_PROMPT: '0', GIT_EDITOR: 'true',
       ...(model === 'codex' ? { ZDOTDIR: paths.shell } : {}) };
+    // Verify npm's real local binary lookup before launching either editor. Offline
+    // mode makes a missing fixture package fail rather than fetching a substitute.
+    const packageProbe = await exec('npx', ['--offline', '--no-install', 'block-beaver', 'scan', '--root', '.', '--full', 'true'],
+      { cwd: root, env: environment, timeout: 30_000 });
+    record.fixture.packageProbe = { command: ['npx', '--offline', '--no-install', 'block-beaver', 'scan', '--root', '.', '--full', 'true'],
+      pass: true, stdoutSha256: sha(packageProbe.stdout) };
+    const fixtureBinHash = sha(await readFile(join(root, 'node_modules/block-beaver/bin/block-beaver.mjs')));
 
     if (codexHookTrust) {
       // Persist trust only through Codex's normal interactive review UI. The
@@ -526,6 +538,7 @@ async function main() {
       if (metadata.failures.length) block(`Codex reported errors: ${metadata.failures.join('; ').slice(0, 300)}`);
       if (/failed to initialize|Operation not permitted/.test(stderrText) && !metadata.completed) block('Codex could not start in this execution environment (sandbox or app-server error); rerun outside the restricted runner.');
       if (models?.some((name) => !name.startsWith(requestedModel))) block(`Codex model evidence names ${models.join(', ')}, not only ${requestedModel}.`);
+      if (codexHookTrust && !models) block('actual-model-unverified: trusted Codex release gate received no model evidence from editor events or native hook envelopes.');
     }
 
     // Filesystem evidence, independent of the model's narrative.
@@ -552,6 +565,10 @@ async function main() {
       hookAudits: invocations.filter((entry) => entry.tool === 'block-beaver' && entry.hook).map((entry) => ({ argv: entry.argv, status: entry.status, stdout: entry.stdout, stderr: entry.stderr })) };
 
     check('process-exit', result.exitCode === 0 && !result.timedOut, `exit ${result.exitCode}${result.signal ? ` signal ${result.signal}` : ''}`);
+    check('fixture-package-intact', await readFile(join(root, 'node_modules/block-beaver/package.json'), 'utf8').catch(() => null) === fixturePackage &&
+      await readFile(join(root, 'node_modules/block-beaver/bin/block-beaver.mjs')).then(sha).catch(() => null) === fixtureBinHash &&
+      await readFile(join(root, 'node_modules/.bin/block-beaver')).then(sha).catch(() => null) === fixtureBinHash,
+    'pre-provisioned package metadata and instrumented local binary remain intact');
     const nativeCalls = invocations.filter((entry) => entry.tool === 'block-beaver' && entry.argv[0] === 'hook-check' && entry.argv.includes('--hook-id') && entry.nativeEvent?.hook_event_name === 'PreToolUse');
     record.evidence.nativeHookCalls = nativeCalls.map((entry) => ({ argv: entry.argv, nativeEvent: entry.nativeEvent, status: entry.status, stdout: entry.stdout, stderr: entry.stderr }));
     if (codexHookTrust) check('native-hook-executed', nativeCalls.length > 0 && nativeCalls.every((entry) => entry.status === 0), `${nativeCalls.length} installed native hook invocation(s)`);

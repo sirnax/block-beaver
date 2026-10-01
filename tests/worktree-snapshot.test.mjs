@@ -38,7 +38,7 @@ test('captures tracked changes, individual untracked files, deletions, modes, an
     const snapshot = await captureWorktreeSnapshot(root, baseCommit, manifestPath);
     assert.deepEqual(snapshot.files.map((entry) => entry.path), [manifestPath, 'generated/new.json', ...(process.platform === 'win32' ? [] : ['generated/odd\nname.txt']), 'src/existing.ts', 'src/old.ts']);
     assert.deepEqual(snapshot.files.find((entry) => entry.path === 'src/old.ts'), { path: 'src/old.ts', type: 'deleted', mode: null, sha256: null });
-    assert.deepEqual(snapshot.files.find((entry) => entry.path === 'src/existing.ts'), { path: 'src/existing.ts', type: 'file', mode: (await lstat(join(root, 'src', 'existing.ts'))).mode.toString(8), sha256: hash('export const value = 2;\n') });
+    assert.deepEqual(snapshot.files.find((entry) => entry.path === 'src/existing.ts'), { path: 'src/existing.ts', type: 'file', mode: (await lstat(join(root, 'src', 'existing.ts'))).mode.toString(8), sha256: hash('export const value = 2;\n'), indexMode: '100644', ...(process.platform === 'win32' ? { gitMode: '100644' } : {}) });
     assert.equal(snapshot.files.find((entry) => entry.path === manifestPath).sha256, hash(await readFile(join(root, manifestPath))));
     assert.equal(snapshot.digest, hash(JSON.stringify({ baseCommit, files: snapshot.files })));
     assert.deepEqual(await captureWorktreeSnapshot(root, baseCommit, join(root, manifestPath)), snapshot);
@@ -49,6 +49,27 @@ test('captures tracked changes, individual untracked files, deletions, modes, an
     const modeChanged = snapshot.files.find((entry) => entry.path === 'src/existing.ts').mode !== changed.files.find((entry) => entry.path === 'src/existing.ts').mode;
     assert.deepEqual(compareWorktreeSnapshots(snapshot, changed), { equal: false, added: ['generated/extra.ts'], removed: [], changed: modeChanged ? ['src/existing.ts'] : [] });
     assert.deepEqual(compareWorktreeSnapshots(snapshot, snapshot), { equal: true, added: [], removed: [], changed: [] });
+  } finally { await rm(root, { recursive: true, force: true }); }
+});
+
+test('binds index executable metadata without replacing raw permissions or legacy snapshots', async () => {
+  const { root, baseCommit, manifestPath } = await fixture();
+  try {
+    git(root, 'config', 'core.filemode', 'false');
+    await writeFile(join(root, 'src/existing.ts'), 'export const value = 2;\n');
+    const expected = await captureWorktreeSnapshot(root, baseCommit, manifestPath);
+    const legacy = { ...expected, files: expected.files.map(({ indexMode, gitMode, ...entry }) => entry) };
+    assert.equal(compareWorktreeSnapshots(legacy, expected).equal, true, 'Legacy evidence still compares exact raw mode and bytes.');
+    assert.equal(compareWorktreeSnapshots(expected, legacy).equal, false, 'New evidence cannot drop its attested index mode.');
+    git(root, 'update-index', '--chmod=+x', 'src/existing.ts');
+    const changed = await captureWorktreeSnapshot(root, baseCommit, manifestPath);
+    const before = expected.files.find((entry) => entry.path === 'src/existing.ts');
+    const after = changed.files.find((entry) => entry.path === 'src/existing.ts');
+    assert.equal(after.sha256, before.sha256);
+    assert.equal(after.mode, before.mode);
+    assert.equal(after.indexMode, '100755');
+    if (process.platform === 'win32') assert.equal(after.gitMode, '100755');
+    assert.deepEqual(compareWorktreeSnapshots(expected, changed), { equal: false, added: [], removed: [], changed: ['src/existing.ts'] });
   } finally { await rm(root, { recursive: true, force: true }); }
 });
 

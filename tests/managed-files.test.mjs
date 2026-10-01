@@ -37,6 +37,27 @@ test('managed install plan is read-only and repeated application is byte-stable'
   assert.match(skill, /block-beaver:version 0.3.0/);
 });
 
+test('CRLF managed sections stay current while content edits still require review', async (t) => {
+  const root = await fixture(t);
+  await writeFile(join(root, 'AGENTS.md'), 'Owner prose\r\n');
+  await apply(root, await planManagedFiles(options(root)));
+  const paths = ['AGENTS.md', '.blocks/WORKFLOW.md', '.agents/skills/block-beaver/SKILL.md', '.claude/settings.json', '.codex/hooks.json', '.blocks/managed-files.json'];
+  for (const path of paths) {
+    const file = join(root, path);
+    await writeFile(file, (await readFile(file, 'utf8')).replaceAll('\r\n', '\n').replaceAll('\n', '\r\n'));
+  }
+  const current = await planManagedFiles(options(root, { operation: 'upgrade' }));
+  assert.deepEqual(current.conflicts, []);
+  for (const path of paths) {
+    const planned = current.files.find(file => file.path === path);
+    assert.equal(planned.before, planned.content, path);
+  }
+  const owner = await readFile(join(root, 'AGENTS.md'), 'utf8');
+  await writeFile(join(root, 'AGENTS.md'), owner.replace('Read and follow', 'Owner changed'));
+  const edited = await planManagedFiles(options(root, { operation: 'upgrade' }));
+  assert.ok(edited.conflicts.some(item => item.path === 'AGENTS.md' && /Owner edits/.test(item.message)));
+});
+
 test('upgrade preserves surrounding and local prose and refuses modified managed bodies', async (t) => {
   const root = await fixture(t);
   await writeFile(join(root, 'AGENTS.md'), 'Owner instructions\n');
@@ -148,7 +169,7 @@ test('historical init workflow upgrades only from exact frozen generated content
   await mkdir(join(root, '.blocks'));
   const path = join(root, '.blocks/WORKFLOW.md');
   const old = await readFile(new URL('../templates/legacy/0.1.1-workflow.md', import.meta.url), 'utf8');
-  await writeFile(path, `<!-- block-beaver:start -->\n${old.trimEnd()}\n<!-- block-beaver:end -->\n`);
+  await writeFile(path, `<!-- block-beaver:start -->\n${old.trimEnd()}\n<!-- block-beaver:end -->\n`.replaceAll('\r\n', '\n').replaceAll('\n', '\r\n'));
   const plan = await planManagedFiles(options(root, { operation: 'upgrade' }));
   await apply(root, plan);
   assert.match(await readFile(path, 'utf8'), /block-beaver:hash [a-f0-9]{64}/);

@@ -63,7 +63,7 @@ async function validateBlockReceipt(root, receipt, mode) {
   for (const entry of receipt.paths) {
     const checked = snapshot.get(entry.path);
     if (!validEntry(entry) || !checked || checked.type !== 'file' || checked.sha256 !== entry.afterSha256 ||
-        checked.mode !== entry.afterMode) throw new Error(`Block receipt differs from checked content: ${entry.path}`);
+        (checked.gitMode ?? checked.mode) !== entry.afterMode) throw new Error(`Block receipt differs from checked content: ${entry.path}`);
   }
   return receipt;
 }
@@ -369,6 +369,9 @@ export async function integrateApproved(inputRoot, roadmapId, sliceId) {
   const worktree = join(root, '.blocks', 'worktrees', roadmapId, sliceId);
   const snapshot = await captureWorktreeSnapshot(worktree, state.roadmap.baseCommit, manifestPath(sliceId));
   if (!compareWorktreeSnapshots(pass.result.snapshot, snapshot).equal) throw new Error('Approved worktree changed after review.');
+  if (process.platform === 'win32' && pass.result.snapshot.files.some((entry) => entry.type === 'file' && !entry.gitMode)) {
+    throw new Error('Passing snapshot lacks Windows Git mode evidence. Run check and review again before integration.');
+  }
   const expected = [manifestPath(sliceId), ...(proposal.patches || []).map((patch) => patch.path)];
   if (!samePaths(snapshot.files.map((entry) => entry.path), expected)) throw new Error('Approved worktree contains an unexpected change.');
   const outputs = [], paths = [];
@@ -381,10 +384,10 @@ export async function integrateApproved(inputRoot, roadmapId, sliceId) {
     if (sha256(afterBytes) !== entry.sha256) throw new Error(`Approved content changed: ${entry.path}`);
     outputs.push({ path: entry.path, before: currentBytes?.toString('utf8') ?? null, content: afterBytes.toString('utf8') });
     paths.push({ path: entry.path, beforeSha256: hash(beforeBytes), afterSha256: entry.sha256,
-      beforeMode: await baseMode(root, entry.path, 'range', state.roadmap.baseCommit), afterMode: entry.mode });
+      beforeMode: await baseMode(root, entry.path, 'range', state.roadmap.baseCommit), afterMode: entry.gitMode ?? entry.mode });
   }
   const receipt = { schemaVersion: 1, type: 'block', roadmap: roadmapId, slice: sliceId, baseCommit: state.roadmap.baseCommit,
-    proposalHash: hashProposal(proposal), snapshotDigest: snapshot.digest, paths: paths.sort((a, b) => a.path.localeCompare(b.path)) };
+    proposalHash: hashProposal(proposal), snapshotDigest: pass.result.snapshot.digest, paths: paths.sort((a, b) => a.path.localeCompare(b.path)) };
   const receiptName = receiptPath(roadmapId, sliceId);
   if (await readProjectFile(root, receiptName) !== null) throw new Error(`Receipt already exists: ${receiptName}`);
   await writeProjectFiles(root, [...outputs, { path: receiptName, before: null, content: JSON.stringify(receipt, null, 2) + '\n' }]);
