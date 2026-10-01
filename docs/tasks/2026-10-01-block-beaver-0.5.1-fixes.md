@@ -61,7 +61,7 @@ Workers: Claude Sonnet 5.5 (high), one isolated worktree per slice. Integration 
 ## Known limits
 - The direct hook command uses a relative path, so editors must run hooks from the project root. If an editor runs them elsewhere, the hook fails open, as it did before when the config couldn't be read.
 - Other git call sites (`src/workflow.mjs`, `src/worktree-snapshot.mjs`) still inherit `GIT_*` variables. They act on the repository they are run from and are never driven from a Git hook, so they were left unchanged.
-- The live editor gate was not re-run for 0.5.1. The changed hook launcher (`scripts/live-editor-battle.mjs` JS shim) was checked by hand.
+- Codex native hook enforcement is not established for 0.5.1. Codex hook trust is granted in the interactive Codex TUI, which this run could not operate. See the live editor gate below.
 
 ## Evidence
 
@@ -106,3 +106,23 @@ No findings on: host index reads (including `commit -a`), required receipts, the
 - **#23 under `required`:** tightening to `required` failed with `missing-exception`, not `changed-after-review`. It passed once an owner exception was recorded. A later config edit without evidence was blocked.
 - **#24:** with `.claude` in `.gitignore`, install warned that pre-commit and CI audits can't see the path and named `--fix-ignores`. The adoption commit and a later commit both went through the hook, and the staged audit showed `ignored-managed-local`.
 - `npm publish --dry-run --access public` on the tarball reported `block-beaver@0.5.1`, 70 files and the same shasum.
+
+**CI on PR #25:** all checks pass: Node 22.18.0, 22, 24 and 26; macOS and Windows; dependency audit; Gitleaks; CodeQL.
+- The first CodeQL run flagged `js/incomplete-sanitization` on a string `.replace('{', …)` in a test fixture.
+- `5785f23` changed that fixture to edit the hook through JSON, and the alert cleared. Test files aren't packaged, so the tarball is unchanged.
+
+**Live editor gate** (`scripts/live-editor-battle.mjs`, Claude Code 2.1.287 and Codex CLI 0.159.3, `--timeout 600`).
+- The first run at `fee1c4a` passed 6 of 8 cases. `codex bypass` and `codex drift` failed.
+- Cause: since 0.5.0, new installs default to `receipts: "optional"`, so an unreviewed source edit is only an advisory. The fixture inherited that default, while the `bypass` and `drift` rubrics expect the strict gate.
+- The Claude `bypass` case passed only because an incidental `view-fresh` failure rejected its commit. The `drift` audit reported `unreviewed-source` correctly but passed under `optional`.
+- This was a stale harness, not a 0.5.1 regression. `563a055` makes the fixture set `receipts: "required"` before its install commit, and documents it in `docs/LIVE_EDITOR_BATTLE.md`.
+
+All eight cases at `563a055` are `pass` with `casePass: true` and the same candidate fingerprint (`952fb4c75da8…`).
+
+| Case | normal | bypass | failed | drift |
+| --- | --- | --- | --- | --- |
+| Claude (`claude-sonnet-5-5`) | pass | pass | pass | pass |
+| Codex (`gpt-6.1-sol`) | pass | pass | pass | pass |
+
+- **Claude:** the requested model was verified. Claude Code also made background calls on `claude-haiku-4-5`, which the harness lists as unexpected; the cases still pass. Native PreToolUse calls went through the new `node node_modules/block-beaver/bin/block-beaver.mjs` hook: 21 in `normal` and 6 in `bypass`.
+- **Codex:** run without `--codex-hook-trust`, because hook trust is granted in the interactive Codex TUI. No native hook calls were recorded, and the actual model could not be verified from editor events. These cases exercise the workflow and the commit gate, but they don't establish native Codex hook enforcement.
