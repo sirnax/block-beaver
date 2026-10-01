@@ -261,6 +261,26 @@ Dependabot or Renovate propose upgrades.
 `--dry-run` lists every file it would touch, with diffs. `block-beaver uninstall` removes
 the managed sections, hooks and devDependency, and asks before deleting `.blocks/`.
 
+**Install checks the host repo's own setup** and reports problems instead of leaving them
+silently broken:
+
+- **Ignored install targets.** If the repo's `.gitignore` would ignore anything install
+  writes (for example a repo that ignores all of `.claude/`), install says which files are
+  affected and proposes the narrowest fix, which `--fix-ignores` applies. For example:
+  - keep `.claude/settings.local.json` and `.claude/worktrees/` ignored;
+  - un-ignore `.claude/skills/block-beaver/` and `.claude/settings.json`.
+
+  Unless the owner chooses that, the skill and hooks exist only on the machine that ran
+  install.
+- **Host tools picking up Block Beaver's working files.** Install checks whether the repo's
+  tsconfig `include`, linter, test runner or formatter would pick up `.blocks/worktrees/`,
+  `.blocks/cache/` or `.blocks/view/`. It proposes the matching excludes, which
+  `--fix-excludes` applies. Alternatively, config can move worktrees out of the repo
+  entirely: `"worktrees": { "dir": "../.<repo>-block-beaver-worktrees" }`.
+- **Other tools' hooks.** Hooks belonging to other tools in the same settings files are
+  left untouched. Block Beaver's hook entries are found by id and coexist with them. Every
+  hook adds context only and fails open, so the order they run in doesn't matter.
+
 ### B.2 Upgrades that reach existing repos
 
 **Detection.**
@@ -346,6 +366,9 @@ CI templates and the live-editor test.
 - **Golden upgrade tests:** fixtures made by installing earlier versions are upgraded to
   the current version and must match a fresh install.
 - The local part is preserved, and upgrade refuses when a managed part has been edited.
+- Install reports ignored targets and host-tool pickup of `.blocks/` working files.
+  `--fix-ignores` and `--fix-excludes` produce the narrowest change. Other tools' hooks in
+  the same settings file survive install, upgrade and uninstall.
 - Every audit rule has a fixture that passes and one that fails.
 - The live-editor test, which runs real agent CLIs through the normal, bypass, failed and
   drift cases, is a **release gate**.
@@ -424,10 +447,26 @@ configured family fails audit.
 **Module specifiers** in `implementation.module` are resolved with A's resolver, using the
 home app's options, so any alias works.
 
-**Loading TypeScript.** Contracts and manifests are loaded with Node's built-in type
-stripping (Node 22.18+ and 24), plus a resolve hook backed by A's resolver. No `tsx`
-dependency is needed. Contracts must use TypeScript syntax that can be stripped, and audit
-names any file that doesn't.
+**Loading TypeScript.** Contracts, manifests and custom generators are loaded with Node's
+built-in type stripping (Node 22.18+ and 24), using hooks registered through
+`module.registerHooks`:
+
+- The **resolve hook** uses A's resolver. Extensionless relative imports (`../contract`)
+  and tsconfig aliases therefore work as they do in the editor.
+- The **load hook** forces ES module format for these files. Loading works the same
+  whether or not the host `package.json` sets `"type"`.
+
+No `tsx` dependency is needed. The files and everything they import must:
+
+- be `.ts`, `.mts` or `.cts`, not `.tsx`;
+- use TypeScript syntax that can simply be stripped (no `enum`, no runtime `namespace`, no
+  parameter properties);
+- not need a bundler.
+
+Audit names the first file that breaks a rule, and which rule it breaks. A repo that
+can't meet these rules can set `"loader": "<package>"` (for example a TypeScript runner it
+already depends on). Block Beaver then loads through that package instead, and nothing
+else changes.
 
 ### C.2 Codegen, check and history
 
@@ -437,11 +476,23 @@ names any file that doesn't.
   - **`registry`** writes a typed, read-only registry module per family. It imports only
     `block-beaver/kernel` and that family's manifests, and its output path is set in
     config.
-  - **`index`** writes `.blocks/index.json`, all manifests as JSON, for tools, agents and
-    the map.
+  - **`index`** writes `.blocks/index.json`: a JSON array of every manifest, ordered by
+    family and then by id. That shape is a documented, versioned contract, so a repo's own
+    lint rules and tools can read it.
   - **`history`** appends to `.blocks/history.json`. An entry is added only when a
     manifest's hash changes. Dates are UTC. The label comes from `history.label` in the
-    config or from `gen --label "…"`, never from parsing another document.
+    config or from `gen --label "…"`, never from parsing another document. A repo that
+    wants a computed label (for example its current release step) passes it with
+    `--label` from its own script.
+  - **Importing existing history.** `block-beaver history import <file> --map <mapping>`
+    brings in a history kept by an earlier, hand-built system. `--map` is a small JSON file
+    mapping old block keys to `family:id`. Every entry, with its date and label, is kept.
+    The import is refused unless replaying the imported entries reaches exactly the
+    current set of blocks.
+- **The registry output shape.** The built-in `registry` generator's export names follow a
+  documented pattern, with an optional `exportName` per family. A repo whose existing code
+  depends on different export names keeps generating its registries with custom generators
+  (below). Changing a registry's shape is never forced.
 - **Custom generators** live in the repo and are referenced from a family or from config:
 
   ```ts
@@ -480,8 +531,13 @@ scripts. Commands:
 - `describe <family>`
 - `validate`
 - `compose`
-- `create <family> <id>`, which writes a manifest from the family's `scaffold` template
-  and then runs `gen`.
+- `create <family> <id>`, which writes files from the family's `scaffold` and then runs
+  `gen`.
+  - A scaffold is a set of templates: the manifest, plus any companion files the family
+    needs, such as an implementation stub, a test or fixture entries.
+  - It also lists **manual steps**, which `create` reports in its output instead of
+    pretending to do them (for example "write a database migration").
+  - `--dry-run` shows every file it would write.
 
 **Map floors.** When families are configured, the view adds an isometric map:
 - one floor per family, in config order, using each family's `map` text;
@@ -509,6 +565,11 @@ fonts, and its browser-storage keys use the repo's name.
 - runtime mode refusing `module`;
 - the JSON round trip refusing functions;
 - the kernel size budget;
+- the loader: extensionless and aliased imports resolve, loading works whether or not the
+  package.json sets `"type"`, and `.tsx` files and non-strippable syntax get named errors;
+  the `loader` fallback is also tested;
+- history import: entries are kept, and an import whose replay doesn't match is refused;
+- multi-file scaffolds, including their manual steps and `--dry-run`;
 - **a domain guard test** that fails if Block Beaver's source contains the
   proof-of-concept repo's family names, fields or paths. The denylist lives in a test
   fixture.
