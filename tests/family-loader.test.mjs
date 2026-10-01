@@ -314,7 +314,7 @@ test('declaration resolutions use the JavaScript runtime sibling, including a wo
   assert.ok(result.loadedFiles.includes('packages/fixture-tool/lib/index.js'), JSON.stringify(result.loadedFiles));
   assert.ok(!result.loadedFiles.some((path) => path.endsWith('.d.ts')));
   const nativeUrl = pathToFileURL(join(data.root, 'node_modules/fixture-tool/lib/index.js')).href;
-  await writeFile(join(data.root, 'catalog/widgets/bravo.item.ts'), `import {tag, identity} from ${JSON.stringify(nativeUrl)}; import {identity as direct} from '../../packages/fixture-tool/lib/index.js'; export default {...${JSON.stringify(value('bravo'))},tag: identity === direct ? tag : 'duplicate'};`);
+  await writeFile(join(data.root, 'catalog/widgets/bravo.item.ts'), `import {tag, identity} from ${JSON.stringify(nativeUrl)}; import {identity as direct} from '../../packages/fixture-tool/lib/index.js'; import {identity as variant} from ${JSON.stringify(nativeUrl + '?variant=1')}; export default {...${JSON.stringify(value('bravo'))},tag: identity === direct && variant !== direct ? tag : 'duplicate'};`);
   const delegated = await loadFamilies(data);
   assert.deepEqual(delegated.diagnostics, []);
   assert.deepEqual(delegated.manifests.map(item => item.value.tag), ['blue', 'green']);

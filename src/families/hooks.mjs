@@ -58,7 +58,19 @@ export function installFamilyHooks({ root, project, kernelUrl, loadedFiles, sour
     resolve(specifier, context, nextResolve) {
       const from = repositoryPath(root, context.parentURL);
       const delegate = () => {
-        try { return nextResolve(specifier, context); }
+        try {
+          const resolved = nextResolve(specifier, context);
+          const path = repositoryPath(root, resolved.url);
+          if (path === undefined || isInternal(resolved.url)) return resolved;
+          assertSafeSource(root, path);
+          // Node's default resolver can retain Windows 8.3 aliases. Give every
+          // repository source one native URL, preserving intentional variants.
+          const original = new URL(resolved.url);
+          const canonical = pathToFileURL(join(root, path));
+          canonical.search = original.search;
+          canonical.hash = original.hash;
+          return { ...resolved, url: canonical.href };
+        }
         catch (error) {
           if (from !== undefined) throw loaderError('unresolved-import', `${from}: ${error.message}`, from);
           throw error;
