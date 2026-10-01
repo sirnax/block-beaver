@@ -140,7 +140,47 @@ test('existing assets are external while missing assets and escaped imports rema
   assert.deepEqual(model.resolveImport('main.ts', './icon.svg'), { external: true, asset: 'icon.svg' });
   assert.deepEqual(model.resolveImport('main.ts', '@assets/icon.svg'), { external: true, asset: 'icon.svg' });
   assert.match(model.resolveImport('main.ts', './missing.css').error, /Cannot resolve/);
+  assert.equal(model.resolveImport('main.ts', './missing.css').category, 'asset');
   assert.match(model.resolveImport('main.ts', '../outside').error, /outside the repository/);
+});
+test('relative and alias asset misses are categorized as asset errors', async (t) => {
+  const root = await fixture(t, { 'src/tsconfig.json': { compilerOptions: { baseUrl: '.', paths: { '@assets/*': ['*'] } }, include: ['*.ts'] }, 'src/main.ts': '' });
+  const model = await loadProjectModel(join(root, 'src'), { paths: ['main.ts'], writeConfig: false });
+  assert.deepEqual(model.resolveImport('main.ts', './missing.css'), { error: "Cannot resolve asset './missing.css' (missing)", category: 'asset' });
+  assert.equal(model.resolveImport('main.ts', '@assets/missing.svg').category, 'asset');
+});
+test('bare package assets resolve through node_modules and package exports', async (t) => {
+  const root = await fixture(t, {
+    'src/main.ts': '',
+    'node_modules/reactflow/package.json': { name: 'reactflow' },
+    'node_modules/reactflow/dist/style.css': 'a {}',
+    'node_modules/@fortune-sheet/react/package.json': { name: '@fortune-sheet/react', exports: { '.': './dist/index.js', './dist/index.css': './dist/index.css', './private/*': null } },
+    'node_modules/@fortune-sheet/react/dist/index.css': 'a {}',
+    'node_modules/@fortune-sheet/react/private/secret.css': 'a {}',
+    'node_modules/@fortune-sheet/react/dist/other.css': 'a {}',
+    'node_modules/wild/package.json': { name: 'wild', exports: { './*': './*' } },
+    'node_modules/wild/theme/dark.css': 'a {}',
+    'node_modules/styled/package.json': { name: 'styled', exports: { './theme.css': { style: './dist/theme.css', default: './dist/missing.css' } } },
+    'node_modules/styled/dist/theme.css': 'a {}',
+    'node_modules/conditional/package.json': { name: 'conditional', exports: { './icon.svg': { node: './node.svg', import: ['./gone.svg', './icon.svg'] } } },
+    'node_modules/conditional/icon.svg': '<svg/>',
+    'node_modules/gone/package.json': { name: 'gone' },
+  });
+  const model = await loadProjectModel(root, { paths: ['src/main.ts'], writeConfig: false });
+  const resolve = (specifier) => model.resolveImport('src/main.ts', specifier);
+  assert.deepEqual(resolve('reactflow/dist/style.css'), { external: true, package: 'reactflow', asset: 'reactflow/dist/style.css' });
+  assert.deepEqual(resolve('@fortune-sheet/react/dist/index.css'), { external: true, package: '@fortune-sheet/react', asset: '@fortune-sheet/react/dist/index.css' });
+  assert.deepEqual(resolve('wild/theme/dark.css'), { external: true, package: 'wild', asset: 'wild/theme/dark.css' });
+  assert.deepEqual(resolve('styled/theme.css'), { external: true, package: 'styled', asset: 'styled/theme.css' });
+  assert.deepEqual(resolve('conditional/icon.svg'), { external: true, package: 'conditional', asset: 'conditional/icon.svg' });
+  assert.deepEqual(model.apps.find((app) => app.root === '.').packages.sort(), ['@fortune-sheet/react', 'conditional', 'reactflow', 'styled', 'wild']);
+  assert.deepEqual(resolve('@fortune-sheet/react/dist/other.css'), { error: "Cannot resolve asset '@fortune-sheet/react/dist/other.css' (not-exported)", category: 'asset' });
+  assert.deepEqual(resolve('@fortune-sheet/react/private/secret.css'), { error: "Cannot resolve asset '@fortune-sheet/react/private/secret.css' (not-exported)", category: 'asset' });
+  assert.deepEqual(resolve('reactflow/dist/gone.css'), { error: "Cannot resolve asset 'reactflow/dist/gone.css' (missing)", category: 'asset' });
+  assert.deepEqual(resolve('wild/theme/light.css'), { error: "Cannot resolve asset 'wild/theme/light.css' (missing)", category: 'asset' });
+  assert.deepEqual(resolve('nothere/style.css'), { error: "Cannot resolve asset 'nothere/style.css' (no-package)", category: 'asset' });
+  assert.equal(resolve('reactflow/../gone/escape.css').category, 'asset');
+  assert.match(resolve('reactflow/dist/../../../outside.css').error, /Cannot resolve asset/);
 });
 test('manual app roots do not disappear solely because detection does not recognize their files', async (t) => {
   const root = await fixture(t, { 'custom/main.ts': '', '.blocks/config.json': { schemaVersion: 1, apps: [{ id: 'custom', root: 'custom', source: 'config' }, { id: 'gone', root: 'gone', source: 'config' }] } });

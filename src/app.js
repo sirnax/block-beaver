@@ -170,7 +170,7 @@ async function scan() {
     $('#count-links').textContent = number(result.summary.relationships);
     $('#count-blocks').textContent = number(result.summary.blocks || 0);
     $('#fingerprint').textContent = `Scan ${result.fingerprint}`;
-    $('#scan-status').textContent = result.resolutionReport?.length ? `Scan complete · ${number(result.resolutionReport.length)} unresolved ${result.resolutionReport.length === 1 ? 'import' : 'imports'}` : 'Scan complete';
+    $('#scan-status').textContent = result.resolutionReport?.length ? `Scan complete · ${number(result.resolutionReport.length)} unresolved ${result.resolutionReport.length === 1 ? 'import' : 'imports'}${result.summary.missingAssets ? ` (${number(result.summary.missingAssets)} missing ${result.summary.missingAssets === 1 ? 'asset' : 'assets'})` : ''}` : 'Scan complete';
     const suggestions = await fetch('/api/suggestions');
     state.suggestions = suggestions.ok ? await suggestions.json() : [];
     const roadmaps = await fetch('/api/roadmaps');
@@ -203,9 +203,10 @@ function showAppReport(id) {
   state.selected = null;
   const app = state.graph.apps.find((entry) => entry.id === id);
   const report = (state.graph.resolutionReport || []).filter((entry) => entry.app === id);
+  const missingAssets = report.filter((entry) => entry.category === 'asset').length;
   const diagnostics = (state.graph.diagnostics || []).filter((entry) => entry.app === id);
   const unreachable = state.graph.nodes.filter((node) => node.kind === 'file' && node.app === id && (state.graph.unreachableFiles || []).includes(node.path));
-  $('#detail').innerHTML = `<div class="detail-inner"><span class="detail-kind">App health</span><h3>${esc(id)}</h3><div class="detail-path">${esc(app?.root)}</div><div class="detail-section"><h4>Unresolved imports (${report.length})</h4>${report.map((entry) => `<div class="source-proof">${esc(entry.file)}:${esc(entry.line)}:${esc(entry.column)}<code>${esc(entry.specifier)}</code>${esc(entry.message)}</div>`).join('') || '<p class="detail-desc">All imports resolved.</p>'}</div><div class="detail-section"><h4>Configuration errors (${diagnostics.length})</h4>${diagnostics.map((entry) => `<p class="detail-desc">${esc(entry.field)}: ${esc(entry.message)}</p>`).join('') || '<p class="detail-desc">No configuration errors.</p>'}</div><div class="detail-section"><h4>Unreachable files (${unreachable.length})</h4>${unreachable.map((node) => listItem(node, '▤')).join('') || '<p class="detail-desc">Every file is reached from an app entry point.</p>'}</div></div>`;
+  $('#detail').innerHTML = `<div class="detail-inner"><span class="detail-kind">App health</span><h3>${esc(id)}</h3><div class="detail-path">${esc(app?.root)}</div><div class="detail-section"><h4>Unresolved imports (${report.length}${missingAssets ? `, ${missingAssets} missing ${missingAssets === 1 ? 'asset' : 'assets'}` : ''})</h4>${report.map((entry) => `<div class="source-proof"><b>[${esc(entry.category || 'module')}]</b>${esc(entry.file)}:${esc(entry.line)}:${esc(entry.column)}<code>${esc(entry.specifier)}</code>${esc(entry.message)}</div>`).join('') || '<p class="detail-desc">All imports resolved.</p>'}</div><div class="detail-section"><h4>Configuration errors (${diagnostics.length})</h4>${diagnostics.map((entry) => `<p class="detail-desc">${esc(entry.field)}: ${esc(entry.message)}</p>`).join('') || '<p class="detail-desc">No configuration errors.</p>'}</div><div class="detail-section"><h4>Unreachable files (${unreachable.length})</h4>${unreachable.map((node) => listItem(node, '▤')).join('') || '<p class="detail-desc">Every file is reached from an app entry point.</p>'}</div></div>`;
 }
 function showEdge(index) {
   const edge = state.graph?.edges[index];

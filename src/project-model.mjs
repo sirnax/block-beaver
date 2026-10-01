@@ -1,6 +1,6 @@
 import ts from 'typescript';
 import { readFile, readdir } from 'node:fs/promises';
-import { realpathSync, existsSync, statSync } from 'node:fs';
+import { realpathSync, existsSync, statSync, readFileSync } from 'node:fs';
 import { resolve, relative, dirname, basename, join, isAbsolute } from 'node:path';
 import { createHash } from 'node:crypto';
 import { readProjectFile, writeProjectFiles } from './project-files.mjs';
@@ -14,6 +14,55 @@ const message = (error) => ts.flattenDiagnosticMessageText(error.messageText, '\
 const within = (root, path) => { const rel = relative(root, path); return !isAbsolute(rel) && rel !== '..' && !rel.startsWith(`..${process.platform === 'win32' ? '\\' : '/'}`); };
 const safePath = (root, path) => typeof path === 'string' && within(root, resolve(root, path));
 const packageName = (specifier) => specifier.startsWith('@') ? specifier.split('/').slice(0, 2).join('/') : specifier.split('/')[0];
+// TypeScript does not resolve these, so they are recognized as assets by file lookup instead.
+const ASSET_EXTENSIONS = /\.(?:css|scss|sass|less|styl|svg|png|jpe?g|gif|webp|avif|ico|bmp|woff2?|ttf|otf|eot|mp3|mp4|webm|wav|ogg)$/i;
+const ASSET_OR_JSON = /\.(?:css|scss|sass|less|styl|svg|png|jpe?g|gif|webp|avif|ico|bmp|woff2?|ttf|otf|eot|mp3|mp4|webm|wav|ogg|json)$/i;
+const EXPORT_CONDITIONS = ['style', 'browser', 'import', 'require', 'module', 'default'];
+
+function isFile(path) { try { return statSync(path).isFile(); } catch { return false; } }
+/** Package.json export targets for a subpath, in preference order. Empty means the subpath is not exported. */
+function exportTargets(exports, subpath) {
+  if (exports === undefined || exports === null) return [];
+  const entries = typeof exports === 'object' && !Array.isArray(exports) ? Object.keys(exports) : [];
+  const map = entries.length && entries.every((key) => key.startsWith('.')) ? exports : { '.': exports };
+  let value, capture = '';
+  if (Object.hasOwn(map, subpath) && !subpath.includes('*')) value = map[subpath];
+  else {
+    const pattern = Object.keys(map).filter((key) => {
+      if (!key.includes('*')) return false;
+      const [prefix, suffix] = key.split('*');
+      return subpath.startsWith(prefix) && subpath.endsWith(suffix) && subpath.length >= prefix.length + suffix.length;
+    }).sort((a, b) => b.split('*')[0].length - a.split('*')[0].length)[0];
+    if (!pattern) return [];
+    const [prefix, suffix] = pattern.split('*');
+    capture = subpath.slice(prefix.length, subpath.length - suffix.length); value = map[pattern];
+  }
+  const targets = [];
+  (function collect(item) {
+    if (typeof item === 'string') targets.push(item.replaceAll('*', capture));
+    else if (Array.isArray(item)) item.forEach(collect);
+    else if (item && typeof item === 'object') for (const condition of EXPORT_CONDITIONS) if (Object.hasOwn(item, condition)) collect(item[condition]);
+  })(value);
+  return targets;
+}
+/** Resolve a bare package asset specifier such as `reactflow/dist/style.css` through node_modules and package exports. */
+export function resolvePackageAsset(specifier, containingFile, repoRoot) {
+  const name = packageName(specifier), rest = specifier.slice(name.length);
+  let packageDir = null;
+  for (let directory = dirname(containingFile); ; directory = dirname(directory)) {
+    const manifest = join(directory, 'node_modules', name, 'package.json');
+    if (existsSync(manifest)) { try { packageDir = realpathSync.native(dirname(manifest)); } catch { packageDir = dirname(manifest); } break; }
+    if (dirname(directory) === directory) break;
+  }
+  if (!packageDir) return { ok: false, reason: 'no-package' };
+  let manifest = {};
+  try { manifest = JSON.parse(readFileSync(join(packageDir, 'package.json'), 'utf8')) || {}; } catch { /* unreadable manifest behaves as one without exports */ }
+  const candidates = manifest.exports === undefined ? [`.${rest}`] : exportTargets(manifest.exports, `.${rest}`);
+  const files = candidates.filter((target) => typeof target === 'string' && target.startsWith('./')).map((target) => resolve(packageDir, target)).filter((path) => within(packageDir, path));
+  if (!files.length) return { ok: false, reason: manifest.exports === undefined ? 'missing' : 'not-exported' };
+  const file = files.find(isFile);
+  return file ? { ok: true, file } : { ok: false, reason: 'missing' };
+}
 
 function patternRegex(pattern) {
   let result = '^';
@@ -213,9 +262,9 @@ export async function loadProjectModel(inputRoot, { paths = [], writeConfig = tr
     const resolved = ts.resolveModuleName(specifier, containingFile, app.compilerOptions, host, app.cache, undefined, resolutionMode).resolvedModule;
     if (!resolved) {
       // TypeScript intentionally does not resolve arbitrary assets. Recognize only
-      // an existing asset via relative paths or configured aliases, keeping compiler
-      // resolution authoritative for code.
-      if (/\.(?:css|scss|sass|less|svg|png|jpe?g|gif|webp|avif|ico|woff2?|ttf|otf|mp3|mp4|webm|wav)$/.test(specifier)) {
+      // an existing asset via relative paths, configured aliases or a package in
+      // node_modules, keeping compiler resolution authoritative for code.
+      if (ASSET_OR_JSON.test(specifier)) {
         const candidates = [];
         if (specifier.startsWith('.')) candidates.push(resolve(dirname(containingFile), specifier));
         else {
@@ -237,11 +286,19 @@ export async function loadProjectModel(inputRoot, { paths = [], writeConfig = tr
           if (!within(root, realpathSync.native(asset))) return { error: `Import '${specifier}' resolves outside the repository` };
           if (statSync(asset).isFile()) return { external: true, asset: slash(relative(root, asset)) };
         }
+        let reason = 'missing';
+        if (!specifier.startsWith('.') && !isAbsolute(specifier)) {
+          const found = resolvePackageAsset(specifier, containingFile, root);
+          const name = packageName(specifier);
+          if (found.ok) { if (!app.packages.includes(name)) app.packages.push(name); return { external: true, package: name, asset: specifier }; }
+          if (found.reason !== 'no-package' || !candidates.length) reason = found.reason;
+        }
+        return { error: `Cannot resolve asset '${specifier}' (${reason})`, category: 'asset' };
       }
       return { error: `Cannot resolve '${specifier}'` };
     }
     let absolute = resolved.resolvedFileName; try { absolute = realpathSync.native(absolute); } catch { /* compiler supplied a virtual path */ }
-    if (within(root, absolute) && !slash(relative(root, absolute)).split('/').includes('node_modules')) return /\.(?:json|css|scss|svg|png|jpg)$/.test(absolute) ? { external: true } : { path: slash(relative(root, absolute)) };
+    if (within(root, absolute) && !slash(relative(root, absolute)).split('/').includes('node_modules')) return ASSET_OR_JSON.test(absolute) ? { external: true } : { path: slash(relative(root, absolute)) };
     if (specifier.startsWith('.') || isAbsolute(specifier)) return { error: `Import '${specifier}' resolves outside the repository` };
     const name = packageName(specifier); if (!app.packages.includes(name)) app.packages.push(name);
     return { external: true, package: name };
