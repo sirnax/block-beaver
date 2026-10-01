@@ -2,6 +2,7 @@ import { constants } from 'node:fs';
 import { fileModeMatches, gitModeForWorktreeFile } from './file-mode.mjs';
 import { readFile, readdir, mkdir, mkdtemp, rm, symlink, writeFile, lstat, open, realpath } from 'node:fs/promises';
 import { join, resolve, dirname, relative, isAbsolute, basename } from 'node:path';
+import { createHash } from 'node:crypto';
 import { tmpdir } from 'node:os';
 import { evaluateAuditRules } from './audit-rules.mjs';
 import { scanRepository } from './scanner.mjs';
@@ -40,6 +41,33 @@ const samePaths = (left, right) => {
   const sorted = [...right].sort();
   return left.length === right.length && [...left].sort().every((path, i) => path === sorted[i]);
 };
+
+// Strictness ascends so the stricter of two configured levels is the larger rank.
+const RECEIPT_LEVELS = ['off', 'optional', 'required'];
+const receiptLevel = (document) => {
+  if (document === null) return null;
+  const value = document?.enforcement?.receipts;
+  return RECEIPT_LEVELS.includes(value) ? { level: value, explicit: true } : { level: 'required', explicit: false };
+};
+const parseConfig = (bytes) => {
+  if (bytes === null) return null;
+  try { return JSON.parse(bytes.toString('utf8')); } catch { return {}; }
+};
+
+/**
+ * The receipt gate is the stricter of the base revision's level and the audited tree's level.
+ * Reading only the tree would let one commit loosen the gate and pass under its own new rules,
+ * so loosening has to pass an audit at the old level first. On the adoption commit the base has
+ * no config at all, so the audited tree's value applies. A config without the key means required.
+ */
+function receiptsEnforcement(baseDocument, treeDocument) {
+  let winner = null;
+  for (const [source, document] of [['base', baseDocument], ['tree', treeDocument]]) {
+    const level = receiptLevel(document);
+    if (level && (!winner || RECEIPT_LEVELS.indexOf(level.level) > RECEIPT_LEVELS.indexOf(winner.level))) winner = { ...level, source };
+  }
+  return { receipts: winner?.level ?? 'required', receiptsSource: winner?.explicit ? winner.source : 'default' };
+}
 
 async function readEvidence(root, path, mode) { return versionBytes(root, path, mode); }
 
@@ -329,6 +357,7 @@ export async function auditProject(inputRoot, { mode = 'working', base = null, s
   const changed = (await changedPaths(root, mode, base)).filter((item) => !internalPath(item.path));
   const evidence = await receiptsAt(root, mode);
   const files = [];
+  const staleReviewed = new Set();
   for (const item of changed) {
     const before = hash(await baseBytes(root, item.path, mode, base));
     const after = hash(await versionBytes(root, item.path, mode, base));
@@ -342,18 +371,37 @@ export async function auditProject(inputRoot, { mode = 'working', base = null, s
       : candidates.length ? 'changed-after-review' : kind === 'source' ? 'unreviewed-source' : kind === 'manifest' ? 'unreviewed-manifest' : 'missing-exception';
     if ((kind === 'source' || kind === 'manifest') && after === null) status = 'unsupported-deletion';
     if (currentMode !== null && !/^100[0-7]{3}$/.test(currentMode)) status = 'unsupported-file-type';
+    // Evidence recorded against this same base but no longer matching the bytes is stale review
+    // of the change in hand, unlike an older receipt left behind by an earlier commit.
+    if (status === 'changed-after-review' && candidates.some((receipt) => receipt.paths.some((entry) => entry.path === item.path && entry.beforeSha256 === before && entry.beforeMode === previousMode))) staleReviewed.add(item.path);
     files.push({ path: item.path, change: item.status, kind, status, evidence: accepted ? (accepted.type === 'block' ? receiptPath(accepted.roadmap, accepted.slice) : exceptionPath(accepted.id)) : null });
   }
-  const receiptPass = files.every((file) => ['approved-block', 'verified-exception'].includes(file.status)) && evidence.invalid.length === 0;
   const snapshot = mode === 'working' ? { root, dispose: async () => {} } : await auditSnapshot(root, mode);
   const baselineBytes = await baseBytes(root, '.blocks/baseline.json', mode, base);
   let priorBaseline;
   if (baselineBytes !== null) { try { priorBaseline = JSON.parse(baselineBytes.toString('utf8')); } catch { priorBaseline = {}; } }
-  let rules;
-  try { rules = await structuralRules(snapshot.root, { strict, familyDrift, mode, priorBaseline }); }
+  const baseConfig = parseConfig(await baseBytes(root, '.blocks/config.json', mode, base));
+  let rules, treeConfig;
+  try {
+    treeConfig = await readJson(snapshot.root, '.blocks/config.json');
+    rules = await structuralRules(snapshot.root, { strict, familyDrift, mode, priorBaseline });
+  }
   finally { await snapshot.dispose(); }
-  rules.push({ id: 'reviewed-content', pass: receiptPass, findings: [...files.filter((file) => !['approved-block', 'verified-exception'].includes(file.status)).map((file) => ({ path: file.path, message: file.status })), ...evidence.invalid.map((entry) => ({ path: entry.path, message: entry.reason }))] });
-  return { pass: rules.every((rule) => rule.pass), mode, base: mode === 'range' ? base : await gitHead(root), files, invalidEvidence: evidence.invalid, rules };
+  const treeValue = treeConfig.present ? (treeConfig.value ?? {}) : null;
+  const { receipts, receiptsSource } = receiptsEnforcement(baseConfig, treeValue);
+  const unreviewed = files.filter((file) => !['approved-block', 'verified-exception'].includes(file.status));
+  const invalid = evidence.invalid.map((entry) => ({ path: entry.path, message: entry.reason }));
+  const advisory = (file) => ({ code: 'reviewed-content', severity: 'info', path: file.path, message: file.status });
+  if (receipts === 'required') rules.push({ id: 'reviewed-content', pass: unreviewed.length === 0 && invalid.length === 0, findings: [...unreviewed.map((file) => ({ path: file.path, message: file.status })), ...invalid] });
+  else if (receipts === 'optional') {
+    // Unreviewed work is advisory, but forged or invalid evidence and review that went stale
+    // against this very change are still errors.
+    const failing = unreviewed.filter((file) => staleReviewed.has(file.path));
+    const findings = [...failing.map((file) => ({ path: file.path, message: file.status })), ...invalid];
+    rules.push({ id: 'reviewed-content', pass: findings.length === 0, findings, advisories: unreviewed.filter((file) => !staleReviewed.has(file.path)).map(advisory) });
+  } else rules.push({ id: 'reviewed-content', pass: true, findings: [], skipped: true, skipReason: 'enforcement.receipts is off', advisories: invalid.map((entry) => ({ code: 'invalid-evidence', severity: 'info', ...entry })) });
+  const enforcement = { agents: treeValue?.enforcement?.agents ?? 'guide', gate: treeValue?.enforcement?.gate ?? 'audit', receipts, receiptsSource };
+  return { pass: rules.every((rule) => rule.pass), mode, base: mode === 'range' ? base : await gitHead(root), enforcement, files, invalidEvidence: evidence.invalid, rules };
 }
 
 export async function integrateApproved(inputRoot, roadmapId, sliceId) {
@@ -403,7 +451,7 @@ async function runCheck(root, command) {
   } catch (error) { return { command, pass: false, output: `${error.stdout || ''}${error.stderr || ''}${error.message}`.slice(-2000) }; }
 }
 
-export async function recordException(inputRoot, id, { reason, paths, check = null, managed = false, rule = null, allowance = null } = {}) {
+export async function recordException(inputRoot, id, { reason, paths, check = null, managed = false, managedOutput = 'Generated by init', rule = null, allowance = null } = {}) {
   const root = resolve(inputRoot);
   await assertGitRoot(root);
   if (!safeId.test(id || '') || !reason?.trim() || !Array.isArray(paths) || !paths.length) throw new Error('Exception needs a kebab-case ID, reason, and paths.');
@@ -425,7 +473,7 @@ export async function recordException(inputRoot, id, { reason, paths, check = nu
     if (!changed.has(path)) throw new Error(`Exception path has no current change: ${path}`);
     if (sourceExtensions.test(path) || internalPath(path)) throw new Error(`Exception cannot cover source or evidence file: ${path}`);
   }
-  const verification = managed ? [{ command: 'Block Beaver managed setup', pass: true, output: 'Generated by init' }] : [await runCheck(root, check || '')];
+  const verification = managed ? [{ command: 'Block Beaver managed setup', pass: true, output: managedOutput }] : [await runCheck(root, check || '')];
   if (verification.some((item) => !item.pass)) throw new Error(`Exception verification failed: ${verification[0].output}`);
   const entries = [];
   for (const path of unique) {
@@ -439,4 +487,28 @@ export async function recordException(inputRoot, id, { reason, paths, check = nu
   if (await readProjectFile(root, target) !== null) throw new Error(`Exception already exists: ${target}`);
   await writeProjectFiles(root, [{ path: target, before: null, content: JSON.stringify(value, null, 2) + '\n' }]);
   return { recorded: true, path: target, paths: unique };
+}
+
+/**
+ * Records the managed-setup exception for files a Block Beaver command just wrote. Only files
+ * with a current working change and existing content are covered; generated view output and
+ * Block Beaver's own evidence paths never need one. Returns null when nothing is eligible.
+ */
+export async function recordManagedSetup(inputRoot, { label, paths }) {
+  const root = resolve(inputRoot);
+  await assertGitRoot(root);
+  const current = new Set((await changedPaths(root, 'working')).map((entry) => entry.path));
+  const eligible = [];
+  for (const path of [...new Set(paths)].sort()) {
+    if (!current.has(path) || internalPath(path)) continue;
+    // A deleted file cannot be named by an exception, which must reference existing files.
+    const bytes = await versionBytes(root, path, 'working');
+    if (bytes !== null) eligible.push([path, sha256(bytes)]);
+  }
+  if (!eligible.length) return null;
+  const suffix = createHash('sha256').update(JSON.stringify(eligible)).digest('hex').slice(0, 12);
+  const id = `block-beaver-setup-${suffix}`;
+  // The same files with the same bytes were already covered; recording again would only collide.
+  if (await readProjectFile(root, exceptionPath(id)) !== null) return { recorded: false, path: exceptionPath(id), paths: eligible.map(([path]) => path), reason: 'already recorded' };
+  return recordException(root, id, { reason: `Block Beaver managed ${label}`, paths: eligible.map(([path]) => path), managed: true, managedOutput: `Generated by ${label}` });
 }

@@ -1,8 +1,9 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdir, writeFile, readFile, rm, symlink, stat } from 'node:fs/promises';
+import { mkdir, writeFile, readFile, rm, symlink, stat, chmod } from 'node:fs/promises';
 import { join } from 'node:path';
 import { execFileSync } from 'node:child_process';
+import { fileURLToPath } from 'node:url';
 import { installProject, upgradeProject } from '../src/install.mjs';
 import { auditProject } from '../src/compliance.mjs';
 import { auditCounts } from '../src/audit-rules.mjs';
@@ -53,7 +54,7 @@ test('install previews complete onboarding without writes or package commands, t
   assert.equal((await stat(join(root, '.git/hooks/pre-commit'))).mode & (process.platform === 'win32' ? 0o200 : 0o111), process.platform === 'win32' ? 0o200 : 0o111);
   const config = JSON.parse(await readFile(join(root, '.blocks/config.json'), 'utf8'));
   assert.equal(config.blockBeaver, '0.3.0');
-  assert.deepEqual(config.enforcement, { agents: 'guide', gate: 'audit' });
+  assert.deepEqual(config.enforcement, { agents: 'guide', gate: 'audit', receipts: 'optional' });
   assert.deepEqual(JSON.parse(await readFile(join(root, '.blocks/baseline.json'), 'utf8')), { schemaVersion: 1, coverage: 1, resolution: 0 });
   assert.ok((await readFile(join(root, 'AGENTS.md'), 'utf8')).startsWith('# Owner rules\n'));
   const bytes = await snapshot(root);
@@ -169,4 +170,164 @@ test('family onboarding renders typed implementation ownership and initializes t
   const baseline = JSON.parse(await readFile(join(root, '.blocks/baseline.json'), 'utf8'));
   assert.deepEqual(baseline, { schemaVersion: 1, ...auditCounts(graph) });
   assert.equal(baseline.coverage, 1);
+});
+
+const identity = ['-c', 'user.name=Fixture', '-c', 'user.email=fixture@example.test'];
+const commit = (root, message, env = process.env) => execFileSync('git', ['-C', root, ...identity, 'commit', '-qm', message], { env, stdio: 'pipe' });
+const cliPath = fileURLToPath(new URL('../bin/block-beaver.mjs', import.meta.url));
+const currentVersion = async () => JSON.parse(await readFile(new URL('../package.json', import.meta.url), 'utf8')).version;
+const rule = (audit, id) => audit.rules.find((entry) => entry.id === id);
+
+// The hook runs `npx --no-install block-beaver ...`; stand in for the host's local binary.
+async function shimmedPath(root) {
+  const bin = join(root, '..', 'shim-bin');
+  await mkdir(bin, { recursive: true });
+  await writeFile(join(bin, 'npx'), `#!/bin/sh\nshift 2\nexec "${process.execPath}" "${cliPath}" "$@"\n`);
+  await chmod(join(bin, 'npx'), 0o755);
+  return `${bin}:${process.env.PATH}`;
+}
+
+for (const fixIgnores of [false, true]) {
+  test(`a fresh install passes its own audit and its first commit${fixIgnores ? ' with --fix-ignores' : ''}`, { skip: process.platform === 'win32' }, async (t) => {
+    const root = await installationFixture(t), version = await currentVersion();
+    execFileSync('git', ['-C', root, 'add', '.']);
+    commit(root, 'base');
+    const installed = await installProject(root, { version, agents: ['claude', 'codex'], fixIgnores, runner: packageRunner(root) });
+    assert.equal(installed.complete, true, JSON.stringify(installed.conflicts));
+    const working = await auditProject(root, { mode: 'working' });
+    assert.equal(working.pass, true, JSON.stringify(working.rules.filter((entry) => !entry.pass)));
+    assert.equal(rule(working, 'reviewed-content').pass, true);
+    assert.equal(installed.exception.recorded, true);
+    assert.match(installed.exception.path, /^\.blocks\/exceptions\/block-beaver-setup-[0-9a-f]{12}\.json$/);
+    execFileSync('git', ['-C', root, 'add', '-A']);
+    const staged = await auditProject(root, { mode: 'staged' });
+    assert.equal(staged.pass, true, JSON.stringify(staged.rules.filter((entry) => !entry.pass)));
+    assert.equal(rule(staged, 'reviewed-content').pass, true);
+    // The real pre-commit hook runs the same audit, so the adoption commit must succeed.
+    commit(root, 'adopt block beaver', { ...process.env, PATH: await shimmedPath(root) });
+    assert.equal(execFileSync('git', ['-C', root, 'status', '--porcelain']).toString().trim(), '');
+  });
+}
+
+test('the setup exception satisfies owner-required receipts on a fresh install', async (t) => {
+  const root = await installationFixture(t), version = await currentVersion();
+  await mkdir(join(root, '.blocks'));
+  await writeFile(join(root, '.blocks/config.json'), JSON.stringify({ schemaVersion: 1, apps: [], enforcement: { receipts: 'required' } }));
+  execFileSync('git', ['-C', root, 'add', '.']);
+  commit(root, 'base');
+  const installed = await installProject(root, { version, agents: ['claude', 'codex'], runner: packageRunner(root) });
+  assert.equal(installed.enforcement.receipts, 'required');
+  const audit = await auditProject(root, { mode: 'working' });
+  assert.equal(audit.pass, true, JSON.stringify(audit.rules.filter((entry) => !entry.pass)));
+  assert.equal(audit.enforcement.receipts, 'required');
+  assert.equal(rule(audit, 'reviewed-content').advisories, undefined);
+  assert.ok(audit.files.length > 5 && audit.files.every((file) => file.status === 'verified-exception'));
+});
+
+test('config edits after install go stale against the setup exception', async (t) => {
+  const root = await installationFixture(t), version = await currentVersion();
+  execFileSync('git', ['-C', root, 'add', '.']);
+  commit(root, 'base');
+  await installProject(root, { version, agents: ['claude', 'codex'], runner: packageRunner(root) });
+  const path = join(root, '.blocks/config.json');
+  const config = JSON.parse(await readFile(path, 'utf8'));
+  config.enforcement.receipts = 'required';
+  await writeFile(path, JSON.stringify(config, null, 2) + '\n');
+  // Config edits after install are not covered by the setup exception.
+  const stale = await auditProject(root, { mode: 'working' });
+  assert.equal(rule(stale, 'reviewed-content').pass, false);
+  assert.ok(stale.files.some((file) => file.path === '.blocks/config.json' && file.status === 'changed-after-review'));
+});
+
+test('editing a managed file after install makes the setup exception stale and the audit fails', async (t) => {
+  const root = await installationFixture(t), version = await currentVersion();
+  execFileSync('git', ['-C', root, 'add', '.']);
+  commit(root, 'base');
+  await installProject(root, { version, agents: ['claude', 'codex'], runner: packageRunner(root) });
+  assert.equal((await auditProject(root, { mode: 'working' })).pass, true);
+  await writeFile(join(root, 'AGENTS.md'), (await readFile(join(root, 'AGENTS.md'), 'utf8')) + '\nOwner note.\n');
+  const audit = await auditProject(root, { mode: 'working' });
+  assert.equal(audit.files.find((file) => file.path === 'AGENTS.md').status, 'changed-after-review');
+  assert.equal(audit.pass, false);
+});
+
+test('install without a committed base still succeeds and reports the setup exception as incomplete', async (t) => {
+  const root = await installationFixture(t), version = await currentVersion();
+  const installed = await installProject(root, { version, agents: ['codex'], runner: packageRunner(root) });
+  assert.equal(installed.complete, true);
+  assert.equal(installed.exception.status, 'incomplete');
+  assert.ok(installed.exception.reason);
+});
+
+test('install writes optional receipts for a fresh adoption and says which level gates commits', async (t) => {
+  const root = await installationFixture(t), version = await currentVersion();
+  const preview = await installProject(root, { version, agents: [], dryRun: true });
+  assert.deepEqual(preview.enforcement, { agents: 'guide', gate: 'audit', receipts: 'optional' });
+  assert.match(preview.gate, /review receipts are optional/);
+  const installed = await installProject(root, { version, agents: [], runner: packageRunner(root) });
+  assert.deepEqual(JSON.parse(await readFile(join(root, '.blocks/config.json'), 'utf8')).enforcement, { agents: 'guide', gate: 'audit', receipts: 'optional' });
+  assert.deepEqual(installed.enforcement, { agents: 'guide', gate: 'audit', receipts: 'optional' });
+});
+
+test('upgrade of an existing install leaves a config without receipts on the required default', async (t) => {
+  const root = await installationFixture(t), runner = packageRunner(root);
+  await installProject(root, { version: '0.4.0', agents: [], runner });
+  const path = join(root, '.blocks/config.json');
+  const config = JSON.parse(await readFile(path, 'utf8'));
+  delete config.enforcement.receipts;
+  await writeFile(path, JSON.stringify(config, null, 2) + '\n');
+  const upgraded = await upgradeProject(root, { version: '0.5.0', agents: [], runner });
+  assert.equal(JSON.parse(await readFile(path, 'utf8')).enforcement.receipts, undefined);
+  assert.equal(upgraded.enforcement.receipts, 'required');
+  assert.match(upgraded.gate, /review receipts are required/);
+});
+
+test('install refuses an invalid enforcement.receipts value before writing anything', async (t) => {
+  const root = await installationFixture(t), calls = [], runner = packageRunner(root, calls);
+  await mkdir(join(root, '.blocks'));
+  await writeFile(join(root, '.blocks/config.json'), JSON.stringify({ schemaVersion: 1, apps: [], enforcement: { receipts: 'maybe' } }));
+  const before = await snapshot(root);
+  await assert.rejects(installProject(root, { agents: [], version: '0.5.0', runner }), /receipts must be required, optional, or off/);
+  assert.deepEqual(await snapshot(root), before);
+  assert.equal(calls.length, 0);
+});
+
+for (const [receipts, blocked] of [['optional', false], ['required', true]]) {
+  test(`the real pre-commit hook follows enforcement.receipts ${receipts} for unreviewed source`, { skip: process.platform === 'win32' }, async (t) => {
+    const root = await installationFixture(t), version = await currentVersion();
+    await mkdir(join(root, '.blocks'));
+    await writeFile(join(root, '.blocks/config.json'), JSON.stringify({ schemaVersion: 1, apps: [], enforcement: { receipts } }));
+    execFileSync('git', ['-C', root, 'add', '.']);
+    commit(root, 'base');
+    assert.equal((await installProject(root, { version, agents: [], runner: packageRunner(root) })).complete, true);
+    const env = { ...process.env, PATH: await shimmedPath(root) };
+    execFileSync('git', ['-C', root, 'add', '-A']);
+    commit(root, 'adopt', env);
+    await writeFile(join(root, 'src/index.ts'), 'export const ready = false;\n');
+    // The hook command is unchanged; it reads the configured level through audit.
+    execFileSync(process.execPath, [cliPath, 'update', '--root', root], { stdio: 'pipe' });
+    execFileSync('git', ['-C', root, 'add', '-A']);
+    if (blocked) assert.throws(() => commit(root, 'unreviewed', env), (error) => /reviewed-content|unreviewed-source/.test(`${error.stdout}${error.stderr}`));
+    else {
+      commit(root, 'unreviewed', env);
+      assert.equal(execFileSync('git', ['-C', root, 'status', '--porcelain']).toString().trim(), '');
+    }
+  });
+}
+
+test('structural rules still gate commits when receipts are off', async (t) => {
+  const root = await installationFixture(t), version = await currentVersion();
+  await mkdir(join(root, '.blocks'));
+  await writeFile(join(root, '.blocks/config.json'), JSON.stringify({ schemaVersion: 1, apps: [], enforcement: { receipts: 'off' } }));
+  execFileSync('git', ['-C', root, 'add', '.']);
+  commit(root, 'base');
+  await installProject(root, { version, agents: ['codex'], runner: packageRunner(root) });
+  const clean = await auditProject(root, { mode: 'working' });
+  assert.equal(clean.pass, true, JSON.stringify(clean.rules.filter((entry) => !entry.pass)));
+  assert.equal(rule(clean, 'reviewed-content').skipped, true);
+  await writeFile(join(root, 'src/index.ts'), 'export const ready = false;\n');
+  await writeFile(join(root, '.blocks/WORKFLOW.md'), 'owner rewrite\n');
+  const audit = await auditProject(root, { mode: 'working' });
+  assert.equal(audit.pass, false);
+  assert.deepEqual(audit.rules.filter((entry) => !entry.pass).map((entry) => entry.id).sort(), ['managed-current', 'view-fresh']);
 });

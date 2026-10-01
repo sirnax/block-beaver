@@ -348,3 +348,32 @@ test('family validation findings keep their rule and appear once across graph an
   assert.equal(findings.filter((finding) => finding.message === 'families must be an array').length, 1);
   assert.ok(malformed.rules.find((rule) => rule.id === 'family-drift').findings.every((finding) => finding.message !== 'families must be an array'));
 });
+
+test('config-valid checks the enforcement object, gate and receipts level', () => {
+  const run = (enforcement) => { const ctx = context(); ctx.config.enforcement = enforcement; return result(ctx, 'config-valid'); };
+  for (const receipts of ['required', 'optional', 'off']) assert.equal(run({ agents: 'guide', gate: 'audit', receipts }).pass, true, receipts);
+  assert.equal(run(undefined).pass, true);
+  assert.match(run({ receipts: 'maybe' }).findings[0].message, /receipts must be required, optional, or off/);
+  assert.match(run({ gate: 'merge' }).findings[0].message, /gate must be audit/);
+  assert.match(run({ agents: 'loud' }).findings[0].message, /agents must be guide or block/);
+  for (const invalid of [null, [], 'strict', 1]) assert.match(run(invalid).findings[0].message, /enforcement must be an object/, String(invalid));
+});
+
+test('structural gates are independent of the receipt level and still fail when receipts are off', () => {
+  const mutations = {
+    'managed-current': (ctx) => { ctx.managedFindings = [{ message: 'Old installed version.' }]; },
+    'view-fresh': (ctx) => { ctx.viewFindings = [{ path: '.blocks/view/index.html', message: 'Stale map.' }]; },
+    'undeclared-link': (ctx) => { ctx.graph.nodes.find((node) => node.id === 'block:local:left').manifest.dependencies = []; },
+    'coverage-ratchet': (ctx) => { ctx.graph.nodes.push({ id: 'file:src/new.ts', kind: 'file', path: 'src/new.ts' }); },
+    'resolution-ratchet': (ctx) => { ctx.graph.resolutionReport.push({ file: 'src/left.ts', specifier: './missing' }); },
+  };
+  for (const [id, mutate] of Object.entries(mutations)) {
+    const ctx = context();
+    ctx.config.enforcement = { receipts: 'off' };
+    mutate(ctx);
+    assert.equal(result(ctx, id).pass, false, id);
+  }
+  const ctx = context();
+  ctx.config.enforcement = { receipts: 'off' };
+  assert.ok(evaluateAuditRules(ctx).every((rule) => rule.pass));
+});

@@ -1,4 +1,5 @@
 import { createHash } from 'node:crypto';
+import { readFile } from 'node:fs/promises';
 import { readProjectFile } from './project-files.mjs';
 import { detectPackageManager, localBlockBeaverCommand } from './package-manager.mjs';
 import { AGENT_FILES, CURSOR_HEADER, LEGACY_AGENT_INSTRUCTIONS, LEGACY_APP_INSTRUCTION, readInstallTemplates, renderAgentHook, renderAgentInstructions } from './install-templates.mjs';
@@ -128,6 +129,8 @@ export async function planManagedFiles({ root, version, config = {}, agents = []
   const selected = normalizeAgents(typeof agents === 'string' ? agents.split(',') : agents);
   if (selected.some((agent) => !Object.hasOwn(AGENT_FILES, agent))) throw new Error('Agents must be claude, codex, cursor, or copilot.');
   const templates = await readInstallTemplates();
+  // The 0.4.0 init path wrote the workflow without a hash, so its exact body is a trusted legacy input.
+  const legacyWorkflow040 = lf(await readFile(new URL('../templates/legacy/0.4.0-workflow.md', import.meta.url), 'utf8'));
   const files = [], conflicts = [], diagnostics = [];
   try {
     if (!manager) manager = await readProjectFile(root, 'package.json') === null ? 'npm' : await detectPackageManager(root);
@@ -138,7 +141,7 @@ export async function planManagedFiles({ root, version, config = {}, agents = []
   }
   const options = { version, operation, force };
   const specifications = [
-    { path: '.blocks/WORKFLOW.md', body: templates.workflow, legacyBodies: [templates.workflow, ...templates.legacyWorkflows], owned: true, kind: 'workflow' },
+    { path: '.blocks/WORKFLOW.md', body: templates.workflow, legacyBodies: [templates.workflow, ...templates.legacyWorkflows, legacyWorkflow040], owned: true, kind: 'workflow' },
     { path: '.blocks/.gitignore', body: '/worktrees/\n/cache/\n/view/', legacyBodies: ['/worktrees/\n/view/'], ignore: true, kind: 'ignore' },
     ...selected.map((agent) => ({ path: AGENT_FILES[agent], body: renderAgentInstructions(), legacyBodies: [renderAgentInstructions(), LEGACY_AGENT_INSTRUCTIONS, LEGACY_AGENT_INSTRUCTIONS + LEGACY_APP_INSTRUCTION], prefix: agent === 'cursor' ? CURSOR_HEADER : '', owned: agent === 'cursor', kind: 'instructions' })),
   ];

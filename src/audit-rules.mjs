@@ -26,7 +26,12 @@ export function evaluateAuditRules({ graph, config, configPresent = config !== n
       for (const diagnostic of parseFamiliesConfig(config).diagnostics) configFindings.push(finding(diagnostic.message, diagnostic.file));
       if (config.schemaVersion !== 1) configFindings.push(finding('Unsupported config schemaVersion.', '.blocks/config.json'));
       if (!Array.isArray(config.apps)) configFindings.push(finding('Config apps must be an array.', '.blocks/config.json'));
-      if (config.enforcement?.agents !== undefined && !['guide', 'block'].includes(config.enforcement.agents)) configFindings.push(finding('enforcement.agents must be guide or block.', '.blocks/config.json'));
+      if (config.enforcement !== undefined && !object(config.enforcement)) configFindings.push(finding('enforcement must be an object.', '.blocks/config.json'));
+      else {
+        if (config.enforcement?.agents !== undefined && !['guide', 'block'].includes(config.enforcement.agents)) configFindings.push(finding('enforcement.agents must be guide or block.', '.blocks/config.json'));
+        if (config.enforcement?.gate !== undefined && config.enforcement.gate !== 'audit') configFindings.push(finding('enforcement.gate must be audit.', '.blocks/config.json'));
+        if (config.enforcement?.receipts !== undefined && !['required', 'optional', 'off'].includes(config.enforcement.receipts)) configFindings.push(finding('enforcement.receipts must be required, optional, or off.', '.blocks/config.json'));
+      }
       if (config.ignore !== undefined && (!Array.isArray(config.ignore) || config.ignore.some((path) => typeof path !== 'string'))) configFindings.push(finding('ignore must be a list of patterns.', '.blocks/config.json'));
     }
     for (const entry of graph.diagnostics || []) configFindings.push(finding(`${entry.app || 'config'} ${entry.field}: ${entry.message}`, '.blocks/config.json'));
