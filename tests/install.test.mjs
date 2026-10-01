@@ -5,7 +5,7 @@ import { join } from 'node:path';
 import { execFileSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { installProject, upgradeProject } from '../src/install.mjs';
-import { auditProject } from '../src/compliance.mjs';
+import { auditProject, recordException } from '../src/compliance.mjs';
 import { auditCounts } from '../src/audit-rules.mjs';
 import { installationFixture, packageRunner, snapshot } from './helpers/install-fixture.mjs';
 
@@ -224,19 +224,71 @@ test('the setup exception satisfies owner-required receipts on a fresh install',
   assert.ok(audit.files.length > 5 && audit.files.every((file) => file.status === 'verified-exception'));
 });
 
-test('config edits after install go stale against the setup exception', async (t) => {
+async function installedFixture(t) {
   const root = await installationFixture(t), version = await currentVersion();
   execFileSync('git', ['-C', root, 'add', '.']);
   commit(root, 'base');
-  await installProject(root, { version, agents: ['claude', 'codex'], runner: packageRunner(root) });
+  const installed = await installProject(root, { version, agents: ['claude', 'codex'], runner: packageRunner(root) });
+  return { root, installed };
+}
+const editConfig = async (root, edit) => {
   const path = join(root, '.blocks/config.json');
   const config = JSON.parse(await readFile(path, 'utf8'));
-  config.enforcement.receipts = 'required';
+  edit(config);
   await writeFile(path, JSON.stringify(config, null, 2) + '\n');
-  // Config edits after install are not covered by the setup exception.
-  const stale = await auditProject(root, { mode: 'working' });
-  assert.equal(rule(stale, 'reviewed-content').pass, false);
-  assert.ok(stale.files.some((file) => file.path === '.blocks/config.json' && file.status === 'changed-after-review'));
+};
+const configFile = (audit) => audit.files.find((file) => file.path === '.blocks/config.json');
+
+test('a config edit after install is owner-controlled: advisory under optional receipts', async (t) => {
+  const { root, installed } = await installedFixture(t);
+  assert.equal(installed.enforcement.receipts, 'optional');
+  await editConfig(root, (config) => { config.ignore = ['dist/**']; });
+  const audit = await auditProject(root, { mode: 'working' });
+  assert.equal(audit.enforcement.receipts, 'optional');
+  assert.equal(audit.pass, true, JSON.stringify(audit.rules.filter((entry) => !entry.pass)));
+  assert.equal(configFile(audit).status, 'missing-exception');
+  assert.ok(rule(audit, 'reviewed-content').advisories.some((entry) => entry.path === '.blocks/config.json'));
+  assert.equal(rule(audit, 'config-valid').pass, true);
+});
+
+test('a config edit after install needs evidence only when receipts are required', async (t) => {
+  const { root } = await installedFixture(t);
+  await editConfig(root, (config) => { config.enforcement.receipts = 'required'; });
+  const audit = await auditProject(root, { mode: 'working' });
+  assert.equal(audit.enforcement.receipts, 'required');
+  assert.equal(audit.pass, false);
+  const reviewed = rule(audit, 'reviewed-content');
+  assert.equal(reviewed.pass, false);
+  assert.deepEqual(reviewed.findings, [{ path: '.blocks/config.json', message: 'missing-exception' }]);
+  // Only config is flagged; the setup exception still covers every other installed file.
+  assert.ok(audit.files.filter((file) => file.path !== '.blocks/config.json').every((file) => file.status === 'verified-exception'));
+  // An owner exception for the edit satisfies the requirement.
+  await recordException(root, 'owner-config-review', { reason: 'Owner config edit', paths: ['.blocks/config.json'], check: 'node --version' });
+  const covered = await auditProject(root, { mode: 'working' });
+  assert.equal(configFile(covered).status, 'verified-exception');
+  assert.equal(covered.pass, true, JSON.stringify(covered.rules.filter((entry) => !entry.pass)));
+});
+
+test('an invalid config edit after install fails config-valid', async (t) => {
+  const { root } = await installedFixture(t);
+  await editConfig(root, (config) => { config.enforcement.receipts = 'sometimes'; });
+  const audit = await auditProject(root, { mode: 'working' });
+  assert.equal(audit.pass, false);
+  assert.equal(rule(audit, 'config-valid').pass, false);
+});
+
+test('an existing 0.5.0 setup exception that covers config no longer goes stale on a config edit', async (t) => {
+  const { root, installed } = await installedFixture(t);
+  const exception = JSON.parse(await readFile(join(root, installed.exception.path), 'utf8'));
+  // The 0.5.0 shape: a managed setup exception whose paths include the config as install wrote it.
+  assert.ok(exception.paths.some((entry) => entry.path === '.blocks/config.json'));
+  assert.equal(exception.verification[0].command, 'Block Beaver managed setup');
+  assert.equal(configFile(await auditProject(root, { mode: 'working' })).status, 'verified-exception');
+  await editConfig(root, (config) => { config.ignore = ['coverage/**']; config.enforcement.gate = 'audit'; });
+  const audit = await auditProject(root, { mode: 'working' });
+  assert.notEqual(configFile(audit).status, 'changed-after-review');
+  assert.equal(audit.pass, true, JSON.stringify(audit.rules.filter((entry) => !entry.pass)));
+  assert.equal(rule(audit, 'reviewed-content').findings.length, 0);
 });
 
 test('editing a managed file after install makes the setup exception stale and the audit fails', async (t) => {
@@ -330,4 +382,66 @@ test('structural rules still gate commits when receipts are off', async (t) => {
   const audit = await auditProject(root, { mode: 'working' });
   assert.equal(audit.pass, false);
   assert.deepEqual(audit.rules.filter((entry) => !entry.pass).map((entry) => entry.id).sort(), ['managed-current', 'view-fresh']);
+});
+
+test('ignored managed paths are local-only: staged audits advise, working audits still check them', { skip: process.platform === 'win32' }, async (t) => {
+  const root = await installationFixture(t), version = await currentVersion();
+  await writeFile(join(root, '.gitignore'), '.claude\n');
+  execFileSync('git', ['-C', root, 'add', '.']);
+  commit(root, 'base');
+  const installed = await installProject(root, { version, agents: ['claude'], runner: packageRunner(root) });
+  assert.equal(installed.complete, true, JSON.stringify(installed.conflicts));
+  const warning = installed.diagnostics.find((entry) => entry.code === 'ignored-target' && entry.path === '.claude/settings.json');
+  assert.ok(warning, 'install still warns about the ignored target');
+  assert.match(warning.message, /pre-commit and CI audits cannot see/);
+  assert.match(warning.message, /--fix-ignores/);
+  assert.match(warning.remediation, /--fix-ignores/);
+  assert.ok(await readFile(join(root, '.claude/settings.json'), 'utf8'));
+  execFileSync('git', ['-C', root, 'add', '-A']);
+  assert.equal(execFileSync('git', ['-C', root, 'ls-files', '.claude']).toString().trim(), '');
+  const staged = await auditProject(root, { mode: 'staged' });
+  assert.equal(staged.pass, true, JSON.stringify(staged.rules.filter((entry) => !entry.pass)));
+  const current = rule(staged, 'managed-current');
+  assert.equal(current.pass, true);
+  const local = current.advisories.filter((entry) => entry.code === 'ignored-managed-local');
+  assert.ok(local.some((entry) => entry.path === '.claude/settings.json'), JSON.stringify(current.advisories));
+  assert.match(local[0].message, /ignored by git/);
+  assert.match(local[0].remediation, /--fix-ignores/);
+  // The real hook runs the staged audit, so the adoption commit succeeds.
+  const baseHash = execFileSync('git', ['-C', root, 'rev-parse', 'HEAD']).toString().trim();
+  commit(root, 'adopt block beaver', { ...process.env, PATH: await shimmedPath(root) });
+  assert.equal(execFileSync('git', ['-C', root, 'status', '--porcelain']).toString().trim(), '');
+  const range = await auditProject(root, { mode: 'range', base: baseHash });
+  assert.equal(rule(range, 'managed-current').pass, true, JSON.stringify(rule(range, 'managed-current').findings));
+  assert.ok(rule(range, 'managed-current').advisories.some((entry) => entry.code === 'ignored-managed-local'));
+  // Working mode is unchanged: the local file exists and is checked.
+  assert.equal(rule(await auditProject(root, { mode: 'working' }), 'managed-current').pass, true);
+  const settings = join(root, '.claude/settings.json');
+  const owned = JSON.parse(await readFile(settings, 'utf8'));
+  owned.hooks.PreToolUse[0].hooks[0].timeout = 99;
+  await writeFile(settings, `${JSON.stringify(owned, null, 2)}\n`);
+  const edited = await auditProject(root, { mode: 'working' });
+  assert.equal(rule(edited, 'managed-current').pass, false);
+  assert.ok(rule(edited, 'managed-current').findings.some((entry) => entry.path === '.claude/settings.json'));
+});
+
+test('ignoring a tracked managed file in the change that deletes it still fails managed-current', { skip: process.platform === 'win32' }, async (t) => {
+  const root = await installationFixture(t), version = await currentVersion();
+  execFileSync('git', ['-C', root, 'add', '.']);
+  commit(root, 'base');
+  const installed = await installProject(root, { version, agents: ['claude'], runner: packageRunner(root) });
+  assert.equal(installed.complete, true, JSON.stringify(installed.conflicts));
+  execFileSync('git', ['-C', root, 'add', '-A']);
+  commit(root, 'adopt block beaver', { ...process.env, PATH: await shimmedPath(root) });
+  const baseHash = execFileSync('git', ['-C', root, 'rev-parse', 'HEAD']).toString().trim();
+  execFileSync('git', ['-C', root, 'rm', '-q', '--cached', '.claude/settings.json']);
+  await rm(join(root, '.claude/settings.json'));
+  await writeFile(join(root, '.gitignore'), '.claude\n');
+  execFileSync('git', ['-C', root, 'add', '.gitignore']);
+  const staged = await auditProject(root, { mode: 'staged' });
+  assert.equal(rule(staged, 'managed-current').pass, false);
+  assert.ok(rule(staged, 'managed-current').findings.some((entry) => entry.path === '.claude/settings.json'), JSON.stringify(rule(staged, 'managed-current')));
+  execFileSync('git', ['-C', root, ...identity, 'commit', '--no-verify', '-qm', 'drop hooks'], { stdio: 'pipe' });
+  const range = await auditProject(root, { mode: 'range', base: baseHash });
+  assert.ok(rule(range, 'managed-current').findings.some((entry) => entry.path === '.claude/settings.json'), JSON.stringify(rule(range, 'managed-current')));
 });

@@ -78,6 +78,12 @@ async function writeShim(bin, name, real, log) {
   await chmod(file, 0o755);
 }
 
+/** Node form of the shim: native hooks run `node node_modules/block-beaver/bin/block-beaver.mjs`, so the installed binary must be JavaScript. */
+async function writeNodeShim(file, name, real, log) {
+  await writeFile(file, `#!/usr/bin/env node\nimport { spawnSync } from 'node:child_process';\nprocess.env.BLOCK_BEAVER_LIVE_LOG = ${JSON.stringify(log)};\nprocess.env.BLOCK_BEAVER_LIVE_REAL = ${JSON.stringify(JSON.stringify(real))};\nconst result = spawnSync(${JSON.stringify(process.execPath)}, [${JSON.stringify(script)}, '--shim', ${JSON.stringify(name)}, ...process.argv.slice(2)], { stdio: 'inherit', env: process.env });\nprocess.exitCode = result.status ?? 1;\n`);
+  await chmod(file, 0o755);
+}
+
 /** Hash behavior-bearing checkout files, including untracked candidate additions.
  * Documentation, roadmaps, tests and evidence reports do not affect this fixture.
  */
@@ -391,8 +397,7 @@ async function main() {
     await mkdir(join(root, 'node_modules/block-beaver/bin'), { recursive: true });
     const fixturePackage = JSON.stringify({ name: 'block-beaver', version, bin: { 'block-beaver': 'bin/block-beaver.mjs' } }, null, 2) + '\n';
     await writeFile(join(root, 'node_modules/block-beaver/package.json'), fixturePackage);
-    await copyFile(join(paths.bin, 'block-beaver'), join(root, 'node_modules/block-beaver/bin/block-beaver.mjs'));
-    await chmod(join(root, 'node_modules/block-beaver/bin/block-beaver.mjs'), 0o755);
+    await writeNodeShim(join(root, 'node_modules/block-beaver/bin/block-beaver.mjs'), 'block-beaver', [process.execPath, cli], files.invocations);
     await symlink('../block-beaver/bin/block-beaver.mjs', join(root, 'node_modules/.bin/block-beaver'));
     await git('init', '-q');
     await git('config', 'user.name', 'Live Test');
@@ -407,6 +412,11 @@ async function main() {
     } });
     record.installation = { complete: installed.complete, changed: installed.changed, conflicts: installed.conflicts, diagnostics: installed.diagnostics };
     if (!installed.complete) { block('Current public installer did not complete; inspect installation conflicts.'); return await finish(); }
+    // New installs default to optional receipts; the scenarios judge the review gate, so the fixture requires receipts.
+    const configPath = join(root, '.blocks/config.json');
+    const config = JSON.parse(await readFile(configPath, 'utf8'));
+    config.enforcement = { ...config.enforcement, receipts: 'required' };
+    await writeFile(configPath, `${JSON.stringify(config, null, 2)}\n`);
     await git('add', '.');
     await git('-c', 'core.hooksPath=/dev/null', ...gitIdentity, 'commit', '-qm', 'install Block Beaver');
     const baselineHead = await git('rev-parse', 'HEAD');
@@ -415,7 +425,7 @@ async function main() {
     const hookBefore = await readFile(hookPath, 'utf8').catch(() => null);
     const refs = async () => Object.fromEntries((await git('for-each-ref', '--format=%(refname) %(objectname)')).split('\n').filter(Boolean).map((line) => line.split(' ')));
     const refsBefore = await refs();
-    record.fixture = { baselineHead, installer: 'installProject', localPackageTransport: true, hookSha256: hookBefore && sha(hookBefore) };
+    record.fixture = { baselineHead, installer: 'installProject', localPackageTransport: true, receipts: 'required', hookSha256: hookBefore && sha(hookBefore) };
     if (!hookBefore?.includes('block-beaver audit --staged')) { block('Fixture has no Block Beaver pre-commit hook; the commit gate cannot be tested.'); return await finish(); }
 
     const nativePaths = installed.diff.filter((entry) => ['instructions', 'skill', 'hooks', 'agent-config', 'workflow'].includes(entry.kind)).map((entry) => entry.path);

@@ -6,6 +6,21 @@ All notable user visible changes are recorded here. Releases follow semantic ver
 
 - No additional changes recorded.
 
+## 0.5.1 — 2026-10-01
+
+Fixes from use of 0.5.0 (#21–#24). Upgrading from 0.5.0 is `block-beaver upgrade`. #21 can damage the host repository, so every 0.5.0 user who works in linked Git worktrees should upgrade.
+
+**Recovery for #21:** if a commit in a linked worktree left every checkout reporting `fatal: this operation must be run in a work tree`, run `git config core.bare false` in the main repository.
+
+**Compatibility notes**
+- Managed Claude and Codex hooks now run `node node_modules/block-beaver/bin/block-beaver.mjs hook-check …` instead of a package-manager command. Yarn Plug'n'Play projects keep `yarn exec`. `upgrade` rewrites 0.5.0 hook entries, including installs without `.blocks/managed-files.json`. The path is relative, so editors must run hooks from the project root, as before; when they don't, the hook fails open.
+- Git hook and CI commands are unchanged.
+
+- Fix staged audits in linked worktrees: snapshot Git commands no longer inherit the hook's `GIT_DIR` and `GIT_INDEX_FILE`, which made `git init` rewrite the host repository with `core.bare = true` and aborted the commit (#21).
+- Run managed agent hooks without package-manager startup, which took 0.5–0.9 s of the hooks' 1 s timeout under `pnpm exec` (#22).
+- Editing `.blocks/config.json` after install no longer makes the managed setup exception stale. The edit follows the active receipts level: an advisory under `optional` and `off`, and evidence required under `required`. `config-valid` still checks its contents (#23).
+- Managed paths that Git ignores, such as a fully ignored `.claude/`, are local-only in staged and range audits. They now produce an `ignored-managed-local` advisory instead of failing `managed-current` on every commit. The `ignored-target` install warning explains this and names `--fix-ignores` (#24).
+
 ## 0.5.0 — 2026-10-01
 
 Fixes from the first real use of 0.4.0 (#14–#18). Upgrading from 0.4.0 is `block-beaver upgrade`.

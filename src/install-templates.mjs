@@ -23,10 +23,19 @@ export async function readInstallTemplates() {
   return { workflow, legacyWorkflows: [legacyWorkflow011, legacyWorkflow020], skill, references: { 'references/workflow.md': workflowReference, 'references/apps.md': appsReference } };
 }
 
-/** Only native fields; the CLI command carries the stable managed id. */
-export function renderAgentHook(agent, { manager = 'npm' } = {}) {
+/** Direct node invocation of the installed binary; forward slashes work in sh, cmd and PowerShell. */
+export const DIRECT_HOOK_COMMAND = 'node node_modules/block-beaver/bin/block-beaver.mjs';
+
+/**
+ * Only native fields; the CLI command carries the stable managed id. Hooks run on every tool call
+ * under a one second timeout, so they start the installed binary with node instead of a package
+ * manager wrapper. Yarn PnP has no node_modules, so `pnp` keeps the Yarn launcher.
+ */
+export function renderAgentHook(agent, { manager = 'npm', pnp = false } = {}) {
   if (!['claude', 'codex'].includes(agent)) throw new Error('Native hooks require the claude or codex agent.');
-  return { matcher: agent === 'codex' ? 'Read|Edit|Write|apply_patch|Bash' : 'Read|Edit|Write|MultiEdit|Bash', hooks: [{ type: 'command', command: `${localBlockBeaverCommand(manager)} hook-check --agent ${agent} --hook-id ${HOOK_ID}`, timeout: 1 }] };
+  const launcher = localBlockBeaverCommand(manager);
+  const command = pnp ? launcher : DIRECT_HOOK_COMMAND;
+  return { matcher: agent === 'codex' ? 'Read|Edit|Write|apply_patch|Bash' : 'Read|Edit|Write|MultiEdit|Bash', hooks: [{ type: 'command', command: `${command} hook-check --agent ${agent} --hook-id ${HOOK_ID}`, timeout: 1 }] };
 }
 
 // Exact historical init bodies are trusted migration inputs, not broad patterns.
