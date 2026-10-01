@@ -1,0 +1,110 @@
+{
+  "claude": [
+    {
+      "manager": "npm",
+      "hook": {
+        "matcher": "Read|Edit|Write|MultiEdit|Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "npx --no-install block-beaver hook-check --agent claude --hook-id block-beaver",
+            "timeout": 1
+          }
+        ]
+      }
+    },
+    {
+      "manager": "pnpm",
+      "hook": {
+        "matcher": "Read|Edit|Write|MultiEdit|Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "pnpm exec block-beaver hook-check --agent claude --hook-id block-beaver",
+            "timeout": 1
+          }
+        ]
+      }
+    },
+    {
+      "manager": "yarn",
+      "hook": {
+        "matcher": "Read|Edit|Write|MultiEdit|Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "yarn exec block-beaver hook-check --agent claude --hook-id block-beaver",
+            "timeout": 1
+          }
+        ]
+      }
+    },
+    {
+      "manager": "bun",
+      "hook": {
+        "matcher": "Read|Edit|Write|MultiEdit|Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bunx --no-install block-beaver hook-check --agent claude --hook-id block-beaver",
+            "timeout": 1
+          }
+        ]
+      }
+    }
+  ],
+  "codex": [
+    {
+      "manager": "npm",
+      "hook": {
+        "matcher": "Read|Edit|Write|apply_patch|Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "npx --no-install block-beaver hook-check --agent codex --hook-id block-beaver",
+            "timeout": 1
+          }
+        ]
+      }
+    },
+    {
+      "manager": "pnpm",
+      "hook": {
+        "matcher": "Read|Edit|Write|apply_patch|Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "pnpm exec block-beaver hook-check --agent codex --hook-id block-beaver",
+            "timeout": 1
+          }
+        ]
+      }
+    },
+    {
+      "manager": "yarn",
+      "hook": {
+        "matcher": "Read|Edit|Write|apply_patch|Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "yarn exec block-beaver hook-check --agent codex --hook-id block-beaver",
+            "timeout": 1
+          }
+        ]
+      }
+    },
+    {
+      "manager": "bun",
+      "hook": {
+        "matcher": "Read|Edit|Write|apply_patch|Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bunx --no-install block-beaver hook-check --agent codex --hook-id block-beaver",
+            "timeout": 1
+          }
+        ]
+      }
+    }
+  ]
+}

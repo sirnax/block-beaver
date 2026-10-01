@@ -78,6 +78,12 @@ async function writeShim(bin, name, real, log) {
   await chmod(file, 0o755);
 }
 
+/** Node form of the shim: native hooks run `node node_modules/block-beaver/bin/block-beaver.mjs`, so the installed binary must be JavaScript. */
+async function writeNodeShim(file, name, real, log) {
+  await writeFile(file, `#!/usr/bin/env node\nimport { spawnSync } from 'node:child_process';\nprocess.env.BLOCK_BEAVER_LIVE_LOG = ${JSON.stringify(log)};\nprocess.env.BLOCK_BEAVER_LIVE_REAL = ${JSON.stringify(JSON.stringify(real))};\nconst result = spawnSync(${JSON.stringify(process.execPath)}, [${JSON.stringify(script)}, '--shim', ${JSON.stringify(name)}, ...process.argv.slice(2)], { stdio: 'inherit', env: process.env });\nprocess.exitCode = result.status ?? 1;\n`);
+  await chmod(file, 0o755);
+}
+
 /** Hash behavior-bearing checkout files, including untracked candidate additions.
  * Documentation, roadmaps, tests and evidence reports do not affect this fixture.
  */
@@ -391,8 +397,7 @@ async function main() {
     await mkdir(join(root, 'node_modules/block-beaver/bin'), { recursive: true });
     const fixturePackage = JSON.stringify({ name: 'block-beaver', version, bin: { 'block-beaver': 'bin/block-beaver.mjs' } }, null, 2) + '\n';
     await writeFile(join(root, 'node_modules/block-beaver/package.json'), fixturePackage);
-    await copyFile(join(paths.bin, 'block-beaver'), join(root, 'node_modules/block-beaver/bin/block-beaver.mjs'));
-    await chmod(join(root, 'node_modules/block-beaver/bin/block-beaver.mjs'), 0o755);
+    await writeNodeShim(join(root, 'node_modules/block-beaver/bin/block-beaver.mjs'), 'block-beaver', [process.execPath, cli], files.invocations);
     await symlink('../block-beaver/bin/block-beaver.mjs', join(root, 'node_modules/.bin/block-beaver'));
     await git('init', '-q');
     await git('config', 'user.name', 'Live Test');

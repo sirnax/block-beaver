@@ -51,7 +51,26 @@ function planText(before, spec, { version, operation, force }) {
   return text.slice(0, bounds.start) + rendered + text.slice(bounds.finish);
 }
 
-const ownsHook = (handler) => handler?.type === 'command' && typeof handler.command === 'string' && /^(?:(?:npx --no-install|pnpm exec|yarn exec|bunx --no-install) )?block-beaver hook-check(?:\s|$)/.test(handler.command) && /(?:^|\s)--hook-id\s+block-beaver(?:\s|$)/.test(handler.command);
+const ownsHook = (handler) => handler?.type === 'command' && typeof handler.command === 'string' && /^(?:(?:(?:npx --no-install|pnpm exec|yarn exec|bunx --no-install) )?block-beaver|node node_modules\/block-beaver\/bin\/block-beaver\.mjs) hook-check(?:\s|$)/.test(handler.command) && /(?:^|\s)--hook-id\s+block-beaver(?:\s|$)/.test(handler.command);
+
+/**
+ * Yarn PnP projects have no node_modules/block-beaver for hooks to run, so they keep `yarn exec`.
+ * An explicit `nodeLinker: node-modules` wins; otherwise a PnP runtime file, or Yarn Berry (whose
+ * default linker is PnP), selects the launcher. Classic Yarn and other managers use node_modules.
+ */
+async function detectYarnPnp(root, manager) {
+  if ((typeof manager === 'string' ? manager : manager?.id) !== 'yarn') return false;
+  const rc = await readProjectFile(root, '.yarnrc.yml');
+  const linker = rc?.match(/^nodeLinker:\s*["']?([\w-]+)["']?\s*(?:#.*)?$/m)?.[1];
+  if (linker === 'node-modules') return false;
+  if (linker) return true;
+  for (const file of ['.pnp.cjs', '.pnp.js']) if (await readProjectFile(root, file) !== null) return true;
+  if (rc !== null) return true;
+  let packageManager;
+  try { packageManager = JSON.parse(await readProjectFile(root, 'package.json') || '{}').packageManager; } catch { /* Manager detection already validated package.json. */ }
+  return /^yarn@(?:[2-9]|\d{2,})\./.test(typeof packageManager === 'string' ? packageManager : '') || /^__metadata:/m.test(await readProjectFile(root, 'yarn.lock') || '');
+}
+
 function parseJson(text, path) {
   let value;
   try { value = JSON.parse(text); } catch { throw new Error(`Invalid JSON in ${path}; existing content was preserved.`); }
@@ -59,7 +78,7 @@ function parseJson(text, path) {
   return value;
 }
 
-function hookPlan(before, agent, operation, force, previousHash, manager) {
+function hookPlan(before, agent, operation, force, previousHash, manager, { pnp = false, legacy = [] } = {}) {
   const path = agent === 'claude' ? '.claude/settings.json' : '.codex/hooks.json';
   if (before === null && operation === 'uninstall') return { content: null, hash: null };
   const settings = before === null ? {} : parseJson(before, path);
@@ -74,8 +93,9 @@ function hookPlan(before, agent, operation, force, previousHash, manager) {
   }
   const currentHash = digest(JSON.stringify(existing));
   if (previousHash && previousHash !== currentHash && !force) throw new Error(`Owner edits to Block Beaver hook in ${path}; review the diff and use --force.`);
-  const desired = renderAgentHook(agent, { manager });
-  const trusted = [desired, renderAgentHook(agent)];
+  const desired = renderAgentHook(agent, { manager, pnp });
+  // Current forms plus the frozen 0.5.0 entries (a package-manager launcher per manager).
+  const trusted = [desired, renderAgentHook(agent), renderAgentHook(agent, { manager: 'yarn', pnp: true }), ...legacy];
   if (!previousHash && existing.length && !trusted.some((hook) => JSON.stringify(existing) === JSON.stringify([hook])) && !force) throw new Error(`Unverified Block Beaver hook in ${path}; existing content was preserved.`);
   const preserved = groups.flatMap((group) => {
     const handlers = group.hooks.filter((handler) => !ownsHook(handler));
@@ -131,10 +151,14 @@ export async function planManagedFiles({ root, version, config = {}, agents = []
   const templates = await readInstallTemplates();
   // The 0.4.0 init path wrote the workflow without a hash, so its exact body is a trusted legacy input.
   const legacyWorkflow040 = lf(await readFile(new URL('../templates/legacy/0.4.0-workflow.md', import.meta.url), 'utf8'));
+  // The 0.5.0 hooks used a package-manager launcher; their exact entries are trusted legacy input.
+  const legacyHooks = Object.fromEntries(Object.entries(JSON.parse(await readFile(new URL('../templates/legacy/0.5.0-hooks.json', import.meta.url), 'utf8'))).map(([agent, entries]) => [agent, entries.map((entry) => entry.hook)]));
   const files = [], conflicts = [], diagnostics = [];
+  let pnp = false;
   try {
     if (!manager) manager = await readProjectFile(root, 'package.json') === null ? 'npm' : await detectPackageManager(root);
     localBlockBeaverCommand(manager);
+    pnp = await detectYarnPnp(root, manager);
   } catch (error) {
     conflicts.push({ path: 'package.json', message: error.message });
     return { files, conflicts, diagnostics };
@@ -184,7 +208,7 @@ export async function planManagedFiles({ root, version, config = {}, agents = []
     let before;
     try {
       before = await readProjectFile(root, path);
-      const result = hookPlan(before, agent, operation, force, state.hooks[agent]?.hash, manager);
+      const result = hookPlan(before, agent, operation, force, state.hooks[agent]?.hash, manager, { pnp, legacy: legacyHooks[agent] || [] });
       files.push({ path, before, content: result.content, kind: 'hooks' });
       if (result.hash) nextHooks[agent] = { hash: result.hash };
       else delete nextHooks[agent];
