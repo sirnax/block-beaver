@@ -88,3 +88,15 @@ Final 67-file tarball SHA1: `1044cc8a19fd727a34c29525cbb5d88d438ca4e1`; actual i
 Completed readiness workers: Sol medium CI portability, Codex trust and package smoke; Luna medium release documentation; Sol xhigh reviewed receipt integrity (escalated for cross-platform byte/mode attestation). Claude Sonnet 5.5 high and Opus 5.5 medium independently reviewed GPT changes. Primary integrated Windows native-path/module-identity fixes and final evidence. No workers remain active.
 
 Publication and Teacake adoption are the next separate steps; neither was performed. Follow [RELEASING](docs/RELEASING.md) for the concrete publication procedure. E stays deferred. Original browser/adoption evidence above remains the A–C snapshot; it is not presented as a new release-readiness browser run.
+
+## Publication in progress — owner authorized
+
+- [x] Confirm npm/GitHub authentication and final published-install wording.
+- [x] Repack/dry-run final documentation artifact and independently verify exact tarball installation.
+- [x] Create protected-main release PR #13.
+- [ ] Resolve PR CodeQL findings: exact provider detection, legacy hook read race and ESLint cache consistency; independently classify false positives.
+- [ ] Refresh final source checks/live/package evidence and merge protected main.
+- [ ] Publish npm 0.4.0, verify registry integrity and onboarding.
+- [ ] Push immutable release tag and verify GitHub release.
+
+The earlier readiness result covered successful CodeQL analysis; PR creation exposed its separate findings check. Publishing is held until those findings are resolved. Current owners: Sol medium provider/hook fixes, Sol xhigh ESLint cache and filesystem investigation, Claude Opus medium independent classification/review; primary integration/publication.

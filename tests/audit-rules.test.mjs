@@ -1,12 +1,13 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtemp, mkdir, writeFile, readFile, rm, chmod } from 'node:fs/promises';
+import { mkdtemp, mkdir, writeFile, readFile, rm, chmod, symlink, link } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { execFileSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { evaluateAuditRules, auditCounts } from '../src/audit-rules.mjs';
 import { auditProject, recordException } from '../src/compliance.mjs';
+import { installCompliance } from '../src/compliance-setup.mjs';
 
 const manifest = (id, files, dependencies = []) => ({ schemaVersion: 1, id, version: 1, name: id, description: `${id} block`, rationale: 'One cohesive feature.', files, dependencies, verification: [] });
 function context() {
@@ -65,6 +66,49 @@ async function fixture(t) {
   git(root, 'add', '.'); git(root, '-c', 'user.name=Test', '-c', 'user.email=test@example.com', 'commit', '-qm', 'base');
   return { root, put };
 }
+
+test('compliance setup refuses unsafe hook files and preserves an independent owner hook', async (t) => {
+  const { root, put } = await fixture(t);
+  const hook = join(root, '.git/hooks/pre-commit'), owner = join(root, 'owner-hook');
+  const content = '#!/bin/sh\necho owner hook\n';
+  await put('owner-hook', content);
+  await symlink(owner, hook);
+  const symlinked = await installCompliance(root);
+  assert.equal(symlinked.hook.status, 'incomplete');
+  assert.match(symlinked.hook.reason, /independent regular file/);
+  assert.equal(await readFile(owner, 'utf8'), content);
+  await rm(hook);
+  await link(owner, hook);
+  const shared = await installCompliance(root);
+  assert.equal(shared.hook.status, 'incomplete');
+  assert.match(shared.hook.reason, /independent regular file/);
+  assert.equal(await readFile(owner, 'utf8'), content);
+  await rm(hook);
+  await writeFile(hook, content);
+  const installed = await installCompliance(root);
+  assert.equal(installed.hook.status, 'installed');
+  assert.match(await readFile(hook, 'utf8'), /echo owner hook/);
+  assert.match(await readFile(hook, 'utf8'), /block-beaver audit --staged/);
+  assert.equal((await installCompliance(root)).hook.changed, false);
+});
+
+test('compliance setup does not infer a CI provider from spoofed remote hosts or paths', async (t) => {
+  const { root } = await fixture(t);
+  git(root, 'remote', 'add', 'origin', 'https://evilgithub.com/owner/project.git');
+  for (const origin of ['https://evilgithub.com/owner/project.git', 'https://example.test/github.com/project.git', 'git@evilgitlab.com:owner/project.git']) {
+    git(root, 'remote', 'set-url', 'origin', origin);
+    const result = await installCompliance(root);
+    assert.equal(result.ci.github, undefined, origin);
+    assert.equal(result.ci.gitlab, undefined, origin);
+    assert.match(result.ci.reason, /No GitHub or GitLab project/);
+  }
+  git(root, 'remote', 'set-url', 'origin', 'git@github.com:owner/project.git');
+  assert.equal((await installCompliance(root)).ci.github.status, 'installed');
+  assert.match(await readFile(join(root, '.github/workflows/block-beaver.yml'), 'utf8'), /Block Beaver compliance/);
+  git(root, 'remote', 'set-url', 'origin', 'ssh://git@gitlab.com/owner/project.git');
+  assert.equal((await installCompliance(root)).ci.gitlab.status, 'installed');
+  assert.match(await readFile(join(root, '.blocks/ci/gitlab.yml'), 'utf8'), /block_beaver_audit/);
+});
 
 test('staged and range structural rules inspect selected Git content rather than working edits', async (t) => {
   const { root, put } = await fixture(t);

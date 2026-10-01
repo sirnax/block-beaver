@@ -8,6 +8,36 @@ import { auditProject } from '../src/compliance.mjs';
 import { auditCounts } from '../src/audit-rules.mjs';
 import { installationFixture, packageRunner, snapshot } from './helpers/install-fixture.mjs';
 
+test('install selects CI by exact remote host and preserves directory detection', async (t) => {
+  const root = await installationFixture(t);
+  execFileSync('git', ['-C', root, 'remote', 'add', 'origin', 'https://example.test/project.git']);
+  const cases = [
+    ['https://github.com/owner/project.git', 'github'],
+    ['ssh://git@github.com:2222/owner/project.git', 'github'],
+    ['git@github.com:owner/project.git', 'github'],
+    ['git://gitlab.com/owner/project.git', 'gitlab'],
+    ['https://user@gitlab.com/owner/project.git', 'gitlab'],
+    ['git@gitlab.com:owner/project.git', 'gitlab'],
+    ['https://evilgithub.com/owner/project.git', null],
+    ['https://github.com.evil.test/project.git', null],
+    ['https://example.test/github.com/project.git', null],
+    ['git@evilgitlab.com:owner/project.git', null],
+    ['https://example.test/gitlab.com/project.git', null],
+    ['../github.com/project.git', null],
+  ];
+  for (const [origin, provider] of cases) {
+    execFileSync('git', ['-C', root, 'remote', 'set-url', 'origin', origin]);
+    const preview = await installProject(root, { version: '0.4.0', agents: [], dryRun: true });
+    assert.equal(preview.diff.some(file => file.path === '.github/workflows/block-beaver.yml'), provider === 'github', origin);
+    assert.equal(preview.diff.some(file => file.path === '.blocks/ci/gitlab.yml'), provider === 'gitlab', origin);
+  }
+  await mkdir(join(root, '.github/workflows'), { recursive: true });
+  await writeFile(join(root, '.gitlab-ci.yml'), '# owner pipeline\n');
+  const preview = await installProject(root, { version: '0.4.0', agents: [], dryRun: true });
+  assert.ok(preview.diff.some(file => file.path === '.github/workflows/block-beaver.yml'));
+  assert.ok(preview.diff.some(file => file.path === '.blocks/ci/gitlab.yml'));
+});
+
 test('install previews complete onboarding without writes or package commands, then installs idempotently', async (t) => {
   const root = await installationFixture(t), calls = [], runner = packageRunner(root, calls);
   await writeFile(join(root, 'AGENTS.md'), '# Owner rules\n');

@@ -5,6 +5,7 @@ import { isAbsolute, join, resolve } from 'node:path';
 import { changedPaths, git, gitHead, sha256, versionBytes } from './compliance-git.mjs';
 import { recordException } from './compliance.mjs';
 import { readProjectFile, writeProjectFiles } from './project-files.mjs';
+import { remoteProvider } from './git-remote.mjs';
 
 const marker = '# block-beaver:managed-ci';
 const begin = '# block-beaver:start';
@@ -63,12 +64,21 @@ async function installHook(root) {
   if (await exists(hooks) && (await lstat(hooks)).isSymbolicLink()) return { status: 'incomplete', reason: 'Git hooks directory is a symlink.' };
   const file = join(hooks, 'pre-commit');
   await mkdir(hooks, { recursive: true });
-  let before = null;
+  let before = null, originalInfo = null, existing = false;
   try {
-    const info = await lstat(file);
-    if (!info.isFile() || info.nlink !== 1 || info.isSymbolicLink()) return { status: 'incomplete', reason: 'Existing pre-commit hook is not an independent regular file.' };
-    before = await readFile(file, 'utf8');
-  } catch (error) { if (error.code !== 'ENOENT') throw error; }
+    const entry = await lstat(file);
+    existing = true;
+    if (!entry.isFile() || entry.nlink !== 1 || entry.isSymbolicLink()) return { status: 'incomplete', reason: 'Existing pre-commit hook is not an independent regular file.' };
+    const handle = await open(file, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK);
+    try {
+      const info = await handle.stat();
+      if (!info.isFile() || info.nlink !== 1 || info.dev !== entry.dev || info.ino !== entry.ino) throw new Error('Pre-commit hook changed file identity during setup.');
+      before = await handle.readFile('utf8');
+      const after = await lstat(file);
+      if (!after.isFile() || after.nlink !== 1 || after.dev !== info.dev || after.ino !== info.ino) throw new Error('Pre-commit hook changed file identity during setup.');
+      originalInfo = info;
+    } finally { await handle.close(); }
+  } catch (error) { if (error.code !== 'ENOENT' || existing) throw error; }
   const section = `${begin}\nif ! command -v block-beaver >/dev/null 2>&1; then\n  echo 'Block Beaver is required for this commit. Install it, then retry.' >&2\n  exit 1\nfi\nblock-beaver audit --staged --root . || exit $?\n${end}\n`;
   let content;
   if (before === null) content = `#!/bin/sh\n${section}`;
@@ -82,11 +92,12 @@ async function installHook(root) {
       content = before.slice(0, firstLine + 1) + section + before.slice(firstLine + 1);
     }
   }
-  const flags = before === null ? constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL | constants.O_NOFOLLOW : constants.O_RDWR | constants.O_NOFOLLOW;
+  const flags = before === null ? constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL | constants.O_NOFOLLOW : constants.O_RDWR | constants.O_NOFOLLOW | constants.O_NONBLOCK;
   const handle = await open(file, flags, 0o755);
   try {
     const info = await handle.stat();
     if (!info.isFile() || info.nlink !== 1) throw new Error('Pre-commit hook changed file type during setup.');
+    if (originalInfo && (info.dev !== originalInfo.dev || info.ino !== originalInfo.ino)) throw new Error('Pre-commit hook changed file identity during setup.');
     if (before !== null && await handle.readFile('utf8') !== before) throw new Error('Pre-commit hook changed during setup.');
     if (content !== before) {
       const bytes = Buffer.from(content);
@@ -103,8 +114,8 @@ async function providers(root) {
   let origin = '';
   try { origin = (await git(root, ['remote', 'get-url', 'origin'])).trim(); }
   catch (error) { if (error.code !== 2 && error.code !== 128) throw error; }
-  const github = /github\.com[:/]/.test(origin) || await exists(join(root, '.github', 'workflows'));
-  const gitlab = /gitlab\.com[:/]/.test(origin) || await exists(join(root, '.gitlab-ci.yml'));
+  const github = remoteProvider(origin) === 'github' || await exists(join(root, '.github', 'workflows'));
+  const gitlab = remoteProvider(origin) === 'gitlab' || await exists(join(root, '.gitlab-ci.yml'));
   return { github, gitlab };
 }
 

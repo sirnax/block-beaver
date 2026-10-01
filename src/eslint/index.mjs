@@ -1,18 +1,25 @@
-import { readFileSync, statSync } from 'node:fs';
+import { closeSync, constants, fstatSync, openSync, readFileSync } from 'node:fs';
 import { resolve, relative, isAbsolute } from 'node:path';
 import { matchGlob, matchGlobs } from '../families/glob.mjs';
 
 const files = new Map();
+const fileKey = (stat) => `${stat.dev}:${stat.ino}:${stat.mtimeMs}:${stat.ctimeMs}:${stat.size}`;
 function json(path, fallback) {
+  let descriptor;
   try {
-    const stat = statSync(path);
-    const key = `${stat.mtimeMs}:${stat.ctimeMs}:${stat.size}:${stat.ino}`;
+    descriptor = openSync(path, constants.O_RDONLY | constants.O_NONBLOCK);
+    const stat = fstatSync(descriptor);
+    if (!stat.isFile()) throw new Error('Lint metadata must be a regular file.');
+    const key = fileKey(stat);
     const cached = files.get(path);
     if (cached?.key === key) return cached.value;
-    const value = JSON.parse(readFileSync(path, 'utf8'));
+    const text = readFileSync(descriptor, 'utf8');
+    if (fileKey(fstatSync(descriptor)) !== key) throw new Error('Lint metadata changed while reading.');
+    const value = JSON.parse(text);
     files.set(path, { key, value });
     return value;
   } catch { files.delete(path); return fallback; }
+  finally { if (descriptor !== undefined) closeSync(descriptor); }
 }
 
 const rule = {

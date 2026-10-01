@@ -6,6 +6,7 @@ import { dirname, isAbsolute, join, posix, relative, resolve } from 'node:path';
 import ts from 'typescript';
 import { readProjectFile } from './project-files.mjs';
 import { localBlockBeaverCommand } from './package-manager.mjs';
+import { remoteProvider } from './git-remote.mjs';
 
 /**
  * Host setup planning for install, upgrade and uninstall. Nothing here writes: callers apply
@@ -503,8 +504,8 @@ async function planCi(ctx) {
   }
 
   const origin = ctx.git.ok ? ctx.git.origin : '';
-  const github = workflow !== null && (managed(workflow) || /github\.com[:/]/.test(origin) || await isDirectory(ctx, '.github/workflows'));
-  const gitlab = job !== null && config !== null && (managed(job) || /gitlab\.com[:/]/.test(origin) || config.before !== null);
+  const github = workflow !== null && (managed(workflow) || remoteProvider(origin) === 'github' || await isDirectory(ctx, '.github/workflows'));
+  const gitlab = job !== null && config !== null && (managed(job) || remoteProvider(origin) === 'gitlab' || config.before !== null);
   if (!github && !gitlab) {
     if (workflow !== null && job !== null && config !== null) diagnose(ctx, 'ci-provider-undetected', 'info', 'No GitHub or GitLab project was detected, so no CI step was planned.', { remediation: `Run "${auditRange}" in your CI after installing dependencies and fetching the target branch.` });
     return;

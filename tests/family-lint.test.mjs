@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtemp, mkdir, writeFile, rm, utimes } from 'node:fs/promises';
+import { mkdtemp, mkdir, writeFile, rm, rename, stat, utimes } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import plugin from '../src/eslint/index.mjs';
@@ -87,6 +87,24 @@ test('cached files reload after index, config and baseline edits', async (t) => 
   await writeFile(join(root, '.blocks/baseline.json'), JSON.stringify({ lint: { 'no-block-id-literal': { 'src/main.ts': 1 } } }));
   assert.equal(lint(root, ['widget:fresh']).length, 0);
   await writeFile(join(root, '.blocks/baseline.json'), '{}');
+  assert.equal(lint(root, ['widget:fresh']).length, 1);
+});
+
+test('cached metadata follows atomic replacements and recovers after corrupt data', async (t) => {
+  const root = await fixture(t);
+  assert.equal(lint(root, ['widget:alpha']).length, 1);
+  const index = join(root, '.blocks/index.json');
+  const original = await stat(index);
+  const replacement = join(root, '.blocks/index-replacement.json');
+  const content = JSON.stringify([{ family: 'widget', id: 'fresh' }, { family: 'widget', id: 'ab' }, { family: 'gadget', id: 'beta' }]);
+  await writeFile(replacement, content);
+  await utimes(replacement, original.atime, original.mtime);
+  await rename(replacement, index);
+  const replaced = lint(root, ['widget:alpha', 'widget:fresh']);
+  assert.deepEqual(replaced.map((report) => report.data.id), ['widget:fresh']);
+  await writeFile(index, 'broken');
+  assert.equal(lint(root, ['widget:fresh']).length, 0);
+  await writeFile(index, content);
   assert.equal(lint(root, ['widget:fresh']).length, 1);
 });
 
