@@ -1,3 +1,4 @@
+import { createRequire } from 'node:module';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
@@ -133,4 +134,13 @@ test('registries sort, deep-freeze and refuse collisions and mixed families', ()
   assert.throws(()=>compose(registry,[manifest('new'),manifest('new')]),{code:'duplicate-id'});
   assert.throws(()=>compose(registry,[manifest('new',{files:[]})]),{code:'manifest-invalid'});
   assert.throws(()=>compose(registry,[manifest('new',{implementation:{kind:'module',module:'./x'}})]),{code:'manifest-invalid'});
+});
+
+test('the public kernel export supports CommonJS fallback loaders', () => {
+  const kernel = createRequire(import.meta.url)('block-beaver/kernel');
+  assert.equal(typeof kernel.defineFamily, 'function');
+  assert.equal(typeof kernel.defineGenerator, 'function');
+  assert.equal(typeof kernel.validateManifest, 'function');
+  const result = kernel.validateManifest({ id: 'fixture', family: 'sample', version: 1, name: 'Fixture', description: 'Runtime fixture', rationale: 'Verify the require condition', implementation: { kind: 'none' } }, { mode: 'runtime' });
+  assert.equal(result.valid, true);
 });

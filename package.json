@@ -18,7 +18,8 @@
     "./view": "./src/view.mjs",
     "./kernel": {
       "types": "./src/kernel/index.d.ts",
-      "import": "./src/kernel/index.mjs"
+      "import": "./src/kernel/index.mjs",
+      "default": "./src/kernel/index.mjs"
     },
     "./eslint": "./src/eslint/index.mjs",
     "./package.json": "./package.json"
