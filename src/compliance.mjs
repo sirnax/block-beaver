@@ -258,8 +258,9 @@ async function snapshotDependencies(source, target) {
  * They exist only on the machine that installed them, so staged and range audits cannot check
  * them; working audits read the real files and never use this.
  */
-async function localOnlyPaths(root, mode, paths) {
-  const candidates = [...new Set(paths.filter((path) => typeof path === 'string' && validPath(path)))];
+async function localOnlyPaths(root, mode, paths, removed = new Set()) {
+  // A managed path this change deletes was tracked, so ignoring it afterwards cannot make it local-only.
+  const candidates = [...new Set(paths.filter((path) => typeof path === 'string' && validPath(path) && !removed.has(path)))];
   if (mode === 'working' || !candidates.length) return new Set();
   const { ignoredPaths } = await import('./install-host.mjs');
   const ignored = await ignoredPaths(root, candidates, { isolated: true });
@@ -276,7 +277,7 @@ function routeManaged(finding, local, findings, advisories) {
     remediation: 'Run block-beaver install --fix-ignores to un-ignore only the managed paths so they can be committed and checked.' });
 }
 
-async function structuralRules(root, { strict, familyDrift, mode, priorBaseline }) {
+async function structuralRules(root, { strict, familyDrift, mode, priorBaseline, removed }) {
   const configDocument = await readJson(root, '.blocks/config.json');
   const installDocument = await readJson(root, '.blocks/install.json');
   const baselineDocument = await readJson(root, '.blocks/baseline.json');
@@ -315,14 +316,14 @@ async function structuralRules(root, { strict, familyDrift, mode, priorBaseline 
       const { planManagedFiles } = await import('./managed-files.mjs');
       const plan = await planManagedFiles({ root, version, config: configDocument.value || {}, agents: installDocument.value?.agents || [], operation: 'upgrade', force: true });
       const differing = plan.files.filter((file) => file.before !== file.content);
-      const local = await localOnlyPaths(root, mode, [...differing.map((file) => file.path), ...(plan.conflicts || []).map((conflict) => conflict?.path)]);
+      const local = await localOnlyPaths(root, mode, [...differing.map((file) => file.path), ...(plan.conflicts || []).map((conflict) => conflict?.path)], removed);
       for (const file of differing) routeManaged({ path: file.path, message: 'Managed content differs from this package version.', remediation: 'block-beaver upgrade' }, local, managedFindings, managedAdvisories);
       for (const conflict of plan.conflicts || []) routeManaged(typeof conflict === 'string' ? { message: conflict } : conflict, local, managedFindings, managedAdvisories);
     } catch (error) { managedFindings.push({ message: `Cannot validate managed content: ${error.message}`, remediation: 'block-beaver upgrade' }); }
     try {
       const { planHostSetup } = await import('./install-host.mjs');
       const host = await planHostSetup(root, { version, config: configDocument.value || {}, agents: installDocument.value?.agents || [], operation: 'upgrade', force: true, isolatedGit: mode !== 'working' });
-      const hostLocal = await localOnlyPaths(root, mode, [...host.files.filter((file) => file.before !== file.content).map((file) => file.path), ...(host.conflicts || []).map((conflict) => conflict?.path)]);
+      const hostLocal = await localOnlyPaths(root, mode, [...host.files.filter((file) => file.before !== file.content).map((file) => file.path), ...(host.conflicts || []).map((conflict) => conflict?.path)], removed);
       for (const file of host.files) {
         if (file.before !== file.content) routeManaged({ path: file.path, message: 'Managed host content differs from this package version.', remediation: 'block-beaver upgrade' }, hostLocal, managedFindings, managedAdvisories);
         if (file.mode !== undefined && file.before !== null && !fileModeMatches((await lstat(join(root, file.path))).mode, file.mode)) managedFindings.push({ path: file.path, message: 'Managed host file has an incorrect executable mode.', remediation: 'block-beaver upgrade' });
@@ -418,7 +419,7 @@ export async function auditProject(inputRoot, { mode = 'working', base = null, s
   let rules, treeConfig;
   try {
     treeConfig = await readJson(snapshot.root, '.blocks/config.json');
-    rules = await structuralRules(snapshot.root, { strict, familyDrift, mode, priorBaseline });
+    rules = await structuralRules(snapshot.root, { strict, familyDrift, mode, priorBaseline, removed: new Set(changed.filter((item) => item.status === 'D').map((item) => item.path)) });
   }
   finally { await snapshot.dispose(); }
   const treeValue = treeConfig.present ? (treeConfig.value ?? {}) : null;

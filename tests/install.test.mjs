@@ -422,3 +422,24 @@ test('ignored managed paths are local-only: staged audits advise, working audits
   assert.equal(rule(edited, 'managed-current').pass, false);
   assert.ok(rule(edited, 'managed-current').findings.some((entry) => entry.path === '.claude/settings.json'));
 });
+
+test('ignoring a tracked managed file in the change that deletes it still fails managed-current', { skip: process.platform === 'win32' }, async (t) => {
+  const root = await installationFixture(t), version = await currentVersion();
+  execFileSync('git', ['-C', root, 'add', '.']);
+  commit(root, 'base');
+  const installed = await installProject(root, { version, agents: ['claude'], runner: packageRunner(root) });
+  assert.equal(installed.complete, true, JSON.stringify(installed.conflicts));
+  execFileSync('git', ['-C', root, 'add', '-A']);
+  commit(root, 'adopt block beaver', { ...process.env, PATH: await shimmedPath(root) });
+  const baseHash = execFileSync('git', ['-C', root, 'rev-parse', 'HEAD']).toString().trim();
+  execFileSync('git', ['-C', root, 'rm', '-q', '--cached', '.claude/settings.json']);
+  await rm(join(root, '.claude/settings.json'));
+  await writeFile(join(root, '.gitignore'), '.claude\n');
+  execFileSync('git', ['-C', root, 'add', '.gitignore']);
+  const staged = await auditProject(root, { mode: 'staged' });
+  assert.equal(rule(staged, 'managed-current').pass, false);
+  assert.ok(rule(staged, 'managed-current').findings.some((entry) => entry.path === '.claude/settings.json'), JSON.stringify(rule(staged, 'managed-current')));
+  execFileSync('git', ['-C', root, ...identity, 'commit', '--no-verify', '-qm', 'drop hooks'], { stdio: 'pipe' });
+  const range = await auditProject(root, { mode: 'range', base: baseHash });
+  assert.ok(rule(range, 'managed-current').findings.some((entry) => entry.path === '.claude/settings.json'), JSON.stringify(rule(range, 'managed-current')));
+});

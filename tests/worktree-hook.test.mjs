@@ -78,6 +78,9 @@ test('a staged audit with hook-exported GIT_DIR and GIT_INDEX_FILE does not rewr
 test('isolatedGitEnv drops repository-selecting variables and keeps the rest', () => {
   const env = isolatedGitEnv({ GIT_DIR: 'a', GIT_WORK_TREE: 'b', GIT_INDEX_FILE: 'c', GIT_OBJECT_DIRECTORY: 'd', GIT_ALTERNATE_OBJECT_DIRECTORIES: 'e', GIT_COMMON_DIR: 'f', GIT_PREFIX: 'g', GIT_NAMESPACE: 'h', GIT_CEILING_DIRECTORIES: 'i', GIT_AUTHOR_NAME: 'kept', PATH: 'p' });
   assert.deepEqual(env, { GIT_AUTHOR_NAME: 'kept', PATH: 'p' });
+  // Config selectors and `git -c` overrides also point at the host; Windows env names are case-insensitive.
+  const config = isolatedGitEnv({ GIT_CONFIG: '/host/.git/config', GIT_CONFIG_PARAMETERS: "'core.hookspath'='x'", GIT_CONFIG_COUNT: '1', GIT_CONFIG_KEY_0: 'core.bare', GIT_CONFIG_VALUE_0: 'true', Git_Dir: 'w', GIT_CONFIG_GLOBAL: 'kept' });
+  assert.deepEqual(config, { GIT_CONFIG_GLOBAL: 'kept' });
 });
 
 test('git commit -a audits the temporary index the hook is given', { skip }, async (t) => {

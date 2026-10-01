@@ -10,10 +10,15 @@ const decoder = new TextDecoder('utf-8', { fatal: true });
 export const sha256 = (bytes) => createHash('sha256').update(bytes).digest('hex');
 
 const repositoryVariables = ['GIT_DIR', 'GIT_WORK_TREE', 'GIT_INDEX_FILE', 'GIT_OBJECT_DIRECTORY', 'GIT_ALTERNATE_OBJECT_DIRECTORIES', 'GIT_COMMON_DIR', 'GIT_PREFIX', 'GIT_NAMESPACE', 'GIT_CEILING_DIRECTORIES'];
-// Hooks export these for the host repository; a command aimed at another repository must not inherit them.
+const configVariable = /^GIT_CONFIG(?:|_PARAMETERS|_COUNT|_KEY_\d+|_VALUE_\d+)$/;
+// Hooks export these for the host repository, as do `git -c` overrides and GIT_CONFIG; a command aimed at
+// another repository must not inherit them. Names compare case-insensitively because Windows env is.
 export function isolatedGitEnv(base = process.env) {
-  const env = { ...base };
-  for (const name of repositoryVariables) delete env[name];
+  const env = {};
+  for (const [name, value] of Object.entries(base)) {
+    const upper = name.toUpperCase();
+    if (!repositoryVariables.includes(upper) && !configVariable.test(upper)) env[name] = value;
+  }
   return env;
 }
 
