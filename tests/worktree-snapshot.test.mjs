@@ -38,7 +38,7 @@ test('captures tracked changes, individual untracked files, deletions, modes, an
     const snapshot = await captureWorktreeSnapshot(root, baseCommit, manifestPath);
     assert.deepEqual(snapshot.files.map((entry) => entry.path), [manifestPath, 'generated/new.json', ...(process.platform === 'win32' ? [] : ['generated/odd\nname.txt']), 'src/existing.ts', 'src/old.ts']);
     assert.deepEqual(snapshot.files.find((entry) => entry.path === 'src/old.ts'), { path: 'src/old.ts', type: 'deleted', mode: null, sha256: null });
-    assert.deepEqual(snapshot.files.find((entry) => entry.path === 'src/existing.ts'), { path: 'src/existing.ts', type: 'file', mode: (await lstat(join(root, 'src', 'existing.ts'))).mode.toString(8), sha256: hash('export const value = 2;\n'), indexMode: '100644', ...(process.platform === 'win32' ? { gitMode: '100644' } : {}) });
+    assert.deepEqual(snapshot.files.find((entry) => entry.path === 'src/existing.ts'), { path: 'src/existing.ts', type: 'file', mode: (await lstat(join(root, 'src', 'existing.ts'))).mode.toString(8), sha256: hash('export const value = 2;\n'), indexMode: '100644', gitMode: process.platform === 'win32' ? '100644' : '100755' });
     assert.equal(snapshot.files.find((entry) => entry.path === manifestPath).sha256, hash(await readFile(join(root, manifestPath))));
     assert.equal(snapshot.digest, hash(JSON.stringify({ baseCommit, files: snapshot.files })));
     assert.deepEqual(await captureWorktreeSnapshot(root, baseCommit, join(root, manifestPath)), snapshot);

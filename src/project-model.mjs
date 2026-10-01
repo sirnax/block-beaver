@@ -59,7 +59,7 @@ function parseConfig(root, path) {
       if (!boundedIncludes.length) return [];
       const files = ts.sys.readDirectory(directory, extensions, excludes, boundedIncludes, depth);
       if (files.length > 20000) throw new Error('Source limit exceeded (20000 files) while parsing tsconfig');
-      return files.filter((path) => { try { return within(root, realpathSync(path)); } catch { return false; } });
+      return files.filter((path) => { try { return within(root, realpathSync.native(path)); } catch { return false; } });
     } };
     const parsed = ts.parseJsonConfigFileContent(read.config, configHost, dirname(absolute), undefined, absolute);
     return { options: parsed.options, fileNames: parsed.fileNames, errors: [...parsed.errors.filter((error) => error.code !== 18003).map(message), ...new Set(boundaryErrors)], references: parsed.projectReferences };
@@ -92,7 +92,7 @@ async function detect(root, paths) {
   });
   const metadata = await Promise.all(packages.map(async (path) => [path, await readFile(join(root, path), 'utf8')]));
   const packageStamp = (name, path) => {
-    try { const info = statSync(join(path, 'package.json')); metadata.push([name, realpathSync(path), info.mtimeMs, info.size]); } catch (error) { if (error.code !== 'ENOENT') throw error; }
+    try { const info = statSync(join(path, 'package.json')); metadata.push([name, realpathSync.native(path), info.mtimeMs, info.size]); } catch (error) { if (error.code !== 'ENOENT') throw error; }
   };
   try {
     for (const entry of await readdir(join(root, 'node_modules'), { withFileTypes: true })) {
@@ -108,7 +108,7 @@ async function detect(root, paths) {
 
 /** Propose additive app detection; existing entries remain owner controlled. */
 export async function detectProjectApps(inputRoot, { paths = [], write = false } = {}) {
-  const root = realpathSync(resolve(inputRoot)), configPath = join(root, '.blocks/config.json'), statePath = join(root, '.blocks/detection.json');
+  const root = realpathSync.native(resolve(inputRoot)), configPath = join(root, '.blocks/config.json'), statePath = join(root, '.blocks/detection.json');
   const diagnostics = [];
   let original, before;
   try { before = await readProjectFile(root, '.blocks/config.json'); original = before === null ? null : JSON.parse(before); } catch (error) { if (/symlink|independent regular|not a directory/.test(error.message)) throw error; return { config: { schemaVersion: 1, apps: [] }, added: [], disappeared: [], diagnostics: [{ app: null, field: 'config', message: `Cannot read .blocks/config.json: ${error.message}` }] }; }
@@ -164,7 +164,7 @@ async function detectEntries(root, app, paths) {
 
 /** Parse each app once and resolve imports using the owning app's compiler options. */
 export async function loadProjectModel(inputRoot, { paths = [], writeConfig = true, strict = false } = {}) {
-  const root = realpathSync(resolve(inputRoot));
+  const root = realpathSync.native(resolve(inputRoot));
   const initial = !existsSync(join(root, '.blocks/config.json'));
   const result = await detectProjectApps(root, { paths, write: writeConfig && initial });
   // An existing config only grows through the explicit detect --write command.
@@ -183,7 +183,7 @@ export async function loadProjectModel(inputRoot, { paths = [], writeConfig = tr
     ids.add(entry.id);
     if (!safePath(root, entry.root)) { diagnostics.push({ app: entry.id, field: 'root', message: 'App root must stay inside the repository' }); continue; }
     const appRoot = resolve(root, entry.root);
-    if (existsSync(appRoot) && (!statSync(appRoot).isDirectory() || !within(root, realpathSync(appRoot)))) errors.push('root: must be a directory inside the repository');
+    if (existsSync(appRoot) && (!statSync(appRoot).isDirectory() || !within(root, realpathSync.native(appRoot)))) errors.push('root: must be a directory inside the repository');
     if (!existsSync(appRoot)) errors.push('root: directory does not exist');
     let parsed;
     if (entry.tsconfig !== undefined) {
@@ -204,7 +204,7 @@ export async function loadProjectModel(inputRoot, { paths = [], writeConfig = tr
     for (const path of paths) if (app.fileNames.has(path)) ownerByFile.set(path, app.id);
   }
   const outside = { compilerOptions: rootParsed.options, cache: ts.createModuleResolutionCache(root, (path) => path, rootParsed.options), packages: [] };
-  const host = { ...ts.sys, realpath: (path) => { try { return slash(realpathSync(path)); } catch { return path; } } };
+  const host = { ...ts.sys, realpath: (path) => { try { return slash(realpathSync.native(path)); } catch { return path; } } };
   function resolveImport(from, specifier, { mode } = {}) {
     const app = apps.find((candidate) => candidate.id === ownerByFile.get(from)) || outside;
     if (builtins.has(specifier.replace(/^node:/, ''))) return { external: true, package: specifier };
@@ -234,13 +234,13 @@ export async function loadProjectModel(inputRoot, { paths = [], writeConfig = tr
           if (options.baseUrl) candidates.push(resolve(options.baseUrl, specifier));
         }
         for (const asset of candidates) if (existsSync(asset)) {
-          if (!within(root, realpathSync(asset))) return { error: `Import '${specifier}' resolves outside the repository` };
+          if (!within(root, realpathSync.native(asset))) return { error: `Import '${specifier}' resolves outside the repository` };
           if (statSync(asset).isFile()) return { external: true, asset: slash(relative(root, asset)) };
         }
       }
       return { error: `Cannot resolve '${specifier}'` };
     }
-    let absolute = resolved.resolvedFileName; try { absolute = realpathSync(absolute); } catch { /* compiler supplied a virtual path */ }
+    let absolute = resolved.resolvedFileName; try { absolute = realpathSync.native(absolute); } catch { /* compiler supplied a virtual path */ }
     if (within(root, absolute) && !slash(relative(root, absolute)).split('/').includes('node_modules')) return /\.(?:json|css|scss|svg|png|jpg)$/.test(absolute) ? { external: true } : { path: slash(relative(root, absolute)) };
     if (specifier.startsWith('.') || isAbsolute(specifier)) return { error: `Import '${specifier}' resolves outside the repository` };
     const name = packageName(specifier); if (!app.packages.includes(name)) app.packages.push(name);

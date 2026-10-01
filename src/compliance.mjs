@@ -1,5 +1,5 @@
 import { constants } from 'node:fs';
-import { fileModeMatches } from './file-mode.mjs';
+import { fileModeMatches, gitModeForWorktreeFile } from './file-mode.mjs';
 import { readFile, readdir, mkdir, mkdtemp, rm, symlink, writeFile, lstat, open, realpath } from 'node:fs/promises';
 import { join, resolve, dirname, relative, isAbsolute, basename } from 'node:path';
 import { tmpdir } from 'node:os';
@@ -63,7 +63,7 @@ async function validateBlockReceipt(root, receipt, mode) {
   for (const entry of receipt.paths) {
     const checked = snapshot.get(entry.path);
     if (!validEntry(entry) || !checked || checked.type !== 'file' || checked.sha256 !== entry.afterSha256 ||
-        (checked.gitMode ?? checked.mode) !== entry.afterMode) throw new Error(`Block receipt differs from checked content: ${entry.path}`);
+        (checked.gitMode ?? gitModeForWorktreeFile(checked.mode, null, 'posix')) !== entry.afterMode) throw new Error(`Block receipt differs from checked content: ${entry.path}`);
   }
   return receipt;
 }

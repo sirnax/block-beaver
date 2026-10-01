@@ -58,8 +58,8 @@ export async function versionMode(root, path, mode, base = null) {
     try {
       const info = await lstat(join(root, path));
       const nativeMode = info.mode.toString(8);
-      return process.platform === 'win32' && info.isFile()
-        ? gitModeForWorktreeFile(nativeMode, await versionMode(root, path, 'staged')) : nativeMode;
+      return info.isFile() ? gitModeForWorktreeFile(nativeMode,
+        process.platform === 'win32' ? await versionMode(root, path, 'staged') : null) : nativeMode;
     }
     catch (error) { if (error.code === 'ENOENT') return null; throw error; }
   }

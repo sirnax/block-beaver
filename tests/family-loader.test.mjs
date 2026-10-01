@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
+import { realpathSync } from 'node:fs';
 import { cp, mkdtemp, mkdir, readFile, realpath, rm, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
@@ -300,9 +301,12 @@ test('declaration resolutions use the JavaScript runtime sibling, including a wo
   await symlink(join(data.root, 'packages/fixture-tool'), join(data.root, 'node_modules/fixture-tool'), process.platform === 'win32' ? 'junction' : 'dir');
   const { loadProjectModel } = await import('../src/project-model.mjs');
   const { repositoryPath } = await import('../src/families/hooks.mjs');
-  const model = await loadProjectModel(data.root, { paths: data.paths, writeConfig: false });
   const runtimePath = join(data.root, 'node_modules/fixture-tool/lib/index.js');
-  t.diagnostic(JSON.stringify({ root: data.root, realRoot: await realpath(data.root), runtimePath, runtimeRealPath: await realpath(runtimePath), runtimeUrl: pathToFileURL(runtimePath).href, repositoryPath: repositoryPath(data.root, pathToFileURL(runtimePath).href), resolution: model.resolveImport('catalog/widgets/bravo.item.ts', 'fixture-tool', { mode: 'import' }), app: model.apps.map(app => ({ id: app.id, root: app.root, options: app.compilerOptions })) }));
+  const canonicalRoot = await realpath(data.root);
+  assert.equal(realpathSync.native(runtimePath), await realpath(runtimePath));
+  assert.equal(repositoryPath(canonicalRoot, pathToFileURL(runtimePath).href), 'packages/fixture-tool/lib/index.js');
+  const canonicalModel = await loadProjectModel(canonicalRoot, { paths: data.paths, config: data.config, writeConfig: false });
+  assert.equal(canonicalModel.resolveImport('catalog/widgets/bravo.item.ts', 'fixture-tool', { mode: 'import' }).path, 'packages/fixture-tool/lib/index.d.ts');
   const result = await loadFamilies(data);
   assert.deepEqual(result.diagnostics, [], JSON.stringify(result.diagnostics));
   assert.deepEqual(result.manifests.map((item) => item.value.tag), ['blue', 'green']);

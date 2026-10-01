@@ -96,7 +96,7 @@ test('reviewed executable files retain Git mode and reject index or exact-byte c
   const entry = checked.snapshot.files.find((file) => file.path === 'src/feature.ts');
   assert.equal(entry.mode, (await lstat(join(checked.worktree, entry.path))).mode.toString(8), 'Review still records exact native permissions.');
   assert.equal(entry.indexMode, '100755');
-  if (process.platform === 'win32') assert.equal(entry.gitMode, '100755');
+  assert.equal(entry.gitMode, '100755');
   assert.equal((await review(root, 'executable-roadmap', 'feature', graph)).readyForApproval, true);
 
   git(checked.worktree, 'update-index', '--chmod=-x', 'src/feature.ts');
@@ -148,4 +148,54 @@ test('non-source exceptions bind verification to exact changed content', async (
   await writeFile(join(root, '.blocks/exceptions/docs-update.json'), JSON.stringify(exception));
   git(root, 'add', '.blocks/exceptions');
   assert.equal((await auditProject(root, { mode: 'staged' })).pass, false);
+});
+
+test('umask 002 reviews exact permissions and audits canonical Git modes for existing and new files', { skip: process.platform === 'win32' }, async (t) => {
+  const root = await fixture(t);
+  const script = `
+    import assert from 'node:assert/strict';
+    import { chmod, lstat, readFile, writeFile } from 'node:fs/promises';
+    import { join } from 'node:path';
+    import { execFileSync } from 'node:child_process';
+    import { scanRepository } from ${JSON.stringify(new URL('../src/scanner.mjs', import.meta.url).href)};
+    import { makeProposal } from ${JSON.stringify(new URL('../src/contracts.mjs', import.meta.url).href)};
+    import { approve, checkSlice, createRoadmap, propose, review } from ${JSON.stringify(new URL('../src/workflow.mjs', import.meta.url).href)};
+    import { auditProject, integrateApproved, recordException } from ${JSON.stringify(new URL('../src/compliance.mjs', import.meta.url).href)};
+    process.umask(0o002);
+    const root = process.argv[1];
+    await chmod(join(root, 'src/feature.ts'), 0o664);
+    const graph = await scanRepository(root, { writeConfig: false });
+    await createRoadmap(root, 'group-roadmap', graph, { scope: ['src/feature.ts'], createScope: ['src/new.ts'] });
+    const proposal = makeProposal({ id: 'feature', name: 'Group writable feature', description: 'Works with umask 002.', rationale: 'One feature.', files: ['src/feature.ts', 'src/new.ts'],
+      patches: [{ path: 'src/feature.ts', baseHash: graph.hashes['src/feature.ts'], content: 'export const feature = 2;\\n' }, { op: 'create', path: 'src/new.ts', content: 'export const added = true;\\n' }] }, graph);
+    assert.equal((await propose(root, 'group-roadmap', proposal, graph)).accepted, true);
+    const checked = await checkSlice(root, 'group-roadmap', 'feature', graph);
+    assert.equal(checked.pass, true, JSON.stringify(checked));
+    for (const file of checked.snapshot.files) {
+      assert.equal(Number.parseInt(file.mode, 8) & 0o777, 0o664);
+      assert.equal(file.gitMode, '100644');
+    }
+    assert.equal((await review(root, 'group-roadmap', 'feature', graph)).readyForApproval, true);
+    await chmod(join(checked.worktree, 'src/new.ts'), 0o644);
+    assert.equal((await review(root, 'group-roadmap', 'feature', graph)).integrity.matches, false, 'Raw permission edits after review remain tamper.');
+    await assert.rejects(approve(root, 'group-roadmap', 'feature', graph), /Worktree changed after checks/);
+    await chmod(join(checked.worktree, 'src/new.ts'), 0o664);
+    assert.equal((await approve(root, 'group-roadmap', 'feature', graph)).status, 'approved');
+    const integrated = await integrateApproved(root, 'group-roadmap', 'feature');
+    assert.equal((await lstat(join(root, 'src/new.ts'))).mode & 0o777, 0o644, 'Integration may use stricter creation permissions.');
+    const receipt = JSON.parse(await readFile(join(root, integrated.receipt), 'utf8'));
+    assert.equal(receipt.paths.every((file) => file.afterMode === '100644'), true);
+    await writeFile(join(root, 'README.md'), '# Group writable project\\n');
+    await chmod(join(root, 'README.md'), 0o664);
+    await recordException(root, 'group-docs', { reason: 'Document group setup', paths: ['README.md'], check: 'git status' });
+    assert.equal((await auditProject(root)).pass, true);
+    execFileSync('git', ['-C', root, 'add', 'src/feature.ts', 'src/new.ts', 'README.md', '.blocks']);
+    const staged = await auditProject(root, { mode: 'staged' });
+    assert.equal(staged.pass, true, JSON.stringify(staged));
+    await chmod(join(root, 'src/feature.ts'), 0o600);
+    assert.equal((await auditProject(root)).pass, true, 'Git ignores ordinary permission bits after integration.');
+    await chmod(join(root, 'src/feature.ts'), 0o700);
+    assert.equal((await auditProject(root)).files.find((file) => file.path === 'src/feature.ts').status, 'changed-after-review', 'Git retains the owner execute bit.');
+  `;
+  execFileSync(process.execPath, ['--input-type=module', '-e', script, root], { encoding: 'utf8', timeout: 60_000 });
 });

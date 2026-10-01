@@ -18,6 +18,7 @@ Release candidate; not yet published. Versions 0.2.0 and 0.3.0 were local develo
 - Add strict scan diagnostics, incremental scanning, deterministic view module export with pure nonce/header helper, and generated maps with automatic refresh through `block-beaver start`; add `init` and `update` for setup and offline regeneration.
 - Show declared local block dependencies as evidenced connections in the scanned graph and local Blocks view.
 - Support explicitly scoped file creation in roadmaps and agent requests, with safe `op: "create"` patches alongside existing replacements.
+- Preserve CRLF managed files and track workspace runtime dependencies through Windows junctions; bind reviewed filesystem permissions separately from portable Git receipt modes.
 - Bind review and approval to the complete verified worktree snapshot, including declared generated files and the `.blocks` manifest; reject out-of-scope or post-check changes.
 - Keep repair within the same implementation paths and patch operations while allowing content fixes.
 

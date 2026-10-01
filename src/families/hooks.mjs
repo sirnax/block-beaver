@@ -17,7 +17,7 @@ export function repositoryPath(root, url) {
   try { absolute = fileURLToPath(url); } catch { return undefined; }
   // Native resolution may retain a node_modules junction spelling on Windows.
   // Track its canonical repository source, while external packages stay excluded.
-  try { absolute = realpathSync(absolute); } catch { /* unresolved URLs retain their original spelling */ }
+  try { absolute = realpathSync.native(absolute); } catch { /* unresolved URLs retain their original spelling */ }
   const path = relative(root, absolute).split('\\').join('/');
   if (!path || path === '..' || path.startsWith('../') || isAbsolute(path) || path.split('/').includes('node_modules')) return undefined;
   return path;
@@ -45,7 +45,7 @@ export function assertSafeSource(root, path) {
     if (index < path.split('/').length - 1 && !entry.isDirectory()) throw loaderError('load-failed', `Source parent is not a directory: ${path}`, path);
     if (index === path.split('/').length - 1 && (!entry.isFile() || entry.nlink !== 1)) throw loaderError('load-failed', `Source is not an independent regular file: ${path}`, path);
   }
-  if (realpathSync(absolute) !== absolute) throw loaderError('load-failed', `Source path escapes the repository: ${path}`, path);
+  if (realpathSync.native(absolute) !== absolute) throw loaderError('load-failed', `Source path escapes the repository: ${path}`, path);
   return absolute;
 }
 

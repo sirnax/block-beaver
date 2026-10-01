@@ -4,9 +4,10 @@ export function fileModeMatches(actual, expected) {
   return (actual & mask) === (expected & mask);
 }
 
-/** Windows stat permissions do not represent Git's retained executable bit. */
+/** Git tracks the owner execute bit on POSIX and retains index modes on Windows. */
 export function gitModeForWorktreeFile(nativeMode, indexMode, platform = process.platform) {
-  if (platform !== 'win32') return nativeMode;
+  if (typeof nativeMode !== 'string' || !/^10[0-7]{4}$/.test(nativeMode)) throw new Error('Git file mode requires regular native file permissions.');
+  if (platform !== 'win32') return (Number.parseInt(nativeMode, 8) & 0o100) ? '100755' : '100644';
   if (indexMode !== null && !['100644', '100755'].includes(indexMode)) throw new Error('Regular worktree file has a nonregular Git index entry.');
   return indexMode ?? '100644';
 }

@@ -162,10 +162,10 @@ export async function captureWorktreeSnapshot(worktree, baseCommit, manifestPath
   for (const path of [...paths].sort()) {
     const entry = await entryFor(root, path);
     if (entry.type === 'file') {
-      // Keep the raw permissions and byte digest exact. Separately attest the
-      // index metadata that Windows retains despite its native stat permissions.
+      // Keep raw permissions and bytes exact, beside Git's canonical file mode
+      // and the index metadata that Windows retains across native writes.
       entry.indexMode = indexedModes.get(entry.path) ?? null;
-      if (process.platform === 'win32') entry.gitMode = gitModeForWorktreeFile(entry.mode, entry.indexMode);
+      entry.gitMode = gitModeForWorktreeFile(entry.mode, entry.indexMode);
     }
     files.push(entry);
   }
