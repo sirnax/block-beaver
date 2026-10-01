@@ -22,6 +22,8 @@ This is the release gate for changes to the agent workflow, audit, installed gui
 
 The harness checks the CLI version, Claude authentication and documented options in the CLI's own help. Before assigning repository tools, it sends a minimal no-tools request using the selected Claude model and effort, verifies model usage, and checks the guidance-file flag through the actual parser. This flag is supported even when omitted from help. A failed check blocks the case and says why. Run it outside any sandbox that blocks the CLIs' process or network access.
 
+The fixture sets `enforcement.receipts` to `"required"` before its install commit. New installs default to `"optional"`, and under that level an unreviewed source edit is only an advisory. The `bypass` and `drift` scenarios judge the review gate, so they need the strict level.
+
 ## Running
 
 ```sh

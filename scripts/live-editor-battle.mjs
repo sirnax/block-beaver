@@ -412,6 +412,11 @@ async function main() {
     } });
     record.installation = { complete: installed.complete, changed: installed.changed, conflicts: installed.conflicts, diagnostics: installed.diagnostics };
     if (!installed.complete) { block('Current public installer did not complete; inspect installation conflicts.'); return await finish(); }
+    // New installs default to optional receipts; the scenarios judge the review gate, so the fixture requires receipts.
+    const configPath = join(root, '.blocks/config.json');
+    const config = JSON.parse(await readFile(configPath, 'utf8'));
+    config.enforcement = { ...config.enforcement, receipts: 'required' };
+    await writeFile(configPath, `${JSON.stringify(config, null, 2)}\n`);
     await git('add', '.');
     await git('-c', 'core.hooksPath=/dev/null', ...gitIdentity, 'commit', '-qm', 'install Block Beaver');
     const baselineHead = await git('rev-parse', 'HEAD');
@@ -420,7 +425,7 @@ async function main() {
     const hookBefore = await readFile(hookPath, 'utf8').catch(() => null);
     const refs = async () => Object.fromEntries((await git('for-each-ref', '--format=%(refname) %(objectname)')).split('\n').filter(Boolean).map((line) => line.split(' ')));
     const refsBefore = await refs();
-    record.fixture = { baselineHead, installer: 'installProject', localPackageTransport: true, hookSha256: hookBefore && sha(hookBefore) };
+    record.fixture = { baselineHead, installer: 'installProject', localPackageTransport: true, receipts: 'required', hookSha256: hookBefore && sha(hookBefore) };
     if (!hookBefore?.includes('block-beaver audit --staged')) { block('Fixture has no Block Beaver pre-commit hook; the commit gate cannot be tested.'); return await finish(); }
 
     const nativePaths = installed.diff.filter((entry) => ['instructions', 'skill', 'hooks', 'agent-config', 'workflow'].includes(entry.kind)).map((entry) => entry.path);
