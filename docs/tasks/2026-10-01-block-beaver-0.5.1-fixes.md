@@ -58,6 +58,51 @@ Workers: Claude Sonnet 5.5 (high), one isolated worktree per slice. Integration 
   - A config edit after install passes under `optional`, fails under `required` without evidence, and fails `config-valid` when invalid.
   - With `.claude` ignored, a commit through the hook succeeds, and the audit shows an advisory.
 
+## Known limits
+- The direct hook command uses a relative path, so editors must run hooks from the project root. If an editor runs them elsewhere, the hook fails open, as it did before when the config couldn't be read.
+- Other git call sites (`src/workflow.mjs`, `src/worktree-snapshot.mjs`) still inherit `GIT_*` variables. They act on the repository they are run from and are never driven from a Git hook, so they were left unchanged.
+- The live editor gate was not re-run for 0.5.1. The changed hook launcher (`scripts/live-editor-battle.mjs` JS shim) was checked by hand.
+
 ## Evidence
 
-_Recorded during integration._
+**Implementation:** three Claude Sonnet 5.5 (high) workers, each in an isolated worktree. A and B started from `b96cea6`; C started from A's result `d878617`. The integrator checked each diff against its boundary, ran its tests and cherry-picked it.
+
+Commits on `fix/0.5.1-hook-safety`:
+
+| Commit | Change |
+| --- | --- |
+| `b96cea6` | Task record |
+| `8188e0f` | B (#22) |
+| `d878617` | A (#21) |
+| `11a167d` | C (#23, #24) |
+| `22fb04d` | Release bump |
+| `fee1c4a` | Review fixes |
+
+Slice C kept `.blocks/config.json` in new setup exceptions, so the bytes install itself writes stay covered under `required`. It removes managed setup exceptions from the stale candidates for config instead. The owner's intended behaviour still holds: an owner edit never goes stale, and the edit follows the active receipts level.
+
+**Full check (`npm run check`):**
+
+| Node | Result |
+| --- | --- |
+| 26.10.0 | 391 passed, 0 failed (`fee1c4a`) |
+| 24.21.0 | 391 passed, 0 failed (`fee1c4a`) |
+| 22.18.0 | 391 passed, 0 failed (`fee1c4a`) |
+
+Kernel gzip was 4504/6144 bytes on Node 24 and 4511/6144 on 22.18.0.
+
+**Cross-family review:** GPT (gpt-6.1-sol, medium, read-only, via Codex CLI 0.159.3) reviewed `git diff bf7d8f0..11a167d`. Its sandbox blocked the fixture tests, so its findings were traced through the code.
+1. **P1, accepted:** a change that deleted a tracked managed file and also ignored it turned the deletion into a local-only advisory. Paths deleted by the change under audit are no longer local-only. The new test "ignoring a tracked managed file in the change that deletes it still fails managed-current" covers staged and range mode, and it fails without the fix.
+2. **P2, accepted:** `GIT_CONFIG`, `GIT_CONFIG_PARAMETERS` and `GIT_CONFIG_COUNT`/`KEY_n`/`VALUE_n` were still inherited by snapshot commands. These are now stripped as well, with names matched case-insensitively for Windows. The unit test fails without the fix. An integration test was tried and dropped: this flow writes back the value the host read returned, so bytes can't distinguish the fix.
+3. **P2, not changed:** an ordinary exception carrying the managed setup marker skips the stale check for config. Receipts are read from the audited tree, and exception files are internal paths that are not reviewed. So the forged marker gives the same result as deleting the stale exception file, which is already possible. Adding a check here would not close anything.
+
+No findings on: host index reads (including `commit -a`), required receipts, the stricter-of-base-and-tree level, `config-valid`, hook ownership matching, the legacy migration inputs, foreign handlers, uninstall, or the unchanged Git hook and CI renderers.
+
+**End-to-end:** packed 0.5.1 tarball (`sha512-WFx6KbIX…GSRQ==`, shasum `c7ef8927…9a63`, 70 files), disposable targets outside this repository, Node 26.10.0, npm, branch at `fee1c4a`.
+- **#21 control:** published 0.5.0. A commit through the managed pre-commit hook in a linked worktree failed with `error: remote origin already exists.` and left the host with `core.bare=true`.
+- **#21 with 0.5.1:** the same commit succeeded, the host kept `core.bare=false`, and the origin was unchanged.
+- **#22:** install wrote `node node_modules/block-beaver/bin/block-beaver.mjs hook-check …` for both Claude and Codex. One hook call took 0.09–0.21 s directly, against 0.78 s through `npx`.
+- **#22 upgrade:** a project adopted with published 0.5.0 (with `npx --no-install` hooks) was upgraded to 0.5.1. Both hooks were rewritten, the commit through the hook passed, the audit passed, and uninstall removed the hooks.
+- **#23 under `optional`:** editing `.blocks/config.json` after install committed through the hook, and the audit passed.
+- **#23 under `required`:** tightening to `required` failed with `missing-exception`, not `changed-after-review`. It passed once an owner exception was recorded. A later config edit without evidence was blocked.
+- **#24:** with `.claude` in `.gitignore`, install warned that pre-commit and CI audits can't see the path and named `--fix-ignores`. The adoption commit and a later commit both went through the hook, and the staged audit showed `ignored-managed-local`.
+- `npm publish --dry-run --access public` on the tarball reported `block-beaver@0.5.1`, 70 files and the same shasum.
