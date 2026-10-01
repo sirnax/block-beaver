@@ -2,6 +2,21 @@
 
 Owner request: finish remote Linux/Windows CI, trusted Codex native hooks, and release review so the package can be adopted in Teacake. Baseline: clean local branch `codex/block-beaver-v0.4-design`,commit `5e22fcf`.
 
+## Final acceptance — complete
+
+Accepted runtime candidate: `e1b15297f9a02f5d02d1c010a6dbfc91af073359` on `codex/block-beaver-v0.4-design`.
+Runtime SHA-256: `8a837833abf4b6c34ef9c10ae4e92488fb9872268d7cf50ab5d9845863b01866` (71 files). Documentation-only completion records do not change this runtime or the tested package.
+
+- [Remote CI](https://github.com/sirnax/block-beaver/actions/runs/36878498198) passed Linux Node 22.18.0, latest 22, 24 and 26, macOS 24, Windows 24 and the production dependency audit. Linux minimum/26 and local Node 26 each passed 320 tests with no failures or skips. Windows passed 318 of 319 tests with no failures; the POSIX-only umask test is inapplicable there. Actual esbuild tree shaking and installed Git commit-hook rejection passed on Windows and Linux.
+- [CodeQL](https://github.com/sirnax/block-beaver/actions/runs/36878508143) and [secret scanning](https://github.com/sirnax/block-beaver/actions/runs/36878517152) passed on the same candidate. Active main protection now includes `Check (Node 22.18.0)` and preserves every existing required context and rule.
+- Claude Sonnet 5.5 high and Codex GPT-6.1-Sol medium passed all eight normal/bypass/failed/drift scenarios: 108 rubric checks. Actual models were verified, and every run retained the same start/end runtime fingerprint. Codex native hooks executed through normal `/hooks` trust in disposable homes: 22/12/14/25 native calls respectively. Separate real guide/deny probes passed 2/2; denied edits stayed absent. Temporary authentication copies were removed and their absence verified. No trust fabrication, bypass flags or real user trust-state edits were used.
+- Final 67-file `block-beaver-0.4.0.tgz`: 156195 packed bytes, 574766 unpacked; SHA1 `1044cc8a19fd727a34c29525cbb5d88d438ca4e1`. Integrity: `sha512-gcSqPXy13Qhe/3J/IsCZvGyEQdmZTk8nicX7AFe7Jfa6qg8/p3aKu9RIlMKvP9/u4EGCShHkERT987AXXnzBBg==`. Real tarball installation, all exports, strict NodeNext types, CommonJS kernel on Node 22/24/26, custom generation/freshness, idempotent install/upgrade and owner-preserving uninstall passed. Normal and offline `npm publish --dry-run` matched the artifact; no publication occurred. The disposable local dependency was normalized to exact 0.4.0 after real tarball transport to avoid requesting an unpublished registry version.
+- Independent read-only Claude Sonnet 5.5 high and Opus 5.5 medium reviews inspected requirements, changes and evidence. Material findings were fixed, including legacy snapshot digest compatibility, POSIX umask receipts and Windows delegated module identity. Final Opus review reported no blocker.
+
+Temporary detailed evidence: `block-beaver-readiness-pack/report.md`, `block-beaver-readiness-pack/block-beaver-0.4.0.tgz`, `block-beaver-codex-final-summary.json`, `block-beaver-readiness-claude-{normal,bypass,failed,drift}.json`, and `block-beaver-opus-final-url-review.json`. Native per-case records are referenced by the Codex summary. Raw editor transcripts and credentials are not committed.
+
+Readiness is complete. Publishing, merging/tagging a release and adopting the package inside Teacake remain separate owner actions. Follow [the release procedure](../RELEASING.md), including removal of candidate labels and rechecking the final publication artifact. E remains deferred. Known fail-closed executable-mode boundaries described below remain unchanged.
+
 ## Scope and boundaries
 
 - Primary: integration,GitHub candidate branch/CI runs,package/release workflow,release notes,ROADMAP and final review.
@@ -13,15 +28,15 @@ Each worker must report changes,verification,findings and limits. No worker may 
 
 ## Acceptance
 
-- [ ] Exact candidate tested remotely on Linux and Windows; required checks all green.
-- [ ] Installed Codex native hooks actually execute through normal persisted trust; no bypass flags or real user trust-state edits.
-- [ ] Release/package review completed; material findings fixed and checked.
-- [ ] Package/version/changelog/release notes and publishing procedure agree.
-- [ ] ROADMAP and verification evidence updated.
+- [x] Exact candidate tested remotely on Linux and Windows; required checks all green.
+- [x] Installed Codex native hooks actually execute through normal persisted trust; no bypass flags or real user trust-state edits.
+- [x] Release/package review completed; material findings fixed and checked.
+- [x] Package/version/changelog/release notes and publishing procedure agree.
+- [x] ROADMAP and verification evidence updated.
 
 Running remote CI requires making the committed candidate available on its GitHub branch. Package/GitHub release publication and Teacake repository changes are separate steps after readiness.
 
-## Progress and expanded boundaries
+## Historical progress and expanded boundaries
 
 - Baseline remote CI [36871508495](https://github.com/sirnax/block-beaver/actions/runs/36871508495) at `5e22fcf`: Linux22/24/26, macOS24 and dependency audit passed; Windows24 exposed16 failures and one optional bundler skip. This run is diagnostic, not final acceptance.
 - CI ownership expanded to `src/install-templates.mjs` (bundled LF normalization), `src/managed-files.mjs` (CRLF managed-hash and exact historical template equivalence), `src/project-model.mjs` (TypeScript canonical paths) and corresponding fixture tests. Raw owner bytes and reviewed snapshot checks remain strict.
@@ -29,7 +44,7 @@ Running remote CI requires making the committed candidate available on its GitHu
 - Codex normal `/hooks` UI trusted the actual installed command in an isolated home. Native probes observed guide context and allow, block denial and absent denied file. No bypass flags/private trust fabrication/real user auth writes. Final matrix waits for source freeze.
 - Claude Sonnet5.5 high independently reviewed package/release files with Read/Glob/Grep, actual canonical model confirmed, no permission denials. Findings drove release-note validation, B/breaking/upgrade notes, minimum Node CI, publishing procedure, fresh matrix and package evidence.
 - npm registry lookup returned404 for `block-beaver` on2026-10-01. This does not establish name ownership or publication credentials. Publication remains separate.
-- Actual active GitHub ruleset includes existing Linux22/24/26/platform/audit/security contexts. Versioned guidance adds minimum22.18.0 context; applying that additional protection on GitHub is a release settings follow-up. Existing required names are preserved.
+- Actual active GitHub ruleset includes existing Linux22/24/26/platform/audit/security contexts. Versioned guidance adds minimum22.18.0 context; the actual GitHub protection was subsequently updated as recorded in final acceptance. Existing required names are preserved.
 
 Second remote candidate `4db8d74` passed Linux22.18.0/22/24/26, macOS and audit, plus CodeQL and Gitleaks, but Windows retained four failures. Follow-up boundaries: Sol xhigh `windows_receipts` owns compliance receipt/audit mode conversion and `src/compliance-git.mjs`/`src/file-mode.mjs` as necessary, preserving raw snapshot/byte checks; CI worker owns canonical junction loader tracking, CRLF JSON managed idempotency and upgrade fixture line-ending comparison. Escalation reason: cross-platform reviewed-content integrity requires careful native/Git representation without weakening tamper detection. Codex worker owns provisioned package metadata/bin and no-install fixture preflight; package transport remains separately verified. Earlier passed matrix/artifact records are superseded until final runtime freeze.
 

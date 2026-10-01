@@ -1,10 +1,12 @@
 # Block Beaver 0.4.0 local verification
 
-This records the original A–C local acceptance snapshot. The active [release-readiness task](2026-10-01-block-beaver-release-readiness.md) supersedes its pending remote/native checks and will record the final candidate evidence.
+Release readiness is complete. [Final candidate evidence](2026-10-01-block-beaver-release-readiness.md#final-acceptance--complete) records green remote CI/security checks, trusted native Codex execution, eight accepted live-editor cases and the reviewed 67-file package at `e1b1529`.
+
+The following sections preserve the original A–C local acceptance snapshot. Their pending remote/native checks and older artifact are historical and superseded by that final evidence.
 
 A–C from the agreed design are implemented locally. E remains deferred. Nothing has been published.
 
-## Frozen candidate
+## Historical A–C candidate
 
 Runtime/source SHA-256: `066f9b6e694eeaabefd7ebb5d8793fc0472fbf2f64fa78ed1b98807ef532ad5b`.
 All eight accepted live-editor cases recorded this same hash before and after execution.
@@ -38,7 +40,7 @@ The tested package is `block-beaver-0.4.0.tgz`,154152 packed bytes,66 files, SHA
 
 Native run JSON, logs and package inventory remain in the task's temporary evidence directory. The human-readable live report is `block-beaver-v040-live-report.md`; pack evidence is `block-beaver-final-pack/report.md`.
 
-## Reviews and remaining release checks
+## Historical reviews and release limits
 
 Parallel GPT owners implemented bounded subsystems. Sonnet implemented host setup, initial live-editor harness and generation/history. Opus reviewed family architecture and kernel/loader; Sonnet independently reviewed GPT-authored A and C integration. GPT independently reviewed Sonnet host and generation code. All material findings received public regressions or direct browser/runtime verification.
 

@@ -6,9 +6,8 @@ Current branch: `codex/block-beaver-v0.4-design`.
 
 ## Status
 
-**A–C are complete and verified locally at 0.4.0.** No authorized implementation work remains.
-E is deferred; no package, release, branch or pull request has been published.
-Detailed evidence and limits: [local verification](docs/tasks/2026-10-01-block-beaver-v0.4-verification.md).
+**A–C and release readiness are complete at 0.4.0.** Remote Linux/macOS/Windows CI, trusted native Codex execution, package checks and independent release reviews passed. The candidate branch is pushed; no package or GitHub release has been published. E remains deferred.
+Detailed current evidence: [final release acceptance](docs/tasks/2026-10-01-block-beaver-release-readiness.md#final-acceptance--complete).
 
 The owner approved CLI, scan/graph, generated/installed files and exported view/kernel public test seams, plus full local A–C scope. Workers did not delegate, commit, merge or publish. The primary integrated and committed reviewed changes. Only useful independent workers ran within the 16-worker limit.
 
@@ -50,7 +49,7 @@ The owner approved CLI, scan/graph, generated/installed files and exported view/
 | gate_review / Sol medium | Actual editor release gate/instrumentation |8/8 cases,96/96 checks, same start/end source hash |
 | primary | Shared CLI/adapter/package/docs and final integration | Local commits and final evidence below |
 
-## Final verification
+## Original A–C local verification (historical)
 
 - **310 tests passed,0 failed,0 skipped on each Node 22.18.0,24.21.0,26.10.0**, including syntax and kernel budget.
 - **8/8 editor scenarios,96/96 checks passed** against frozen source SHA256
@@ -75,25 +74,17 @@ The owner approved CLI, scan/graph, generated/installed files and exported view/
 - Independent reviews fixed NodeNext mode, malformed config, managed-section hashes, CI regeneration, loader races/retries/resolution/IPC, invalid defaults, mapStyle wiring, listener accumulation, unclaimed discovery and CLI error contracts.
 - Claude authenticated outside the sandbox; canonical Sonnet/Opus models verified. No credential or machine-cache ownership changes were made.
 
-## Remaining release work and limits
+## Release readiness follow-up — complete
 
-No A–C local implementation tasks remain. Remote Linux/Windows CI and a Codex native-hook trusted-editor check remain external verification; Codex native files were intact but execution was not observed in fresh untrusted fixtures. Its actual model metadata was also unavailable; GPT-6.1-Sol medium was requested. Claude actual Sonnet 5.5 and native execution were verified.
+- [x] Remote candidate CI and security checks on `e1b1529`.
+- [x] Trusted native Codex execution and verified actual model.
+- [x] Independent Claude release review and all material fixes.
+- [x] Final package checks, evidence and release handoff.
 
-Known host boundaries and optional bundler availability are recorded in the verification document. Publication needs a separate instruction. E remains future work.
+Final runtime fingerprint: `8a837833abf4b6c34ef9c10ae4e92488fb9872268d7cf50ab5d9845863b01866`. Eight live-editor cases passed 108 checks. Linux minimum/26 and local Node 26 passed 320 tests; Windows passed 318 with one POSIX-only skip and no failures. All platform jobs, actual bundler checks, CodeQL, secret scan and dependency audit are green. Main protection includes the minimum Node context.
 
-Implementation commits:`1bc1779` (A–C),`d931eed` (CommonJS kernel export),`4ca5e9b` (release evidence scope). Completed disposable Claude worktrees and browser servers were cleaned up; the pre-existing compliance worktree was preserved.
+Final 67-file tarball SHA1: `1044cc8a19fd727a34c29525cbb5d88d438ca4e1`; actual installation, exported types/runtime, generation, upgrades, uninstall and normal/offline publication dry runs passed. See [final acceptance](docs/tasks/2026-10-01-block-beaver-release-readiness.md#final-acceptance--complete) for CI links, artifact integrity and evidence details.
 
-## Release readiness follow-up — 2026-10-01
+Completed readiness workers: Sol medium CI portability, Codex trust and package smoke; Luna medium release documentation; Sol xhigh reviewed receipt integrity (escalated for cross-platform byte/mode attestation). Claude Sonnet 5.5 high and Opus 5.5 medium independently reviewed GPT changes. Primary integrated Windows native-path/module-identity fixes and final evidence. No workers remain active.
 
-Requested: remote Linux/Windows CI,trusted Codex native hooks,and release review before publishing for Teacake adoption. Detailed boundary/acceptance: [release readiness](docs/tasks/2026-10-01-block-beaver-release-readiness.md).
-
-- [ ] Remote candidate CI.
-- [ ] Trusted native Codex execution.
-- [ ] Independent Claude release review and fixes.
-- [ ] Final package/release handoff.
-
-Active workers: Sol medium CI portability and Codex trust; Claude Sonnet5.5 high independent review after authentication/model preflight. Primary owns integration and remote CI.
-
-Progress: baseline remote CI passed Linux22/24/26/macOS/audit but Windows exposed path, CRLF and permission defects. Fixes preserve the checks. Native Codex guide/deny probes executed successfully through normal `/hooks` trust. Claude review found stale release notes/install guidance, now being corrected; Luna handles README/changelog, Sol handles fresh package smoke. Final matrix and artifact wait for the behavior-source freeze.
-
-Second candidate remote: Linux22.18/22/24/26, macOS, audit, CodeQL and Gitleaks passed; Windows four remaining failures are under repair. Additional Sol xhigh worker owns exact receipt-mode representation. First fresh Claude4/4 and tarballsmoke passed, but final evidence must be refreshed after these fixes.
+Publication and Teacake adoption are the next separate steps; neither was performed. Follow [RELEASING](docs/RELEASING.md) for the concrete publication procedure. E stays deferred. Original browser/adoption evidence above remains the A–C snapshot; it is not presented as a new release-readiness browser run.
