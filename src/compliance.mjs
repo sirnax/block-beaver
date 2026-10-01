@@ -399,7 +399,13 @@ export async function auditProject(inputRoot, { mode = 'working', base = null, s
     const failing = unreviewed.filter((file) => staleReviewed.has(file.path));
     const findings = [...failing.map((file) => ({ path: file.path, message: file.status })), ...invalid];
     rules.push({ id: 'reviewed-content', pass: findings.length === 0, findings, advisories: unreviewed.filter((file) => !staleReviewed.has(file.path)).map(advisory) });
-  } else rules.push({ id: 'reviewed-content', pass: true, findings: [], skipped: true, skipReason: 'enforcement.receipts is off', advisories: invalid.map((entry) => ({ code: 'invalid-evidence', severity: 'info', ...entry })) });
+  } else {
+    // Off skips the review requirement, never the integrity of evidence that is present: a forged
+    // or malformed receipt still fails, because exception-valid does not inspect block receipts.
+    rules.push(invalid.length
+      ? { id: 'reviewed-content', pass: false, findings: invalid }
+      : { id: 'reviewed-content', pass: true, findings: [], skipped: true, skipReason: 'enforcement.receipts is off', advisories: [] });
+  }
   const enforcement = { agents: treeValue?.enforcement?.agents ?? 'guide', gate: treeValue?.enforcement?.gate ?? 'audit', receipts, receiptsSource };
   return { pass: rules.every((rule) => rule.pass), mode, base: mode === 'range' ? base : await gitHead(root), enforcement, files, invalidEvidence: evidence.invalid, rules };
 }

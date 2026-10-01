@@ -245,7 +245,7 @@ test('a config without the key and a repository without config both mean require
   assert.deepEqual(audit.enforcement, { agents: 'guide', gate: 'audit', receipts: 'required', receiptsSource: 'default' });
 });
 
-test('an invalid receipt fails under required and optional; under off it is reported but does not fail', async (t) => {
+test('an invalid receipt fails under every receipt level, including off', async (t) => {
   const results = {};
   for (const level of ['required', 'optional', 'off']) {
     const root = await fixture(t);
@@ -255,13 +255,20 @@ test('an invalid receipt fails under required and optional; under off it is repo
     results[level] = await auditProject(root, { mode: 'working' });
     assert.equal(results[level].invalidEvidence.length, 1, level);
   }
-  assert.equal(results.required.pass, false);
-  assert.equal(results.optional.pass, false);
-  assert.equal(reviewedContent(results.optional).findings[0].path, '.blocks/receipts/forged-slice.json');
-  // exception-valid only inspects exception files, so a bad receipt is invisible to the gate once the rule is off.
-  assert.equal(results.off.pass, true);
-  assert.equal(reviewedContent(results.off).skipped, true);
-  assert.equal(reviewedContent(results.off).advisories[0].path, '.blocks/receipts/forged-slice.json');
+  for (const level of ['required', 'optional', 'off']) {
+    assert.equal(results[level].pass, false, level);
+    assert.equal(reviewedContent(results[level]).findings[0].path, '.blocks/receipts/forged-slice.json', level);
+  }
+});
+
+test('an exception whose recorded verification failed is invalid evidence under off', async (t) => {
+  const root = await fixture(t);
+  await commitConfig(root, { receipts: 'off' });
+  await mkdir(join(root, '.blocks/exceptions'), { recursive: true });
+  await writeFile(join(root, 'notes.md'), 'x\n');
+  await writeFile(join(root, '.blocks/exceptions/failed.json'), JSON.stringify({ schemaVersion: 1, type: 'exception', id: 'failed', reason: 'x', paths: [{ path: 'notes.md' }], verification: [{ command: 'false', pass: false, output: '' }] }));
+  const audit = await auditProject(root, { mode: 'working' });
+  assert.equal(audit.pass, false);
 });
 
 test('an invalid exception still fails under off through exception-valid', async (t) => {
@@ -271,7 +278,7 @@ test('an invalid exception still fails under off through exception-valid', async
   await writeFile(join(root, '.blocks/exceptions/bad.json'), JSON.stringify({ schemaVersion: 1, type: 'exception', id: 'bad', reason: 'x', paths: [{ path: 'missing.md' }] }));
   const audit = await auditProject(root, { mode: 'working' });
   assert.equal(audit.pass, false);
-  assert.deepEqual(audit.rules.filter((rule) => !rule.pass).map((rule) => rule.id), ['exception-valid']);
+  assert.deepEqual(audit.rules.filter((rule) => !rule.pass).map((rule) => rule.id).sort(), ['exception-valid', 'reviewed-content']);
   assert.equal(audit.invalidEvidence.length, 1);
 });
 

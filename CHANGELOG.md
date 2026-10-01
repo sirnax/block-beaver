@@ -19,7 +19,7 @@ Fixes from the first real use of 0.4.0 (#14–#18). Upgrading from 0.4.0 is `blo
 - Make the managed CI job use the repository's Node version and current action majors, and warn (`ci-node-below-minimum`) when it is below 22 (#15).
 - Resolve bare package asset imports such as `reactflow/dist/style.css` through `node_modules` and package `exports`; real misses are reported with the `asset` category and counted separately (#16).
 - Record a managed-setup exception from `install` and `upgrade`, so a fresh install passes its own audit and the first commit goes through the pre-commit hook (#17).
-- Add `enforcement.receipts` (`required`, `optional`, `off`) so a repository can adopt the structural gate before mandatory review receipts. Invalid evidence and review that went stale against the change in hand still fail under `optional`; under `off` the rule is skipped. Install and upgrade results report the active level (#18).
+- Add `enforcement.receipts` (`required`, `optional`, `off`) so a repository can adopt the structural gate before mandatory review receipts. Invalid evidence and review that went stale against the change in hand still fail under `optional`; under `off` the review requirement is skipped but invalid evidence still fails. Install and upgrade results report the active level (#18).
 - Pin CodeQL `init` and `analyze` to the same 4.38.2 commit and group their Dependabot updates so they cannot drift apart again.
 
 ## 0.4.0 — 2026-10-01

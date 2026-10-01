@@ -53,7 +53,7 @@ explicit mapping from old keys to `family:id`.
 
 - `"required"`: every changed source or manifest file needs a reviewed block receipt, and every other changed file needs a recorded exception. A config without the key behaves this way.
 - `"optional"`: unreviewed changes are listed as advisories and do not fail the audit. Invalid or forged receipts, and review that went stale against its own change, still fail. New installs start here.
-- `"off"`: the review check is skipped.
+- `"off"`: the review check is skipped, but invalid or forged evidence still fails.
 
 The structural rules (declared links, ratchets, view freshness, managed files, config and exception validity) gate commits at every level. The stricter of the base revision's level and the checked tree's level applies, so loosening the gate needs a commit that passes under the old level first. `audit` output reports the active level under `enforcement`.
 

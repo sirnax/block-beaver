@@ -45,4 +45,40 @@ Workers: Claude Sonnet 5.5 (high), one isolated worktree per slice from `main` a
 - `uninstall` records no setup exception.
 
 ## Evidence
-(filled in during integration)
+
+**Implementation:** four Claude Sonnet 5.5 (high) workers in isolated worktrees from `5c6f7bb`; their diffs were checked against each file boundary and applied by the integrator. Commits on `fix/0.5.0-first-use`: E `ad29e54`, C `9846709`, A `b09474b`, B `bb2a72d`, D `e74f5dc`, release bump `4395547`.
+
+**Full check (`npm run check`, syntax + kernel budget + `node --test`):**
+
+| Node | Result |
+| --- | --- |
+| 22.18.0 | 361 passed, 0 failed (before review fixes) |
+| 24.21.0 | 361 passed, 0 failed (before review fixes) |
+| 26.10.0 | 363 passed, 0 failed (after review fixes) |
+
+Kernel gzip 4504/6144 bytes on 24 and 26 (4511 on 22.18.0).
+
+**Cross-family review:** GPT (gpt-6.1-sol, medium, read-only) reviewed `git diff 5c6f7bb..HEAD`. No findings on stdout flushing, CI version selection, frozen legacy bytes, stricter-of-base-and-tree enforcement or the matching CodeQL SHAs. Two findings, both accepted and fixed:
+1. **P1:** with `receipts: "off"` a forged block receipt, or an exception whose recorded verification failed, left the audit passing. Under `off` the review requirement is still skipped, but invalid evidence now fails `reviewed-content`. Tests changed to require failure; one added for a failed-verification exception. (The Slice D worker had flagged this as an open owner decision and asserted the weaker behaviour.)
+2. **P2:** export-pattern precedence compared only prefix length. It now breaks ties on whole-key length as Node does, so `"./*.css": null` overrides `"./*"`. New test covers both a null and a redirecting specific pattern.
+
+**End-to-end (packed 0.5.0 tarball, disposable target outside this repo, Node 24.21.0; target at commit `4395547`):**
+- #14: `install --dry-run` on a 1,100-file project piped into `JSON.parse` parsed intact.
+- #17/#18: `install --agents claude,codex` exited 0, `complete: true`, recorded one setup exception, reported `receipts: optional` with the gate message. The first `git commit` went through the real pre-commit hook.
+- #15: with a GitHub remote, `upgrade` wrote `actions/checkout@v7`, `actions/setup-node@v7` and `node-version-file: .nvmrc`; the commit passed the hook.
+- #16: `scan --strict` exited 0 with 0 unresolved and 0 missing assets for `import 'reactflow/dist/style.css'`.
+- #18 levels: under `optional` an edit to an existing source file committed with one advisory. Tightening to `required` takes effect at once, so the `.blocks/config.json` change needs a covering exception (`block-beaver exception`). Under `required` a further source change was blocked. Loosening to `off` in the same commit as a source change was blocked (base level wins). Loosening alone with an exception was allowed, and a later source commit then passed.
+- Not exercised end to end: the P1/P2 fixes landed after this run and are covered by unit tests.
+
+**Corrections to the plan found during verification:**
+- Step 7 as written (adding an unreviewed new `src/new.ts`) is blocked by `coverage-ratchet`, a structural rule that `optional` does not relax. Edit an existing owned file instead.
+- A source change also needs `block-beaver update` first, or `view-fresh` fails. That is intended.
+- The audit-output test uses 600 untracked files, not 3,000 (3,000 took about 45 s per run); it still asserts more than 64 KB of piped output.
+- `src/project-integration.mjs` needed no change: it writes `templates/block-workflow.md`, so `init` already gets the new section.
+- The disposable target's local dependency had to be normalized to exact `0.5.0` after tarball transport so `install` would not ask the registry for the unpublished version, as in the 0.4.0 acceptance.
+
+**Console check:** Slice C's worker scanned a fixture (`reactflow/dist/style.css` present, `reactflow/dist/gone.css` and `./nope` missing) in the local console and clicked app health. Status read "2 unresolved imports (1 missing asset)"; the report heading read "Unresolved imports (2, 1 missing asset)" and listed `[asset]` and `[module]` entries; the resolving import was not listed. The worker saw one Playwright console error and did not investigate it (see open items).
+
+## Open items
+- Investigate the one console error seen during the Slice C console check.
+- Closing #10 and #11, `npm publish` and the `v0.5.0` tag push need owner authorization.

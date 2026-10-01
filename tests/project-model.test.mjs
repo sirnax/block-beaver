@@ -182,6 +182,21 @@ test('bare package assets resolve through node_modules and package exports', asy
   assert.equal(resolve('reactflow/../gone/escape.css').category, 'asset');
   assert.match(resolve('reactflow/dist/../../../outside.css').error, /Cannot resolve asset/);
 });
+test('a more specific export pattern wins over a broader one with the same prefix', async (t) => {
+  const root = await fixture(t, {
+    'src/main.ts': '',
+    'node_modules/narrow/package.json': { name: 'narrow', exports: { './*': './*', './*.css': null } },
+    'node_modules/narrow/theme.css': 'a {}',
+    'node_modules/narrow/logo.svg': '<svg/>',
+    'node_modules/redirect/package.json': { name: 'redirect', exports: { './*': './*', './*.css': './dist/*.css' } },
+    'node_modules/redirect/theme.css': 'a {}',
+  });
+  const model = await loadProjectModel(root, { paths: ['src/main.ts'], writeConfig: false });
+  const resolve = (specifier) => model.resolveImport('src/main.ts', specifier);
+  assert.deepEqual(resolve('narrow/theme.css'), { error: "Cannot resolve asset 'narrow/theme.css' (not-exported)", category: 'asset' });
+  assert.deepEqual(resolve('narrow/logo.svg'), { external: true, package: 'narrow', asset: 'narrow/logo.svg' });
+  assert.deepEqual(resolve('redirect/theme.css'), { error: "Cannot resolve asset 'redirect/theme.css' (missing)", category: 'asset' });
+});
 test('manual app roots do not disappear solely because detection does not recognize their files', async (t) => {
   const root = await fixture(t, { 'custom/main.ts': '', '.blocks/config.json': { schemaVersion: 1, apps: [{ id: 'custom', root: 'custom', source: 'config' }, { id: 'gone', root: 'gone', source: 'config' }] } });
   const result = await detectProjectApps(root, { paths: ['custom/main.ts'] });

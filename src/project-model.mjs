@@ -32,7 +32,7 @@ function exportTargets(exports, subpath) {
       if (!key.includes('*')) return false;
       const [prefix, suffix] = key.split('*');
       return subpath.startsWith(prefix) && subpath.endsWith(suffix) && subpath.length >= prefix.length + suffix.length;
-    }).sort((a, b) => b.split('*')[0].length - a.split('*')[0].length)[0];
+    }).sort((a, b) => b.split('*')[0].length - a.split('*')[0].length || b.length - a.length)[0]; // Node: longer prefix, then longer whole key
     if (!pattern) return [];
     const [prefix, suffix] = pattern.split('*');
     capture = subpath.slice(prefix.length, subpath.length - suffix.length); value = map[pattern];
