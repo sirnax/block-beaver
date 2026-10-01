@@ -2,7 +2,7 @@
 
 Source: `docs/tasks/2026-10-01-block-beaver-v0.2-design.md`, agreed 2026-10-01.
 Integration owner: primary Codex. Initial checkout: clean `main` at `8551a99`.
-Current branch: `codex/block-beaver-v0.4-design`.
+Implementation branch: `codex/block-beaver-v0.4-design` (merged). Development checkout returns to `main` after the final publication record is integrated.
 
 ## Status
 
@@ -105,3 +105,5 @@ Publication was subsequently authorized and completed as recorded below. Teacake
 The earlier readiness result covered successful CodeQL analysis; PR creation exposed its separate findings check. Publishing is held until those findings are resolved. Current owners: Sol medium provider/hook fixes, Sol xhigh ESLint cache and filesystem investigation, Claude Opus medium independent classification/review; primary integration/publication.
 
 Published: [npm block-beaver 0.4.0](https://www.npmjs.com/package/block-beaver/v/0.4.0) and [GitHub v0.4.0](https://github.com/sirnax/block-beaver/releases/tag/v0.4.0). Release commit `ffa9eef`; final artifact SHA1 `7f5d25b3806158a40044c604bd79f4b149a86877`. Public registry `latest` is 0.4.0 and exact integrity matches. Normal registry installation (no URL substitution or dependency normalization), all exports/types, custom generation, reviewed Claude/Codex onboarding, repeat/upgrade/uninstall and owner preservation passed. Teacake was not modified. All workers finished. Future test maintenance: make disposable Git-fixture cleanup resilient to transient ENOTEMPTY; the unchanged exact failed main job passed on rerun.
+
+Workspace cleanup preserves the older `codex/block-compliance` worktree and backup branch because they retain separate history. Completed implementation/design branches and Finder metadata are removed; installed development dependencies remain available.
