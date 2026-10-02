@@ -226,7 +226,7 @@ test('a .htm, .css or line-comment file uses its own marker style', async (t) =>
 });
 
 test('generated region content may not contain region or managed markers', async (t) => {
-  for (const content of ['ok\n<!-- /block-beaver:region roadmap-badge -->\nmore', '<!-- block-beaver:start -->']) {
+  for (const content of ['ok\n<!-- /block-beaver:region roadmap-badge -->\nmore', '<!-- block-beaver:start -->', 'see <!-- block-beaver:end --> inline', 'x # block-beaver:start y', '```js\nopen fence']) {
     const root = await repo(t, { 'README.md': readme() });
     const result = await plan(root, badgeLoader(content));
     assert.deepEqual(codes(result), ['generator-failed'], content);
@@ -260,6 +260,92 @@ test('a region inside or around a managed section is unsafe; one beside it leave
   const upgrade = await planManagedFiles({ root, version: '0.7.0', agents: ['codex'], manager: 'npm', operation: 'upgrade' });
   assert.deepEqual(upgrade.conflicts, []);
   assert.equal(upgrade.files.find((file) => file.path === 'AGENTS.md').content, generated, 'the managed section still verifies and the region survives');
+});
+
+// ---- Markdown code fences hold examples, never markers ----
+
+const start = '<!-- block-beaver:region roadmap-badge -->', end = '<!-- /block-beaver:region roadmap-badge -->';
+
+test('a marker example inside a Markdown code fence is not a region', async (t) => {
+  const cases = {
+    backticks: `# Docs\n\n\`\`\`md\n${start}\nexample body\n${end}\n\`\`\`\n`,
+    tildes: `# Docs\n\n~~~\n${start}\nexample body\n${end}\n~~~\n`,
+    'indented with info': `  \`\`\`\` html title="x"\n${start}\nexample body\n${end}\n\`\`\`\nstill fenced\n  \`\`\`\`\n`,
+    'tilde fence ignores a backtick close': `~~~~\n${start}\n\`\`\`\n${end}\n~~~~\n`,
+    unterminated: `intro\n\`\`\`\n${start}\nexample body\n${end}\n`,
+  };
+  for (const [name, text] of Object.entries(cases)) {
+    const root = await repo(t, { 'README.md': text });
+    const result = await plan(root, badgeLoader());
+    assert.deepEqual(codes(result), ['region-missing'], name);
+    assert.deepEqual((await applyGeneration(root, result)).written, [], name);
+    assert.equal(await readFile(join(root, 'README.md'), 'utf8'), text, name);
+  }
+});
+
+test('a fenced marker example beside a real region leaves the example bytes intact', async (t) => {
+  const example = `\`\`\`md\n${start}\nexample body\n${end}\n\`\`\`\n`;
+  for (const text of [`# Docs\n\n${example}\n${readme()}`, `${readme()}\n${example}`, `# Docs\n${start}\nold\n${example}${end}\n`]) {
+    const root = await repo(t, { 'README.md': text });
+    const result = await plan(root, badgeLoader('[badge](./docs/ROADMAP.md)'));
+    if (text.includes('old\n```')) {
+      // A fence inside the real region is just body content, replaced with the rest of it.
+      assert.deepEqual(result.diagnostics, []);
+      await applyGeneration(root, result);
+      assert.equal(await readFile(join(root, 'README.md'), 'utf8'), `# Docs\n${start}\n[badge](./docs/ROADMAP.md)\n${end}\n`);
+      continue;
+    }
+    assert.deepEqual(result.diagnostics, []);
+    assert.deepEqual((await applyGeneration(root, result)).written, ['README.md']);
+    assert.equal(await readFile(join(root, 'README.md'), 'utf8'), text.replace('old badge', '[badge](./docs/ROADMAP.md)'));
+  }
+});
+
+test('fences only matter in Markdown: a .ts or .css file keeps whole-line marker matching', async (t) => {
+  const ts = 'const doc = `\n```\n`;\n// block-beaver:region routes\nold\n// /block-beaver:region routes\n';
+  const css = '/*\n```\n*/\n/* block-beaver:region tokens */\nold\n/* /block-beaver:region tokens */\n';
+  const root = await repo(t, { 'src/routes.ts': ts, 'site/theme.css': css });
+  const loader = fakeLoader({
+    generators: [custom('gen/t.ts', { out: 'src/routes.ts', region: 'routes' }), custom('gen/c.ts', { out: 'site/theme.css', region: 'tokens' })],
+    outputs: { 'custom:gen/t.ts': 'new', 'custom:gen/c.ts': 'new' },
+  });
+  const result = await plan(root, loader);
+  assert.deepEqual(result.diagnostics, []);
+  await applyGeneration(root, result);
+  assert.equal(await readFile(join(root, 'src/routes.ts'), 'utf8'), ts.replace('\nold\n', '\nnew\n'));
+  assert.equal(await readFile(join(root, 'site/theme.css'), 'utf8'), css.replace('\nold\n', '\nnew\n'));
+});
+
+test('generated Markdown with a closed fence is accepted', async (t) => {
+  const root = await repo(t, { 'README.md': readme() });
+  const result = await plan(root, badgeLoader('~~~sh\nnpm test\n~~~'));
+  assert.deepEqual(result.diagnostics, []);
+  await applyGeneration(root, result);
+  assert.equal((await plan(root, badgeLoader('~~~sh\nnpm test\n~~~', { cache: false }))).outputs[0].status, 'fresh');
+});
+
+// ---- managed tokens follow the managed parser: exact strings, anywhere ----
+
+test('a prefixed managed start or a non-exact end still puts a region inside managed content', async (t) => {
+  const { planManagedFiles } = await import('../src/managed-files.mjs');
+  const region = `${start}\nx\n${end}\n`;
+  const cases = {
+    'prefixed start': `# Agents\nprefix <!-- block-beaver:start -->\n${region}<!-- block-beaver:end -->\n`,
+    'partial end': `# Agents\n<!-- block-beaver:start -->\nbody\n<!-- block-beaver:end example -->\n${region}<!-- block-beaver:end -->\n`,
+    'inline end inside the region': `# Agents\n${start}\nsee <!-- block-beaver:end --> here\n${end}\n`,
+    'fenced start before the region': `# Agents\n\`\`\`\n<!-- block-beaver:start -->\n\`\`\`\n${region}<!-- block-beaver:end -->\n`,
+  };
+  for (const [name, text] of Object.entries(cases)) {
+    const root = await repo(t, { 'AGENTS.md': text, 'package.json': '{"name":"x"}\n' });
+    const result = await plan(root, fakeLoader({ generators: [custom('gen/badge.ts', { out: 'AGENTS.md', region: 'roadmap-badge' })], outputs: { 'custom:gen/badge.ts': 'new' } }));
+    assert.deepEqual(codes(result), ['output-unsafe'], name);
+    assert.deepEqual((await applyGeneration(root, result)).written, [], name);
+    if (name === 'inline end inside the region') continue;
+    // The managed parser agrees: a forced upgrade replaces the whole span, region included.
+    const upgrade = await planManagedFiles({ root, version: '0.7.0', agents: ['codex'], manager: 'npm', operation: 'upgrade', force: true });
+    const agents = upgrade.files.find((file) => file.path === 'AGENTS.md');
+    assert.ok(agents && !agents.content.includes(start), name);
+  }
 });
 
 // ---- the real loader, end to end ----
