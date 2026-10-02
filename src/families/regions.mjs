@@ -4,12 +4,22 @@ import { posix } from 'node:path';
  * Region outputs: a generator owns the lines between two whole-line markers in a hand-edited
  * file, written in that file's comment style. Region markers never match the managed
  * `block-beaver:start/end` sections, and a region that overlaps a managed section is unsafe.
+ * In Markdown, lines inside fenced code blocks are examples and never count as markers.
  */
 export const regionIdPattern = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
 const lineComment = new Set(['.js', '.mjs', '.cjs', '.jsx', '.ts', '.mts', '.cts', '.tsx']);
 const htmlComment = new Set(['.md', '.html', '.htm']);
 const anyRegionMarker = /^\s*(?:<!--|\/\/|\/\*)\s*\/?block-beaver:region(?:\s|$)/;
-const managedMarker = /^\s*(?:<!--|#)\s*block-beaver:(start|end)(?:\s|-->|$)/;
+// The exact tokens the managed-section parsers (managed-files.mjs sectionBounds, project-integration.mjs
+// managedSection, the `#` form for ignore and hook files) recognise anywhere in a file, as [start, end].
+const managedPairs = [['<!-- block-beaver:start -->', '<!-- block-beaver:end -->'], ['# block-beaver:start', '# block-beaver:end']];
+const hasManagedToken = (text) => managedPairs.some((pair) => pair.some((token) => text.includes(token)));
+/** A span overlaps managed content when it holds a token or starts while a managed section is open. */
+function overlapsManaged(text, from, to) {
+  if (hasManagedToken(text.slice(from, to))) return true;
+  const before = text.slice(0, from);
+  return managedPairs.some(([start, end]) => before.lastIndexOf(start) > before.lastIndexOf(end));
+}
 
 export const regionStyles = '.md .html .htm .js .mjs .cjs .jsx .ts .mts .cts .tsx .css';
 export function regionStyle(path) {
@@ -26,24 +36,41 @@ const lf = (text) => text.replace(/\r\n?/g, '\n');
 const linesOf = (text) => text.match(/[^\n]*\n|[^\n]+$/g) ?? [];
 /** A region body compares and hashes with LF endings and no final newline. */
 const canonical = (text) => lf(text).replace(/\n$/, '');
+const fence = /^\s*(`{3,}|~{3,})(.*)$/;
+/** CommonMark-style fences: ``` or ~~~ with an info string, closed by a bare run of the same character at least as long; an open fence runs to the end. */
+function fencedLines(lines) {
+  const fenced = new Set();
+  let open = null;
+  lines.forEach((line, index) => {
+    const text = line.replace(/\r?\n$/, '');
+    if (open) {
+      fenced.add(index);
+      const close = text.match(/^\s*(`{3,}|~{3,})\s*$/);
+      if (close && close[1][0] === open[0] && close[1].length >= open.length) open = null;
+      return;
+    }
+    const match = text.match(fence);
+    if (match && !(match[1][0] === '`' && match[2].includes('`'))) { open = match[1]; fenced.add(index); }
+  });
+  return { fenced, open: open !== null };
+}
+const markdown = (out) => posix.extname(out).toLowerCase() === '.md';
 
 function locate(text, out, id) {
   const lines = linesOf(text), { start, end } = regionMarkers(regionStyle(out), id);
   const markers = `${start} … ${end}`;
+  const { fenced } = markdown(out) ? fencedLines(lines) : { fenced: new Set() };
   const starts = [], ends = [];
-  lines.forEach((line, index) => { if (line.trim() === start) starts.push(index); else if (line.trim() === end) ends.push(index); });
+  lines.forEach((line, index) => { if (fenced.has(index)) return; if (line.trim() === start) starts.push(index); else if (line.trim() === end) ends.push(index); });
   if (!starts.length || !ends.length) return { code: 'region-missing', message: `${out} has no ${starts.length ? 'end' : 'start'} marker for region ${id}; add the whole lines ${markers}` };
   if (starts.length > 1 || ends.length > 1) return { code: 'region-duplicate', message: `${out} marks region ${id} more than once; keep exactly one ${markers} pair` };
   const [first] = starts, [last] = ends;
   if (last < first) return { code: 'region-duplicate', message: `${out} has the end marker of region ${id} before its start marker` };
-  if (lines.slice(first + 1, last).some((line) => anyRegionMarker.test(line))) return { code: 'region-duplicate', message: `${out} nests another region marker inside region ${id}` };
+  if (lines.slice(first + 1, last).some((line, offset) => !fenced.has(first + 1 + offset) && anyRegionMarker.test(line))) return { code: 'region-duplicate', message: `${out} nests another region marker inside region ${id}` };
   // Managed content is rewritten by init and upgrade, so a region may neither sit inside it nor wrap it.
-  let inside = false;
-  for (const line of lines.slice(0, first)) {
-    const managed = line.match(managedMarker)?.[1];
-    if (managed) inside = managed === 'start';
-  }
-  if (inside || lines.slice(first + 1, last).some((line) => managedMarker.test(line))) return { code: 'output-unsafe', message: `Region ${id} of ${out} overlaps a managed block-beaver:start/end section; move its markers outside that section` };
+  // Fences do not hide managed tokens: the managed parsers match them anywhere.
+  const from = lines.slice(0, first).join('').length, to = from + lines.slice(first, last + 1).join('').length;
+  if (overlapsManaged(text, from, to)) return { code: 'output-unsafe', message: `Region ${id} of ${out} overlaps a managed block-beaver:start/end section; move its markers outside that section` };
   return { lines, first, last };
 }
 
@@ -59,7 +86,9 @@ export function readRegion(text, claim) {
 export function regionBody(claim, content) {
   if (typeof content !== 'string') return { problem: { code: 'generator-failed', message: `Output ${claim.out} region ${claim.region} must be a string` } };
   const body = canonical(content);
-  if (body.split('\n').some((line) => anyRegionMarker.test(line) || managedMarker.test(line))) return { problem: { code: 'generator-failed', message: `Region ${claim.region} of ${claim.out} must not contain block-beaver region or managed markers` } };
+  if (hasManagedToken(body) || body.split('\n').some((line) => anyRegionMarker.test(line))) return { problem: { code: 'generator-failed', message: `Region ${claim.region} of ${claim.out} must not contain block-beaver region or managed markers` } };
+  // An unclosed fence would swallow the end marker on the next read.
+  if (markdown(claim.out) && fencedLines(linesOf(body)).open) return { problem: { code: 'generator-failed', message: `Region ${claim.region} of ${claim.out} must close every code fence it opens` } };
   return { body };
 }
 
