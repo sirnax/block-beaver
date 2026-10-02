@@ -64,3 +64,35 @@ test('install --dry-run output larger than the pipe buffer is not truncated', as
   assert.doesNotThrow(() => JSON.parse(result.stdout), 'install stdout must be one complete JSON document');
   assert.equal(JSON.parse(result.stdout).dryRun, true);
 });
+
+test('audit --format summary prints one line on pass and per-error lines on failure', async (t) => {
+  const root = await fixture(t, 'block-beaver-cli-output-summary-');
+  await mkdir(join(root, '.blocks'));
+  await writeFile(join(root, '.blocks/config.json'), JSON.stringify({ schemaVersion: 1, apps: [], enforcement: { receipts: 'optional' } }));
+  git(root, ['add', '-A']);
+  git(root, ['commit', '-q', '-m', 'config']);
+  await writeFile(join(root, 'src/more.mjs'), 'export const more = 1;\n');
+  git(root, ['add', '-A']);
+  const pass = run(root, ['audit', '--staged', '--format', 'summary']);
+  assert.equal(pass.status, 0, pass.stdout + pass.stderr);
+  assert.equal(pass.stdout, 'block-beaver audit: pass (1 files, 0 errors)\n');
+  assert.equal(JSON.parse(run(root, ['audit', '--staged', '--format', 'json']).stdout).pass, true);
+  assert.equal(JSON.parse(run(root, ['audit', '--staged']).stdout).pass, true);
+
+  await writeFile(join(root, '.blocks/config.json'), JSON.stringify({ schemaVersion: 1, apps: [], enforcement: { receipts: 'required' } }));
+  git(root, ['add', '-A']);
+  git(root, ['commit', '-q', '-m', 'required']);
+  await writeFile(join(root, 'src/direct.mjs'), 'export const direct = 1;\n');
+  git(root, ['add', '-A']);
+  const fail = run(root, ['audit', '--staged', '--format', 'summary']);
+  assert.equal(fail.status, 2, fail.stderr);
+  assert.deepEqual(fail.stdout.trimEnd().split('\n'), ['block-beaver audit: fail (1 files, 1 error)', 'reviewed-content · src/direct.mjs · unreviewed-source - fix: review it in a block slice (plan, check, review, approve) or record an exception with block-beaver exception']);
+});
+
+test('audit rejects an unknown format', async (t) => {
+  const root = await fixture(t, 'block-beaver-cli-output-format-');
+  const result = run(root, ['audit', '--format', 'xml']);
+  assert.equal(result.status, 1);
+  assert.match(result.stderr, /Unknown audit format/);
+  assert.equal(result.stdout, '');
+});

@@ -43,7 +43,7 @@ const exit = (code) => new Promise(() => { process.exitCode = code; process.stdo
 try {
   if (option('parseError')) throw new Error(option('parseError'));
   if (!command || command === 'help') {
-    process.stdout.write('Project integration\n  start [--root PATH] [--editor all|agents|claude|cursor|copilot] [--port 4175]\n  init [--root PATH] [--editor all|agents|claude|cursor|copilot]\n  update [--root PATH]\n  detect [--root PATH] [--write]\n  view --format module --out PATH [--root PATH]\n  install [--agents claude,codex,cursor,copilot] [--dry-run]\n  upgrade [--dry-run] [--force]\n  baseline --lower [--root PATH] [--dry-run]\n  uninstall [--dry-run] [--remove-data --yes]\n  audit [--staged | --base SHA] [--strict]\n  integrate ROADMAP BLOCK\n  exception ID --reason TEXT --paths PATHS --check COMMAND\n\n');
+    process.stdout.write('Project integration\n  start [--root PATH] [--editor all|agents|claude|cursor|copilot] [--port 4175]\n  init [--root PATH] [--editor all|agents|claude|cursor|copilot]\n  update [--root PATH]\n  detect [--root PATH] [--write]\n  view --format module --out PATH [--root PATH]\n  install [--agents claude,codex,cursor,copilot] [--dry-run]\n  upgrade [--dry-run] [--force]\n  baseline --lower [--root PATH] [--dry-run]\n  uninstall [--dry-run] [--remove-data --yes]\n  audit [--staged | --base SHA] [--strict] [--format json|summary]\n  integrate ROADMAP BLOCK\n  exception ID --reason TEXT --paths PATHS --check COMMAND\n\n');
     process.stdout.write('Block Beaver\n  scan [--root PATH] [--full true]\n  inspect ID [--root PATH]\n  search QUERY [--root PATH] [--kind KIND]\n  kit list|describe|validate|compose|create [ARGS] [--json JSON] [--dry-run] [--root PATH]\n  gen [--check] [--label TEXT]\n  history import FILE --map MAPPING.json\n  agent --exec PATH [--scope file1,file2] [--create new1,new2] [--root PATH]\n  plan ROADMAP_ID [--scope file1,file2] [--create new1,new2] [--root PATH] [--title TITLE]\n  propose ROADMAP_ID PROPOSAL.json [--root PATH]\n  repair ROADMAP_ID SLICE_ID PROPOSAL.json [--root PATH]\n  check ROADMAP_ID SLICE_ID [--root PATH]\n  review ROADMAP_ID SLICE_ID [--root PATH]\n  approve ROADMAP_ID SLICE_ID [--root PATH]\n  reject ROADMAP_ID SLICE_ID --reason TEXT [--root PATH]\n  resume ROADMAP_ID [--root PATH]\n');
     await exit(0);
   }
@@ -64,9 +64,11 @@ try {
   }
   if (command === 'audit') {
     if (option('staged') && option('base')) throw new Error('Choose either --staged or --base.');
+    const format = option('format', 'json');
+    if (!['json', 'summary'].includes(format)) throw new Error('Unknown audit format; use --format json or --format summary.');
     const base = option('base') === 'merge-base' ? (await git(root, ['merge-base', 'HEAD', process.env.BLOCK_BEAVER_BASE_REF || 'origin/main'])).trim() : option('base');
     const result = await auditProject(root, { mode: base ? 'range' : option('staged') ? 'staged' : 'working', base, strict: option('strict', false) });
-    print(result);
+    if (format === 'summary') process.stdout.write((await import('./audit-format.mjs')).formatAuditSummary(result)); else print(result);
     await exit(result.pass ? 0 : 2);
   }
   if (command === 'integrate') {

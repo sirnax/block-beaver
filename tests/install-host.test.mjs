@@ -14,8 +14,8 @@ process.env.GIT_CONFIG_GLOBAL = '/dev/null';
 process.env.GIT_CONFIG_NOSYSTEM = '1';
 
 const version = '0.3.0';
-const shell = '# block-beaver:start\n# block-beaver:hash 39fb7b5452f0485d4ae176426997d2d0d4a860f5f573a11a0b0f6e652abcaab7\nnpx --no-install block-beaver audit --staged --root . || exit $?\n# block-beaver:end\n';
-const lefthookCommand = '      run: npx --no-install block-beaver audit --staged --root .\n';
+const shell = '# block-beaver:start\n# block-beaver:hash 6102b56f70608dbe9204d8b6c38c92726eb3100d6d1c47068ddf37499f61e34d\nnpx --no-install block-beaver audit --staged --format summary --root . || exit $?\n# block-beaver:end\n';
+const lefthookCommand = '      run: npx --no-install block-beaver audit --staged --format summary --root .\n';
 const withoutHashes = (text) => text.replace(/^[ \t]*# block-beaver:hash [a-f0-9]{64}\n/gm, '');
 
 async function repo(t, files = {}, { remote } = {}) {
@@ -249,7 +249,7 @@ test('GitHub gets a dedicated managed workflow that leaves other workflows untou
   assert.match(workflow.content, /pull_request/);
   assert.match(workflow.content, /fetch-depth: 0/);
   assert.match(workflow.content, /run: npm ci\n/);
-  assert.match(workflow.content, /run: npx --no-install block-beaver audit --base merge-base --strict\n/);
+  assert.match(workflow.content, /run: npx --no-install block-beaver audit --base merge-base --strict --format summary\n/);
   assert.match(workflow.content, /BASE_REF: \$\{\{ github\.base_ref \}\}/);
   assert.ok(!workflow.content.split('\n').some((line) => /run:/.test(line) && line.includes('${{')), 'Branch names reach scripts through the environment, never by interpolation.');
   await apply(root, result);
@@ -289,7 +289,7 @@ test('GitLab gets a managed job file and a marked include that preserve the owne
   const job = file(result, '.blocks/ci/gitlab.yml');
   assert.ok(job.content.startsWith('# block-beaver:managed-ci\n'));
   assert.match(job.content, /GIT_DEPTH: '0'/);
-  assert.match(job.content, /npx --no-install block-beaver audit --base merge-base --strict/);
+  assert.match(job.content, /npx --no-install block-beaver audit --base merge-base --strict --format summary\n/);
   await apply(root, result);
   assert.deepEqual((await plan(root)).files, []);
   const removal = await plan(root, { operation: 'uninstall' });
@@ -606,13 +606,13 @@ test('CI regenerates ignored view artifacts after dependency install and before 
     for (const path of ['.github/workflows/block-beaver.yml', '.blocks/ci/gitlab.yml']) {
       const ci = file(result, path).content;
       assert.ok(ci.includes(dependencyInstall) && ci.indexOf(`${local} update --root .`) > ci.indexOf(dependencyInstall), `${manager}: ${path}`);
-      assert.ok(ci.indexOf(`${local} audit --base merge-base --strict`) > ci.indexOf(`${local} update --root .`), `${manager}: ${path}`);
+      assert.ok(ci.indexOf(`${local} audit --base merge-base --strict --format summary`) > ci.indexOf(`${local} update --root .`), `${manager}: ${path}`);
     }
-    assert.ok(hook(result).content.includes(`${local} audit --staged --root .`), manager);
+    assert.ok(hook(result).content.includes(`${local} audit --staged --format summary --root .`), manager);
     const huskyRoot = await repo(t, { [lock]: '', '.husky/pre-commit': 'echo owner\n' });
-    assert.ok(file(await plan(huskyRoot), '.husky/pre-commit').content.includes(`${local} audit --staged --root .`), manager);
+    assert.ok(file(await plan(huskyRoot), '.husky/pre-commit').content.includes(`${local} audit --staged --format summary --root .`), manager);
     const lefthookRoot = await repo(t, { [lock]: '', 'lefthook.yml': 'pre-commit:\n  commands:\n    lint:\n      run: echo owner\n' });
-    assert.ok(file(await plan(lefthookRoot), 'lefthook.yml').content.includes(`run: ${local} audit --staged --root .`), manager);
+    assert.ok(file(await plan(lefthookRoot), 'lefthook.yml').content.includes(`run: ${local} audit --staged --format summary --root .`), manager);
   }
 });
 
