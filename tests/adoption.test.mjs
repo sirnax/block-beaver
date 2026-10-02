@@ -33,7 +33,7 @@ export default defineFamily({
   links: [{ field: 'node', to: 'node', kind: 'runs-on' }],
   generators: ['registry', 'index'],
 });\n`;
-const checksModule = `export default (ctx) => ctx.all('task')
+const checksModule = `export default (manifests, ctx) => ctx.all('task')
   .filter((task) => !ctx.all('model').some((model) => model.kinds.includes(task.kind)))
   .map((task) => ({ block: 'task:' + task.id, field: '$.kind', code: 'task-kind-unserved', message: 'Task ' + task.id + ' has kind ' + task.kind + ' that no model serves' }));\n`;
 // Imports the generated model registry: the first pass sees nothing, a later pass settles.

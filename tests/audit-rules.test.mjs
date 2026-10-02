@@ -383,7 +383,7 @@ test('family-valid is its own rule that carries set-wide findings with file path
   const ctx = context();
   ctx.graph.familyDiagnostics = [{ rule: 'family-valid', code: 'family-check-all-failed', severity: 'error', message: 'Need at least one widget', file: 'meta/unit.family.ts' }, { rule: 'family-valid', severity: 'warning', message: 'ignored warning', file: 'x.ts' }];
   const rules = evaluateAuditRules(ctx);
-  assert.deepEqual(rules.find((entry) => entry.id === 'family-valid').findings, [{ path: 'meta/unit.family.ts', message: 'Need at least one widget' }]);
+  assert.deepEqual(rules.find((entry) => entry.id === 'family-valid').findings, [{ path: 'meta/unit.family.ts', message: 'Need at least one widget', code: 'family-check-all-failed' }]);
   assert.equal(rules.find((entry) => entry.id === 'manifest-valid').pass, true);
   assert.equal(result(context(), 'family-valid').pass, true);
 });
@@ -398,7 +398,7 @@ test('public audit and gen --check both report set-wide checks under family-vali
 export default defineFamily({ id: 'unit', fields: s.object({ tag: s.string() }), implementation: ['none'], checkAll: (units) => { const seen = new Set(), issues = []; for (const unit of units) { if (seen.has(unit.tag)) issues.push({ block: unit.id, field: '$.tag', message: 'Duplicate tag ' + unit.tag, code: 'tag-unique' }); seen.add(unit.tag); } return issues; } });`);
   await put('meta/part.family.ts', `import { defineFamily, s } from 'block-beaver/kernel';
 export default defineFamily({ id: 'part', fields: s.object({}), implementation: ['none'], checkAll: (parts) => parts.length ? [] : [{ message: 'At least one part is required', code: 'part-required' }] });`);
-  await put('meta/coverage.check.ts', `export default (ctx) => ctx.all('unit').filter((unit) => !ctx.get('part:' + unit.id)).map((unit) => ({ block: 'unit:' + unit.id, message: 'Unit ' + unit.id + ' has no part', code: 'part-coverage' }));`);
+  await put('meta/coverage.check.ts', `export default (manifests, ctx) => ctx.all('unit').filter((unit) => !ctx.get('part:' + unit.id)).map((unit) => ({ block: 'unit:' + unit.id, message: 'Unit ' + unit.id + ' has no part', code: 'part-coverage' }));`);
   await put('meta/units/one.ts', unit('one', 'same'));
   await put('meta/units/two.ts', unit('two', 'same'));
   const audit = await auditProject(root);

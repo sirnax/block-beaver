@@ -536,7 +536,7 @@ test('family checkAll uniqueness names each offending manifest file and keeps th
 });
 
 test('config checks modules see every family, and changing one invalidates the loader cache', async (t) => {
-  const checks = (body) => `export default (ctx) => { ${body} };\n`;
+  const checks = (body) => `export default (manifests, ctx) => { ${body} };\n`;
   const coverage = checks(`if (!Object.isFrozen(ctx)) throw Error('mutable'); const have = new Set(ctx.all('gadget').map((m) => m.id)); return ctx.all('widget').filter((m) => !have.has(m.id)).map((m) => ({ block: 'widget:' + m.id, message: 'Widget ' + m.id + ' has no gadget', code: 'gadget-coverage' }));`);
   const data = await fixture(t, { [gadget.contract]: gadgetContract, 'checks/coverage.ts': coverage }, configFor({ families: [family, gadget], checks: ['checks/coverage.ts'] }));
   const first = await loadFamilies(data);
@@ -576,4 +576,15 @@ test('contracts reject a non-function checkAll and configs without set-wide chec
   const plain = await loadFamilies(await fixture(t));
   assert.deepEqual(plain.diagnostics, []);
   assert.equal(plain.families[0].hasCheckAll, false);
+});
+
+test('a checks-only config still loads its check modules, so a missing module is reported', async (t) => {
+  const config = configFor({ families: [], checks: ['checks/missing.ts'] });
+  const loaded = await loadFamilies(await fixture(t, {}, config));
+  assert.ok(loaded.diagnostics.some((item) => item.rule === 'family-valid' && item.file === 'checks/missing.ts'), JSON.stringify(loaded.diagnostics));
+});
+
+test('map.bindings names must be strings', () => {
+  const parsed = parseFamiliesConfig({ families: [family], map: { bindings: [{ family: 'widget', call: true, registry: 'units' }, { family: 'widget', call: 'render', registry: ['units'] }] } });
+  assert.deepEqual(parsed.diagnostics.map((item) => item.field), ['$.map.bindings[0]', '$.map.bindings[1]']);
 });

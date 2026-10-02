@@ -554,6 +554,23 @@ export default defineGenerator({ out: 'generated/count.json', inputs: ['catalog/
   assert.equal(again.passes, 1);
 });
 
+test('a generator that settles on the third write is stable, and gen --check agrees', async (t) => {
+  const { generateProject } = await import('../src/families/commands.mjs');
+  const root = await realProject(t, {
+    'generators/settle.ts': `import { defineGenerator } from 'block-beaver/kernel';
+import { readFileSync } from 'node:fs';
+const file = new URL('../generated/settle.json', import.meta.url);
+let n = 0;
+try { n = JSON.parse(readFileSync(file, 'utf8')).n; } catch {}
+export default defineGenerator({ out: 'generated/settle.json', inputs: ['catalog/*.entry.ts'], cache: false, generate() { return JSON.stringify({ n: Math.min(n + 1, 3) }); } });\n`,
+  });
+  const result = await generateProject(root, { now: NOW });
+  assert.equal(result.ok, true, JSON.stringify(result.diagnostics));
+  assert.equal(result.passes, 4);
+  assert.equal(result.diagnostics.some((item) => item.code === 'generator-unstable'), false);
+  assert.equal((await generateProject(root, { check: true, now: NOW })).ok, true);
+});
+
 test('a generator that depends on its own previous output is reported as generator-unstable after three passes', async (t) => {
   const { generateProject } = await import('../src/families/commands.mjs');
   const root = await realProject(t, {
@@ -566,7 +583,7 @@ export default defineGenerator({ out: 'generated/osc.json', inputs: ['catalog/*.
   });
   const result = await generateProject(root, { now: NOW });
   assert.equal(result.ok, false);
-  assert.equal(result.passes, 3);
+  assert.equal(result.passes, 4, 'Three writing passes plus one read-only verification plan.');
   const unstable = result.diagnostics.find((item) => item.code === 'generator-unstable');
   assert.ok(unstable, JSON.stringify(result.diagnostics));
   assert.equal(unstable.rule, 'family-drift');

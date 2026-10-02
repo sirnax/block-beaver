@@ -74,7 +74,12 @@ export async function generateProject(inputRoot, { check = false, label, dryRun 
     applied.diagnostics = [...applied.diagnostics, ...next.diagnostics.filter((item) => !applied.diagnostics.some((seen) => JSON.stringify(seen) === JSON.stringify(item)))];
   }
   if (!hasError(applied.diagnostics) && changedOutputs(latest).length) {
-    applied.diagnostics = [...applied.diagnostics, generatorUnstable(changedOutputs(latest), passes)];
+    // The cap was reached with writes still happening; one read-only plan decides whether they settled.
+    const verifyGraph = graph ? ready.graph : await projectGraph(root);
+    const verify = await planGeneration({ root, config: ready.config, graph: verifyGraph, paths: graph || paths ? ready.paths : graphPaths(verifyGraph), label: label ?? null, now,
+      extraOutputs: extraOutputs ?? [], loadFamilies });
+    passes += 1;
+    if (changedOutputs(verify).length) applied.diagnostics = [...applied.diagnostics, generatorUnstable(changedOutputs(verify), passes)];
   }
   if (!hasError(applied.diagnostics) && extraOutputs === undefined && viewOutputs.length) {
     // Registries add source files and history changes the view. Render exports

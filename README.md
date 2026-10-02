@@ -152,7 +152,7 @@ A project that already has hand-built typed blocks (manifests, codegen and a map
 - **Data-only kinds.** `dataKinds: ['plan']` declares extra data-only implementation kinds. They must also be listed in `implementation`. Unlike `module`, they are accepted in runtime mode, and they never create an `implemented-by` boundary.
 - **Set-wide checks.**
   - A contract's `checkAll(manifests, { families, get, all })` sees every valid manifest of its family. `all(familyId)` returns another family's manifests.
-  - Config `checks: ['path/to/checks.ts']` names modules whose default export `({ families, get, all })` runs after every family loads.
+  - Config `checks: ['path/to/checks.ts']` names modules whose default export `(manifests, { families, get, all })` runs after every family loads, with `manifests` spanning every family.
   - Both return `{ message, block?, field?, code? }` issues. Within `checkAll` a `block` is a bare id; config modules use the full `family:id` ref.
   - Findings report under the `family-valid` rule with the manifest's file, in both `audit` and `gen --check`.
 - **Excluding files from a family.** Per-family `exclude: [glob]` removes files from a family's manifests and from `family-unclaimed`. The config `ignore` list also applies to manifest discovery. A file under a `fixtures`, `__fixtures__`, `test` or `tests` folder that matches a family's suffix but no family claims is reported as a warning, not an error.

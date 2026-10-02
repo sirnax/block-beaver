@@ -40,7 +40,8 @@ export function evaluateAuditRules({ graph, config, configPresent = config !== n
   for (const diagnostic of graph.familyDiagnostics || []) {
     if (diagnostic.severity && diagnostic.severity !== 'error') continue;
     const target = diagnostic.rule === 'config-valid' ? configFindings : diagnostic.rule === 'family-drift' ? familyFindings : diagnostic.rule === 'family-valid' ? validFindings : manifestFindings;
-    target.push(finding(diagnostic.message, diagnostic.file, diagnostic.remediation));
+    // Keep the stable codes and field path that `gen --check` reports, so audit output is just as precise.
+    target.push({ ...finding(diagnostic.message, diagnostic.file, diagnostic.remediation), ...Object.fromEntries(['code', 'checkCode', 'field', 'family', 'block'].filter((key) => typeof diagnostic[key] === 'string').map((key) => [key, diagnostic[key]])) });
   }
   const manifestNodes = manifests.filter((entry) => object(entry.value)).map(({ value, path }) => ({ id: `block:local:${value.id}`, kind: 'block', family: 'local', manifest: value, path }));
   const validationGraph = { ...graph, nodes: graph.nodes.filter((node) => node.kind !== 'block' || node.family !== 'local').concat(manifestNodes, paths.filter((path) => !graph.nodes.some((node) => node.id === `file:${path}`)).map((path) => ({ id: `file:${path}`, kind: 'file', path }))) };

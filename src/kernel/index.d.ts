@@ -39,6 +39,8 @@ export declare function isSchema(value:unknown): value is Node;
 export declare function assertSchema(value:unknown): Node;
 export declare function validate<const S extends Node>(schema:S,value:unknown): Result<Infer<S>>;
 export declare function coerce<const S extends Node>(schema:S,value:unknown): Result<Infer<S>>;
+/** A loaded manifest as checks and generators see it: any declared implementation arm. */
+export type LoadedManifest = Omit<CoreManifest,'implementation'> & {implementation:{kind:string;module?:string} & Record<string,unknown>} & Record<string,unknown>;
 export type CoreManifest = {id:string;family:string;version:number|string;name:string;description:string;rationale:string;implementation:{kind:'module';module:string}|{kind:'none'};files?:readonly string[]};
 type ObjectNode = Extract<Node,{type:'object'}>;
 export type FamilyDefinition = {id:string;fields:ObjectNode;implementation:readonly string[];
@@ -48,15 +50,15 @@ export type FamilyDefinition = {id:string;fields:ObjectNode;implementation:reado
   implementationFields?:Readonly<Record<string,ObjectNode>>;
   links?:readonly {field:string;to:string|readonly string[];kind:string}[];generators?:readonly ('registry'|'index'|'history')[];
   map?:{title?:string;blurb?:string};scaffold?:{files:readonly {path:string;template:string}[];manualSteps?:readonly string[]};
-  check?:(manifest:CoreManifest & Record<string,unknown>,ctx:{family:string;get(ref:string):unknown}) => readonly {path:string;message:string;code?:string}[] | void;
-  checkAll?:(manifests:readonly (CoreManifest & Record<string,unknown>)[],ctx:SetCheckContext) => SetCheckIssues | Promise<SetCheckIssues>;};
-/** Context for a family's `checkAll` and for config-level `checks` modules (default export `(ctx) => issues`). */
-export type SetCheckContext = {families:readonly {id:string}[];get(ref:string):unknown;all(familyId:string):readonly (CoreManifest & Record<string,unknown>)[]};
+  check?:(manifest:LoadedManifest,ctx:{family:string;get(ref:string):unknown}) => readonly {path:string;message:string;code?:string}[] | void;
+  checkAll?:(manifests:readonly LoadedManifest[],ctx:SetCheckContext) => SetCheckIssues | Promise<SetCheckIssues>;};
+/** Context for a family's `checkAll` and for config-level `checks` modules (default export `(manifests, ctx) => issues`, where `manifests` spans every family). */
+export type SetCheckContext = {families:readonly {id:string}[];get(ref:string):unknown;all(familyId:string):readonly LoadedManifest[]};
 export type SetCheckIssues = readonly {message:string;block?:string;field?:string;path?:string;code?:string}[] | void;
 type ImplementationOf<F extends FamilyDefinition> = F['implementation'][number] extends infer K ? K extends string
   ? {kind:K} & (K extends 'module' ? {module:string} : unknown) & (F['implementationFields'] extends infer R ? K extends keyof R ? R[K] extends ObjectNode ? Infer<R[K]> : unknown : unknown : unknown) : never : never;
 export type ManifestOf<F extends FamilyDefinition> = Omit<CoreManifest,'implementation'> & {family:F['id'];implementation:ImplementationOf<F>} & Infer<F['fields']>;
-export type GeneratorContext = {config:unknown;families:readonly unknown[];manifests(familyId:string):readonly CoreManifest[];blocks():readonly CoreManifest[];graph:unknown;resolve(from:string,spec:string):unknown;label:string|null};
+export type GeneratorContext = {config:unknown;families:readonly unknown[];manifests(familyId:string):readonly LoadedManifest[];blocks():readonly LoadedManifest[];graph:unknown;resolve(from:string,spec:string):unknown;label:string|null};
 export type GeneratorDefinition = {out:string;inputs:readonly string[];cache?:boolean;generate(ctx:GeneratorContext):string|Promise<string>};
 export declare function defineFamily<const F extends FamilyDefinition>(definition:F): DeepReadonly<F>;
 export declare function defineGenerator<const G extends GeneratorDefinition>(definition:G): DeepReadonly<G>;

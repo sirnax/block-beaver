@@ -125,7 +125,7 @@ export async function loadFamilies({ root: inputRoot, config, paths, resolutionS
   if (!generate && state.results.has(key)) return structuredClone(state.results.get(key));
   if (!generate && state.inflight.has(key)) return structuredClone(await state.inflight.get(key));
   const load = async () => {
-    if (!parsed.families.length && !parsed.generators.length) return { key, ...empty(parsed.diagnostics), discoveredFiles: matchingPaths, ...(generate ? { outputs: [] } : {}) };
+    if (!parsed.families.length && !parsed.generators.length && !(Array.isArray(config.checks) && config.checks.length)) return { key, ...empty(parsed.diagnostics), discoveredFiles: matchingPaths, ...(generate ? { outputs: [] } : {}) };
     // The worker gets both the exact resolver ownership list and discovery inputs.
     const result = await spawnLoad({ root, paths: resolverPaths, config, generate, loaderUrl });
     state.loadedFiles = [...new Set([...result.loadedFiles, ...Object.keys(result.fileHashes || {})])];

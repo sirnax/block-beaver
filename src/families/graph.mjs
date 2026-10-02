@@ -1,4 +1,5 @@
 import { createHash } from 'node:crypto';
+import ts from 'typescript';
 import { posix } from 'node:path';
 import { matchGlob } from './glob.mjs';
 import { canonicalJson } from './canonical.mjs';
@@ -76,7 +77,6 @@ export function findUnclaimed(families, filePaths, { isIgnored = () => false } =
 
 const identifier = /^[A-Za-z_$][\w$]*$/;
 const blockId = /^[A-Za-z0-9][A-Za-z0-9._-]*$/;
-const literal = (name) => name.replace(/\$/g, '\\$');
 
 /**
  * Map parity data (0.6.0, schema 2, additive; only written when families are configured).
@@ -127,20 +127,16 @@ export function attachMapParity(graph, { bindings = [], sourceText } = {}) {
     if (!['imports', 'reexports'].includes(edge.kind) || !edge.from.startsWith('file:')) continue;
     for (const block of implementers.get(edge.to) || []) add(nodes.get(edge.from), block, 'import');
   }
-  const valid = (Array.isArray(bindings) ? bindings : []).filter((entry) => entry && typeof entry.family === 'string' && identifier.test(entry.call ?? '') && identifier.test(entry.registry ?? ''));
+  const valid = (Array.isArray(bindings) ? bindings : []).filter((entry) => entry && typeof entry.family === 'string' && typeof entry.call === 'string' && typeof entry.registry === 'string' && identifier.test(entry.call) && identifier.test(entry.registry));
   if (valid.length && typeof sourceText === 'function') {
-    const patterns = valid.map((entry) => ({ family: entry.family, call: entry.call, pattern: new RegExp(`(?<![\\w$])${literal(entry.call)}\\s*\\(\\s*${literal(entry.registry)}\\s*(?:\\.\\s*([A-Za-z_$][\\w$]*)|\\[\\s*(['"\`])([A-Za-z0-9][A-Za-z0-9._-]*)\\2\\s*\\])`, 'g') }));
     for (const file of graph.nodes.filter((node) => node.kind === 'file').sort((a, b) => compare(a.path, b.path))) {
       if (excluded(file)) continue;
       const text = sourceText(file.path);
       if (typeof text !== 'string') continue;
-      for (const { family, call, pattern } of patterns) {
-        if (!text.includes(call)) continue;
-        for (const match of text.matchAll(pattern)) {
-          const id = match[1] ?? match[3];
-          const block = graphId(`${family}:${id}`);
-          if (blockId.test(id) && nodes.get(block)?.kind === 'block') add(file, block, 'binding');
-        }
+      const wanted = valid.filter((entry) => text.includes(entry.call) && text.includes(entry.registry));
+      for (const { family, id } of bindingCalls(file.path, text, wanted)) {
+        const block = graphId(`${family}:${id}`);
+        if (blockId.test(id) && nodes.get(block)?.kind === 'block') add(file, block, 'binding');
       }
     }
   }
@@ -255,4 +251,25 @@ export function attachFamilies(graph, { load, project, history, bindings, source
     graph.fingerprint = createHash('sha256').update(canonicalJson(content)).digest('hex').slice(0, 16);
   }
   return graph;
+}
+
+/** Registry-call bindings found in real call expressions: `call(registry.id)` or `call(registry['id'])`, including `ns.call(...)`. */
+function bindingCalls(path, text, bindings) {
+  if (!bindings.length) return [];
+  const kind = /\.(?:tsx|jsx)$/.test(path) ? ts.ScriptKind.TSX : /\.(?:ts|mts|cts)$/.test(path) ? ts.ScriptKind.TS : ts.ScriptKind.JS;
+  const source = ts.createSourceFile(path, text, ts.ScriptTarget.Latest, false, kind);
+  const found = [];
+  const visit = (node) => {
+    if (ts.isCallExpression(node) && node.arguments.length) {
+      const callee = ts.isIdentifier(node.expression) ? node.expression.text : ts.isPropertyAccessExpression(node.expression) ? node.expression.name.text : null;
+      const arg = node.arguments[0];
+      const registry = (ts.isPropertyAccessExpression(arg) || ts.isElementAccessExpression(arg)) && ts.isIdentifier(arg.expression) ? arg.expression.text : null;
+      const id = ts.isPropertyAccessExpression(arg) ? arg.name.text
+        : ts.isElementAccessExpression(arg) && (ts.isStringLiteral(arg.argumentExpression) || ts.isNoSubstitutionTemplateLiteral(arg.argumentExpression)) ? arg.argumentExpression.text : null;
+      if (callee && registry && id) for (const entry of bindings) if (entry.call === callee && entry.registry === registry) found.push({ family: entry.family, id });
+    }
+    ts.forEachChild(node, visit);
+  };
+  visit(source);
+  return found;
 }

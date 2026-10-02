@@ -217,6 +217,7 @@ async function execute(message) {
     const byFamily = new Map(parsed.families.map((entry) => [entry.id, []]));
     for (const manifest of result.manifests) byFamily.get(manifest.family)?.push(readonly(manifest.value));
     for (const list of byFamily.values()) readonly(list);
+    const allValid = Object.freeze([...byFamily.values()].flat());
     const setContext = readonly({ families: jsonCopy(result.families), get: (ref) => values.get(ref), all: (id) => byFamily.get(id) ?? Object.freeze([]) });
     const reportSetWide = (issues, source, owner) => {
       if (issues !== undefined && (!Array.isArray(issues) || issues.some((issue) => !object(issue) || typeof issue.message !== 'string' || ['block', 'field', 'path', 'code'].some((key) => issue[key] !== undefined && typeof issue[key] !== 'string')))) throw new TypeError('Set-wide check must return an array of {message,block?,field?,code?} or undefined');
@@ -236,8 +237,8 @@ async function execute(message) {
     for (const path of checkModulePaths(config)) {
       try {
         const exports = await importSource(path);
-        if (typeof exports.default !== 'function') { diagnostic('check-module-invalid', 'Check module must default-export a function (ctx) => issues', { file: path }, 'family-valid'); continue; }
-        reportSetWide(await exports.default(setContext), path);
+        if (typeof exports.default !== 'function') { diagnostic('check-module-invalid', 'Check module must default-export a function (manifests, ctx) => issues', { file: path }, 'family-valid'); continue; }
+        reportSetWide(await exports.default(allValid, setContext), path);
       } catch (error) {
         if (error?.familyLoaderCode || error?.code === 'ERR_MODULE_NOT_FOUND' || error?.code === 'ERR_UNSUPPORTED_TYPESCRIPT_SYNTAX') errorDiagnostic(error, { file: path }).rule = 'family-valid';
         else diagnostic('family-check-all-failed', `Check module ${path} failed: ${error?.message || String(error)}`, { file: path }, 'family-valid');

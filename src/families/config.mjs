@@ -83,7 +83,7 @@ export function parseFamiliesConfig(config) {
         const binding = /^[A-Za-z_$][\w$]*$/;
         if (!Array.isArray(config.map.bindings)) issue('family-path-invalid', 'map.bindings must be an array', '$.map.bindings');
         else for (const [index, entry] of config.map.bindings.entries()) {
-          if (!object(entry) || !ids.has(entry.family) || !binding.test(entry.call ?? '') || !binding.test(entry.registry ?? '')) issue('family-path-invalid', 'Each binding needs a configured family and identifier call and registry names', `$.map.bindings[${index}]`);
+          if (!object(entry) || !ids.has(entry.family) || typeof entry.call !== 'string' || typeof entry.registry !== 'string' || !binding.test(entry.call) || !binding.test(entry.registry)) issue('family-path-invalid', 'Each binding needs a configured family and identifier call and registry names', `$.map.bindings[${index}]`);
         }
       }
     }

@@ -46,21 +46,21 @@ test('typed links into a block keep it used while outgoing links alone do not', 
   assert.deepEqual(result.unused, ['block:unit:a', 'block:unit:self']);
 });
 
-test('configured bindings find registry calls by dot, single and double quoted access', () => {
+test('configured bindings find real registry calls by dot and quoted access, never in comments or strings', () => {
   const texts = {
     'src/app/main.ts': "render(screens.home, props);\nrender( screens [ 'settings' ] );\nrender(screens[\"missing\"]);\nprerender(screens.about);",
     'src/app/other.ts': 'mount(screens.about)',
-    'src/admin.ts': "// render(screens.about)\nrender(other.home)",
+    'src/admin.ts': "// render(screens.about)\n/* render(screens.home) */\nconst s = 'render(screens.settings)';\nrender(other.home)",
+    'src/app/ns.tsx': 'export const X = () => ui.render(screens.settings);',
   };
   const families = [family('screen'), family('record')];
   const manifests = ['home', 'settings', 'about'].map((id) => loaded(manifest('screen', id))).concat(loaded(manifest('record', 'home')));
   const run = (bindings) => attachFamilies(graph(Object.keys(texts).map((path) => [path, 'web'])), { project: resolveTo({}), load: { families, manifests }, bindings, sourceText: (path) => texts[path] ?? null });
   const result = run([{ family: 'screen', call: 'render', registry: 'screens' }, { family: 'screen', call: 'mount', registry: 'screens' }]);
   assert.deepEqual(result.codeReach, [
-    { app: 'web', folder: 'src', block: 'block:screen:about', via: 'binding', files: ['src/admin.ts'] },
     { app: 'web', folder: 'src/app', block: 'block:screen:about', via: 'binding', files: ['src/app/other.ts'] },
     { app: 'web', folder: 'src/app', block: 'block:screen:home', via: 'binding', files: ['src/app/main.ts'] },
-    { app: 'web', folder: 'src/app', block: 'block:screen:settings', via: 'binding', files: ['src/app/main.ts'] },
+    { app: 'web', folder: 'src/app', block: 'block:screen:settings', via: 'binding', files: ['src/app/main.ts', 'src/app/ns.tsx'] },
   ]);
   assert.deepEqual(result.unused, ['block:record:home']);
   // Without bindings no text pass runs: the reader must never be called.
