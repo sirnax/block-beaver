@@ -13,6 +13,7 @@ import { migrateDocument } from './migrations.mjs';
 import { auditCounts } from './audit-rules.mjs';
 import { recordManagedSetup } from './compliance.mjs';
 import { gitHead } from './compliance-git.mjs';
+import { BASELINE_PATH, baselineSummary, parseBaseline, planBaselineLowering } from './baseline.mjs';
 
 const json = (value) => `${JSON.stringify(value, null, 2)}\n`;
 const packageManagerFiles = ['package-lock.json', 'npm-shrinkwrap.json', 'pnpm-lock.yaml', 'pnpm-workspace.yaml', 'yarn.lock', 'bun.lock', 'bun.lockb'];
@@ -156,7 +157,7 @@ async function execute(root, operation, options) {
   diagnostics.push(...(packagePlan.diagnostics ?? []));
   const extra = [];
   const dataDirectories = new Set(['.blocks']);
-  let view;
+  let view, baselinePlan = null;
   if (operation !== 'uninstall') {
     extra.push({ path: '.blocks/config.json', before: configFile.before, content: json(config), kind: 'config' });
     if (detectionFile) extra.push(detectionFile);
@@ -165,10 +166,14 @@ async function execute(root, operation, options) {
     diagnostics.push(...view.diagnostics);
     conflicts.push(...view.diagnostics.filter((item) => item.severity !== 'warning').map((item) => ({ path: item.file ?? '.blocks/config.json', message: item.message, kind: 'family', code: item.code })));
     extra.push(...view.files);
-    const baseline = await document(root, '.blocks/baseline.json');
-    if (baseline.before !== null && (!baseline.value || baseline.value.schemaVersion !== 1 || !Number.isSafeInteger(baseline.value.coverage) || baseline.value.coverage < 0 || !Number.isSafeInteger(baseline.value.resolution) || baseline.value.resolution < 0)) throw new Error('Unsupported or invalid baseline schema; latest supported schemaVersion is 1 with nonnegative coverage and resolution counts.');
-    if (baseline.before === null) {
-      extra.push({ path: '.blocks/baseline.json', before: null, content: json({ schemaVersion: 1, ...auditCounts(view.graph) }), kind: 'baseline' });
+    const baselineBefore = await readProjectFile(root, BASELINE_PATH);
+    parseBaseline(baselineBefore);
+    if (baselineBefore === null) {
+      extra.push({ path: BASELINE_PATH, before: null, content: json({ schemaVersion: 1, ...auditCounts(view.graph) }), kind: 'baseline' });
+    } else if (operation === 'upgrade') {
+      // Upgrade records any decrease (for example after an ignore entry) and never raises a count.
+      baselinePlan = planBaselineLowering(baselineBefore, auditCounts(view.graph));
+      extra.push(baselinePlan.file);
     }
     const paths = [...new Set([...(marker.value?.paths ?? []), ...[...managed.files, ...host.files, ...(host.hooks ?? [])].filter((file) => file.content !== null).map((file) => isAbsolute(file.path) ? '.git/hooks/pre-commit' : file.path)])].sort();
     extra.push({ path: '.blocks/install.json', before: marker.before, content: json({ schemaVersion: 1, version, agents, paths }), kind: 'installation' });
@@ -190,6 +195,7 @@ async function execute(root, operation, options) {
   const diff = [...files, ...hooks].filter((file) => file.before !== file.content);
   const result = { operation, version, agents, changed: [], diff, diagnostics, conflicts, commands: packagePlan.commands, dryRun: Boolean(options.dryRun), complete: false, view: view && '.blocks/view/index.html' };
   if (operation !== 'uninstall') Object.assign(result, enforcementSummary(config));
+  if (baselinePlan) result.baseline = baselineSummary(baselinePlan);
   if (options.dryRun || conflicts.length) return result;
   const packageOwned = new Map();
   for (const path of packageManagerFiles) packageOwned.set(path, await readProjectFile(root, path).catch(() => undefined));
