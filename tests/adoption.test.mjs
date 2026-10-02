@@ -710,7 +710,7 @@ test('0.7.0: the managed pre-commit prints one line when a staged audit passes a
   const passed = hookCommit(root, env, 'add notes');
   assert.equal(passed.status, 0, passed.lines.join('\n'));
   assert.equal(passed.lines.length, 1, passed.lines.join('\n'));
-  assert.match(passed.lines[0], /^block-beaver audit: pass \(\d+ files, 0 errors\)$/);
+  assert.match(passed.lines[0], /^block-beaver audit: pass \(\d+ files?, 0 errors\)$/);
   assert.equal(git(root, 'log', '--format=%s', '-1').trim(), 'add notes');
 
   // A failing one: kind "audio" is served by no model, so the cross-family check fails in the staged snapshot.
@@ -719,7 +719,7 @@ test('0.7.0: the managed pre-commit prints one line when a staged audit passes a
   const failed = hookCommit(root, env, 'break draw');
   assert.notEqual(failed.status, 0, 'a failing audit blocks the commit');
   assert.equal(git(root, 'log', '--format=%s', '-1').trim(), 'add notes');
-  assert.match(failed.lines[0], /^block-beaver audit: fail \(\d+ files, (\d+) errors?\)$/);
+  assert.match(failed.lines[0], /^block-beaver audit: fail \(\d+ files?, (\d+) errors?\)$/);
   const errors = failed.lines.slice(1).filter((line) => !line.startsWith('warning · '));
   assert.equal(errors.length, Number(failed.lines[0].match(/, (\d+) error/)[1]), 'one line per error');
   assert.equal(new Set(failed.lines).size, failed.lines.length, `every line appears once: ${failed.lines.join('\n')}`);
