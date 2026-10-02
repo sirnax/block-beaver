@@ -245,13 +245,26 @@ The project can then delete its own codegen, map and kit scripts.
 
 The console's Map view showed the same map. Its Blocks view showed the unused, reach and group chips.
 
-**Live editor gate.** The candidate fingerprint is `8492c275311a32bc99c3f4b2a26d2860c113306f697580ff802d19705f9407a8`, at `aa3d348`.
+**Live editor gate.** The candidate fingerprint is `8492c275311a32bc99c3f4b2a26d2860c113306f697580ff802d19705f9407a8`, at `aa3d348`. The later commits on the branch changed only tests and docs, which the fingerprint does not cover, so `main` at `43fc379` has the same fingerprint.
 
-| Case | Claude (claude-sonnet-5-5) | Codex (trusted hooks) |
-| --- | --- | --- |
-| normal | pass | pending |
-| bypass | pass | pending |
-| failed | pass | pending |
-| drift | pass | pending |
+| Case | Claude (claude-sonnet-5-5) | Codex, no hook trust | Codex, trusted hooks |
+| --- | --- | --- | --- |
+| normal | pass | pass | incomplete |
+| bypass | pass | pass | not run |
+| failed | pass | pass | not run |
+| drift | pass | pass | not run |
 
-An earlier Claude run passed all four cases at fingerprint `e1285f49…`, before `aa3d348`. The Codex cases need `--codex-hook-trust`, and the owner must trust the hook interactively in the Codex UI.
+- An earlier Claude run passed all four cases at fingerprint `e1285f49…`, before `aa3d348`.
+- The untrusted Codex cases exercise the workflow commands, not native hook enforcement.
+- The owner started two trusted Codex `normal` runs. Both stopped after the `/hooks` trust step, before any checks ran. One of them ran while `main` was still 0.5.1, at fingerprint `952fb4c7…`. The harness's copied `auth.json` was removed from the interrupted run directories.
+- **Gate status:** the full eight-case trusted gate is **partial**. The owner chose to release with the Claude cases and the untrusted Codex cases passing.
+
+## Publication
+
+- **Merge:** PR #34 merged to `main` as `43fc379` on 2026-10-02. It closed #26–#33.
+- **First publish attempt:** it ran before the merge. `main` was still 0.5.1, so nothing was published. The attempt pushed a `v0.6.0` tag at `965e22f`; that tag was deleted locally and on GitHub before the real release.
+- **Second publish attempt:** it returned E404 because the npm token in `~/.npmrc` had expired. The owner ran `npm login` and published the reviewed tarball.
+- **npm:** `block-beaver@0.6.0` has shasum `de220d089edd057395e13e46ad30f72aa94f50cf` and 71 files. It was packed from `43fc379` after `npm ci` and `npm run check` (447 tests, 0 failures), and is identical to the tarball that passed `npm publish --dry-run`.
+- **Tag and release:** the annotated tag `v0.6.0` points at `43fc379`. The GitHub release [v0.6.0](https://github.com/sirnax/block-beaver/releases/tag/v0.6.0) uses the notes from `scripts/release-notes.mjs`.
+- **Registry install:** in a disposable repository, `npx block-beaver@0.6.0 install` pinned `0.6.0`. The adoption commit passed the managed pre-commit hook. A later source edit committed without `update`, which is the #26 fix seen from the public package.
+- **GitHub Pages:** status is `built`.
