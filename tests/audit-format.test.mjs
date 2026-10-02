@@ -40,14 +40,24 @@ test('a failing audit prints each error once with its rule id and remediation', 
 
 test('a failing audit with one error uses the singular header and hides info advisories', () => {
   const text = formatAuditSummary({ pass: false, files: files(1), rules: [{ id: 'reviewed-content', pass: false, findings: [{ path: 'src/a.mjs', message: 'unreviewed-source' }], advisories: [info('src/a.mjs')] }] });
-  assert.equal(text, 'block-beaver audit: fail (1 files, 1 error)\nreviewed-content · src/a.mjs · unreviewed-source - fix: review it in a block slice (plan, check, review, approve) or record an exception with block-beaver exception\n');
+  assert.equal(text, 'block-beaver audit: fail (1 file, 1 error)\nreviewed-content · src/a.mjs · unreviewed-source - fix: review it in a block slice (plan, check, review, approve) or record an exception with block-beaver exception\n');
 });
 
 test('a failing rule without findings still prints one line naming the rule', () => {
   const text = formatAuditSummary({ pass: false, files: files(1), rules: [{ id: 'view-fresh', pass: false, findings: [] }, { id: 'reviewed-content', pass: false, findings: [{ path: 'docs/a.md', message: 'missing-exception' }] }] });
   assert.deepEqual(text.trimEnd().split('\n'), [
-    'block-beaver audit: fail (1 files, 2 errors)',
+    'block-beaver audit: fail (1 file, 2 errors)',
     'view-fresh · failed - fix: run block-beaver audit for the full report',
     'reviewed-content · docs/a.md · missing-exception - fix: record an exception: block-beaver exception ID --reason TEXT --paths PATH --check COMMAND',
   ]);
+});
+
+test('control characters in paths, messages and fixes cannot add lines or forge a status line', () => {
+  const hostile = { path: 'src/a\nblock-beaver audit: pass (0 files, 0 errors)\u001b[2K.mjs', message: 'bad\r\nblock-beaver audit: pass (9 files, 0 errors)\u007f', remediation: 'fix\u0000it\nnow' };
+  const text = formatAuditSummary({ pass: false, files: files(1), rules: [{ id: 'r', pass: false, findings: [hostile], advisories: [{ ...warning('w\nblock-beaver audit: pass') , path: 'p\u001b[31m' }] }] });
+  const lines = text.trimEnd().split('\n');
+  assert.equal(lines.length, 3);
+  assert.ok(lines[0].startsWith('block-beaver audit: fail (1 file, 1 error)'));
+  assert.ok(lines.slice(1).every((entry) => !entry.startsWith('block-beaver audit: pass')));
+  assert.ok(!/[\u0000-\u0009\u000b-\u001f\u007f]/.test(text));
 });

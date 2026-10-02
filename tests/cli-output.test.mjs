@@ -75,7 +75,7 @@ test('audit --format summary prints one line on pass and per-error lines on fail
   git(root, ['add', '-A']);
   const pass = run(root, ['audit', '--staged', '--format', 'summary']);
   assert.equal(pass.status, 0, pass.stdout + pass.stderr);
-  assert.equal(pass.stdout, 'block-beaver audit: pass (1 files, 0 errors)\n');
+  assert.equal(pass.stdout, 'block-beaver audit: pass (1 file, 0 errors)\n');
   assert.equal(JSON.parse(run(root, ['audit', '--staged', '--format', 'json']).stdout).pass, true);
   assert.equal(JSON.parse(run(root, ['audit', '--staged']).stdout).pass, true);
 
@@ -86,7 +86,7 @@ test('audit --format summary prints one line on pass and per-error lines on fail
   git(root, ['add', '-A']);
   const fail = run(root, ['audit', '--staged', '--format', 'summary']);
   assert.equal(fail.status, 2, fail.stderr);
-  assert.deepEqual(fail.stdout.trimEnd().split('\n'), ['block-beaver audit: fail (1 files, 1 error)', 'reviewed-content · src/direct.mjs · unreviewed-source - fix: review it in a block slice (plan, check, review, approve) or record an exception with block-beaver exception']);
+  assert.deepEqual(fail.stdout.trimEnd().split('\n'), ['block-beaver audit: fail (1 file, 1 error)', 'reviewed-content · src/direct.mjs · unreviewed-source - fix: review it in a block slice (plan, check, review, approve) or record an exception with block-beaver exception']);
 });
 
 test('audit rejects an unknown format', async (t) => {
