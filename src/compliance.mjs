@@ -405,7 +405,7 @@ async function structuralRules(root, { strict, familyDrift, mode, priorBaseline,
   else if (familyEnabled) {
     try {
       const { planGeneration, checkGeneration } = await import('./families/generate.mjs');
-      const plan = await planGeneration({ root, config: configDocument.value || {}, graph, paths: Object.keys(graph.hashes || {}), extraOutputs });
+      const plan = await planGeneration({ root, config: configDocument.value || {}, graph, paths: Object.keys(graph.hashes || {}), extraOutputs, readOnly: true });
       const generationDiagnostics = checkGeneration(plan).filter((entry) => !entry.severity || entry.severity === 'error');
       // Loader/config errors remain in their structural rule, including errors
       // discovered only when preparing generators. Drift owns output differences.
