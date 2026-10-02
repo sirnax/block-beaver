@@ -70,7 +70,7 @@ export async function attachProjectRegistry(graph, { config: suppliedConfig, loa
     try { config = configText === null ? null : JSON.parse(configText); } catch { return graph; }
   }
   graph.repoName = await projectName(graph.root);
-  if (config && ['families', 'generators', 'loader', 'history'].some((key) => Object.hasOwn(config, key))) {
+  if (config && ['families', 'generators', 'loader', 'history', 'checks'].some((key) => Object.hasOwn(config, key))) {
     const paths = Object.keys(graph.hashes || {});
     const project = await loadProjectModel(graph.root, { paths, writeConfig: false });
     const loadFamilies = suppliedLoader || (await import('./families/loader.mjs')).loadFamilies;

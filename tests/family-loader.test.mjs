@@ -53,6 +53,26 @@ test('family config is optional, validates paths and IDs, and permits repo-chose
   assert.equal(parseFamiliesConfig({ families: [{ id: 'widget', contract: '.blocks/author/widget.ts', manifests: '.blocks/author/*.item.ts' }] }).diagnostics.length, 0);
 });
 
+test('0.6.0 optional config keys validate with field paths and stay absent by default', () => {
+  const other = { id: 'gadget', contract: 'definitions/gadget.family.ts', manifests: 'catalog/gadgets/*.item.ts' };
+  const valid = parseFamiliesConfig({
+    families: [{ ...family, exclude: ['catalog/widgets/fixtures/**'] }, other],
+    checks: ['checks/set.ts'],
+    map: { floors: ['gadget', 'widget'], groupBy: 'surface', skins: [{ id: 'paper', path: 'skins/paper.css' }, { id: 'night', tokens: { ink: '#fff' } }], bindings: [{ family: 'widget', call: 'withWidget', registry: 'WIDGETS_BY_ID' }] },
+  });
+  assert.deepEqual(valid.diagnostics, []);
+  assert.deepEqual(valid.families[0].exclude, ['catalog/widgets/fixtures/**']);
+  const invalid = parseFamiliesConfig({
+    families: [{ ...family, exclude: ['../x/**', '!negated/**'] }],
+    checks: ['/abs.ts'],
+    map: { floors: ['widget', 'missing'], groupBy: 'not a field', skins: [{ id: 'a' }, { id: 'a' }, { id: 'b', path: '../x.css', tokens: { Bad: 1 } }], bindings: [{ family: 'missing', call: 'x', registry: 'y' }] },
+  });
+  const fields = invalid.diagnostics.map((item) => item.field);
+  for (const field of ['$.families[0].exclude', '$.checks', '$.map.floors[1]', '$.map.groupBy', '$.map.skins[1].id', '$.map.skins[2].path', '$.map.skins[2].tokens', '$.map.bindings[0]']) assert.ok(fields.includes(field), field);
+  assert.ok(invalid.diagnostics.every((item) => item.rule === 'config-valid'));
+  assert.equal(parseFamiliesConfig({ families: [family], map: { floors: ['widget', 'widget'] } }).diagnostics[0].field, '$.map.floors');
+});
+
 test('input globs include recursive, question, classes, brace alternatives and exclusions', () => {
   const paths = ['catalog/alpha.item.ts', 'catalog/nested/bravo.item.ts', 'catalog/nested/c1.item.ts', 'catalog/nested/delta.item.js'];
   assert.deepEqual(matchGlobs(paths, ['catalog/**/*.item.{ts,js}', '!**/c?.item.ts']), [paths[0], paths[1], paths[3]]);

@@ -44,10 +44,12 @@ export function parseFamiliesConfig(config) {
       if (entry.registry?.importExtension !== undefined && !['', '.js', '.ts'].includes(entry.registry.importExtension)) issue('family-path-invalid', 'registry.importExtension must be empty, .js or .ts', `${field}.registry.importExtension`, family);
     }
     if (entry.generators !== undefined && (!Array.isArray(entry.generators) || entry.generators.some((path) => !isFamilyPath(path)))) issue('family-path-invalid', 'generators must contain repository-relative paths', `${field}.generators`, family);
+    if (entry.exclude !== undefined && (!Array.isArray(entry.exclude) || entry.exclude.some((pattern) => typeof pattern !== 'string' || pattern.startsWith('!') || !isFamilyGlob(pattern)))) issue('family-glob-invalid', 'exclude must contain repository-relative globs', `${field}.exclude`, family);
     if (diagnostics.length === start) families.push({ ...entry, floor });
   }
   if (config.generators !== undefined && (!Array.isArray(config.generators) || config.generators.some((path) => !isFamilyPath(path)))) issue('family-path-invalid', 'generators must contain repository-relative paths', '$.generators');
   else generators.push(...(config.generators || []));
+  if (config.checks !== undefined && (!Array.isArray(config.checks) || config.checks.some((path) => !isFamilyPath(path)))) issue('family-path-invalid', 'checks must contain repository-relative paths', '$.checks');
   if (config.loader !== undefined) {
     if (typeof config.loader !== 'string' || !/^(?:@[a-z0-9._-]+\/)?[a-z0-9][a-z0-9._-]*(?:\/[a-zA-Z0-9._/-]+)?$/.test(config.loader) || config.loader.split('/').some((part) => part === '..' || part === '.')) issue('loader-package-missing', 'loader must name a package or a package subpath', '$.loader');
     else loader = config.loader;
@@ -57,10 +59,37 @@ export function parseFamiliesConfig(config) {
     if (!object(config.map)) issue('family-path-invalid', 'map must be an object', '$.map');
     else {
       if (config.map.skin !== undefined && !isFamilyPath(config.map.skin)) issue('family-path-invalid', 'map.skin must be a repository-relative path', '$.map.skin');
-      if (config.map.tokens !== undefined && (!object(config.map.tokens) || Object.entries(config.map.tokens).some(([key, value]) => !idPattern.test(key) || typeof value !== 'string'))) issue('family-path-invalid', 'map.tokens must map kebab-case names to CSS strings', '$.map.tokens');
+      if (config.map.tokens !== undefined && !validTokens(config.map.tokens)) issue('family-path-invalid', 'map.tokens must map kebab-case names to CSS strings', '$.map.tokens');
+      const ids = new Set(families.map((entry) => entry.id));
+      if (config.map.floors !== undefined) {
+        const floors = config.map.floors;
+        if (!Array.isArray(floors) || floors.some((id) => typeof id !== 'string') || new Set(floors).size !== floors.length) issue('family-path-invalid', 'map.floors must list distinct family IDs', '$.map.floors');
+        else for (const [index, id] of floors.entries()) if (!ids.has(id)) issue('family-path-invalid', `map.floors names unknown family ${id}`, `$.map.floors[${index}]`);
+      }
+      if (config.map.groupBy !== undefined && (typeof config.map.groupBy !== 'string' || !/^[A-Za-z_$][\w$]*$/.test(config.map.groupBy))) issue('family-path-invalid', 'map.groupBy must name a manifest field', '$.map.groupBy');
+      if (config.map.skins !== undefined) {
+        const skins = config.map.skins, skinIds = new Set();
+        if (!Array.isArray(skins)) issue('family-path-invalid', 'map.skins must be an array', '$.map.skins');
+        else for (const [index, skin] of skins.entries()) {
+          const at = `$.map.skins[${index}]`;
+          if (!object(skin) || typeof skin.id !== 'string' || !idPattern.test(skin.id) || skinIds.has(skin.id)) { issue('family-path-invalid', 'Each skin needs a distinct kebab-case id', `${at}.id`); continue; }
+          skinIds.add(skin.id);
+          if (skin.path !== undefined && !isFamilyPath(skin.path)) issue('family-path-invalid', 'Skin path must be a repository-relative path', `${at}.path`);
+          if (skin.tokens !== undefined && !validTokens(skin.tokens)) issue('family-path-invalid', 'Skin tokens must map kebab-case names to CSS strings', `${at}.tokens`);
+        }
+      }
+      if (config.map.bindings !== undefined) {
+        const binding = /^[A-Za-z_$][\w$]*$/;
+        if (!Array.isArray(config.map.bindings)) issue('family-path-invalid', 'map.bindings must be an array', '$.map.bindings');
+        else for (const [index, entry] of config.map.bindings.entries()) {
+          if (!object(entry) || !ids.has(entry.family) || !binding.test(entry.call ?? '') || !binding.test(entry.registry ?? '')) issue('family-path-invalid', 'Each binding needs a configured family and identifier call and registry names', `$.map.bindings[${index}]`);
+        }
+      }
     }
   }
   return { families, generators, diagnostics, ...(loader ? { loader } : {}) };
 }
+
+function validTokens(tokens) { return object(tokens) && Object.entries(tokens).every(([key, value]) => idPattern.test(key) && typeof value === 'string'); }
 
 function hasManifestCaptureSafely(pattern) { try { return hasManifestCapture(pattern); } catch { return false; } }

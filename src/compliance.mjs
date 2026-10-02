@@ -364,7 +364,7 @@ async function structuralRules(root, { strict, familyDrift, mode, priorBaseline,
   let extraOutputs;
   try { extraOutputs = await registeredViewOutputs(root, graph); }
   catch (error) { return scanFailure(error, exportRegistryPath); }
-  const familyEnabled = extraOutputs.length > 0 || !!(configDocument.value && ['families', 'generators', 'history'].some((key) => Object.hasOwn(configDocument.value, key)));
+  const familyEnabled = extraOutputs.length > 0 || !!(configDocument.value && ['families', 'generators', 'history', 'checks'].some((key) => Object.hasOwn(configDocument.value, key)));
   if (familyDrift) familyFindings = await familyDrift({ root, graph, config: configDocument.value });
   else if (familyEnabled) {
     try {
