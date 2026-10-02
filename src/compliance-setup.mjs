@@ -6,23 +6,24 @@ import { changedPaths, git, gitHead, sha256, versionBytes } from './compliance-g
 import { recordException } from './compliance.mjs';
 import { readProjectFile, writeProjectFiles } from './project-files.mjs';
 import { remoteProvider } from './git-remote.mjs';
-import { DEFAULT_CI_NODE, nodeSetupFrom } from './install-host.mjs';
+import { DEFAULT_CI_NODE, nodeSetupFrom, regionOwnership } from './install-host.mjs';
 
 const marker = '# block-beaver:managed-ci';
 const begin = '# block-beaver:start';
 const end = '# block-beaver:end';
-// A hash line inside the managed region means install/upgrade owns it; init and start must not rewrite it.
-const hostOwned = (text) => text !== null && new RegExp(`^${begin}\\n(?:[^\\n]*\\n)*?[ \\t]*# block-beaver:hash [0-9a-f]{64}\\n(?:[^\\n]*\\n)*?[ \\t]*${end}$`, 'm').test(text);
 
 async function exists(path) {
   try { await lstat(path); return true; }
   catch (error) { if (error.code === 'ENOENT') return false; throw error; }
 }
 
+// A hash line inside the marked region (valid or not) means install/upgrade owns it; init and start must not rewrite it, so upgrade can still detect owner edits.
 async function managedFile(root, path, content) {
   const before = await readProjectFile(root, path);
+  const own = regionOwnership(before);
+  if (own === 'ambiguous') throw new Error(`Ambiguous managed section in ${path}.`);
+  if (own === 'owned') return [];
   if (before !== null && !before.startsWith(`${marker}\n`)) throw new Error(`Existing CI file is not Block Beaver managed: ${path}`);
-  if (hostOwned(before)) return [];
   return await writeProjectFiles(root, [{ path, before, content }]);
 }
 
@@ -49,12 +50,17 @@ function gitlabJob(spec, node) {
 async function installGitlab(root, spec, node) {
   const job = '.blocks/ci/gitlab.yml';
   const beforeJob = await readProjectFile(root, job);
-  if (beforeJob !== null && !beforeJob.startsWith(`${marker}\n`)) throw new Error(`Existing CI file is not Block Beaver managed: ${job}`);
+  const ownJob = regionOwnership(beforeJob);
+  if (ownJob === 'ambiguous') throw new Error(`Ambiguous managed section in ${job}.`);
+  if (ownJob !== 'owned' && beforeJob !== null && !beforeJob.startsWith(`${marker}\n`)) throw new Error(`Existing CI file is not Block Beaver managed: ${job}`);
   const config = '.gitlab-ci.yml';
   const before = await readProjectFile(root, config);
   let content;
   const section = `${begin}\ninclude:\n  - local: .blocks/ci/gitlab.yml\n${end}`;
-  if (before === null) content = `${section}\n`;
+  const own = regionOwnership(before);
+  if (own === 'ambiguous') throw new Error('Ambiguous managed section in .gitlab-ci.yml.');
+  if (own === 'owned') content = before;
+  else if (before === null) content = `${section}\n`;
   else if (before.includes(begin) || before.includes(end)) {
     if (before.split(begin).length !== 2 || before.split(end).length !== 2 || before.indexOf(begin) > before.indexOf(end)) throw new Error('Ambiguous managed section in .gitlab-ci.yml.');
     content = before.slice(0, before.indexOf(begin)) + section + before.slice(before.indexOf(end) + end.length);
@@ -62,7 +68,7 @@ async function installGitlab(root, spec, node) {
     if (/^include\s*:/m.test(before)) throw new Error('Existing GitLab include needs manual integration; CI gate is incomplete.');
     content = before + (before.endsWith('\n') ? '\n' : '\n\n') + section + '\n';
   }
-  return await writeProjectFiles(root, [{ path: job, before: beforeJob, content: hostOwned(beforeJob) ? beforeJob : gitlabJob(spec, node) }, { path: config, before, content: hostOwned(before) ? before : content }]);
+  return await writeProjectFiles(root, [{ path: job, before: beforeJob, content: ownJob === 'owned' ? beforeJob : gitlabJob(spec, node) }, { path: config, before, content }]);
 }
 
 async function installHook(root) {
@@ -91,7 +97,9 @@ async function installHook(root) {
     } finally { await handle.close(); }
   } catch (error) { if (error.code !== 'ENOENT' || existing) throw error; }
   const section = `${begin}\nif ! command -v block-beaver >/dev/null 2>&1; then\n  echo 'Block Beaver is required for this commit. Install it, then retry.' >&2\n  exit 1\nfi\nblock-beaver audit --staged --format summary --root . || exit $?\n${end}\n`;
-  if (hostOwned(before)) return { status: 'installed', path: file, changed: false };
+  const own = regionOwnership(before);
+  if (own === 'ambiguous') return { status: 'incomplete', reason: 'Existing hook has ambiguous Block Beaver markers.' };
+  if (own === 'owned') return { status: 'installed', path: file, changed: false };
   let content;
   if (before === null) content = `#!/bin/sh\n${section}`;
   else {

@@ -131,6 +131,12 @@ const digest = (text) => createHash('sha256').update(text).digest('hex');
 const withoutHash = (text) => text.replace(/^[ \t]*# block-beaver:hash(?:[^\n]*)\r?\n/gm, '');
 const hasHash = (text) => /^[ \t]*# block-beaver:hash(?:\s|$)/m.test(text);
 
+/** Who owns the marked region in text: 'none', 'ambiguous' (unbalanced or repeated markers), 'unhashed' or 'owned' (a hash line, valid or not). */
+export function regionOwnership(text) {
+  const region = text === null ? null : findRegion(text);
+  return !region ? 'none' : region.ambiguous ? 'ambiguous' : hasHash(region.text) ? 'owned' : 'unhashed';
+}
+
 function stampRegion(text) {
   const region = findRegion(text);
   if (!region || region.ambiguous) return text;
