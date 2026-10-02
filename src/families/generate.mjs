@@ -101,7 +101,7 @@ export async function planGeneration({ root, config = {}, graph, paths, label = 
   if (asks('history')) claims.push({ key: 'history', kind: 'history', out: historyPath, inputs: [] });
 
   // 2. Reject unsafe outputs, then collisions, before any generator runs.
-  const protectedPaths = new Set(['.blocks/config.json', '.blocks/WORKFLOW.md', '.blocks/managed-files.json', '.blocks/install.json', '.blocks/baseline.json', '.blocks/view-exports.json', '.blocks/view/exports.json', '.github/copilot-instructions.md', cachePath, ...manifests.map((item) => item.path), ...families.map((family) => family.config?.contract), ...customs.map((info) => info.path)].filter(Boolean).map((path) => path.toLowerCase()));
+  const protectedPaths = new Set(['.blocks/config.json', '.blocks/WORKFLOW.md', '.blocks/managed-files.json', '.blocks/install.json', '.blocks/baseline.json', '.blocks/view-exports.json', '.blocks/view/exports.json', '.github/copilot-instructions.md', cachePath, ...manifests.map((item) => item.path), ...families.map((family) => family.config?.contract), ...customs.map((info) => info.path), ...(Array.isArray(config?.checks) ? config.checks.filter(isFamilyPath) : [])].filter(Boolean).map((path) => path.toLowerCase()));
   const safe = [];
   for (const claim of claims) {
     const reason = unsafeReason(claim, protectedPaths);

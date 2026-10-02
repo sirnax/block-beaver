@@ -617,3 +617,17 @@ test('a loaded family without configIndex falls back to its floor for ordering',
   const { outputs } = await plan(root, loader);
   assert.deepEqual(JSON.parse(outputs[0].expected).map((item) => item.family), ['gizmo', 'widget']);
 });
+
+test('set-wide family-valid findings from the loader fail check and block writes, and checks modules are protected outputs', async (t) => {
+  const root = await repo(t);
+  const finding = { rule: 'family-valid', code: 'family-check-all-failed', severity: 'error', message: 'Need at least one gizmo', file: 'blocks/gizmo.family.ts', family: 'gizmo' };
+  const loader = fakeLoader({ families: [family('gizmo')], diagnostics: [finding] });
+  const planned = await plan(root, loader);
+  assert.deepEqual(planned.diagnostics, [finding]);
+  assert.deepEqual(checkGeneration(planned).filter((item) => item.rule === 'family-valid'), [finding]);
+  assert.deepEqual((await applyGeneration(root, planned)).written, [], 'Errors from set-wide checks prevent every write.');
+  const hostile = await plan(root, fakeLoader({ families: [family('gizmo')], generators: [custom('gen/x.ts', { out: 'CHECKS/Gizmo.check.ts' })] }), { config: { checks: ['checks/gizmo.check.ts', 'CHECKS/Gizmo.check.ts', 42] } });
+  assert.deepEqual(hostile.diagnostics.map((item) => [item.code, item.file]), [['output-unsafe', 'CHECKS/Gizmo.check.ts']]);
+  const unrelated = await plan(root, fakeLoader({ families: [family('gizmo')], generators: [custom('gen/x.ts', { out: 'gen/out.md' })], outputs: { 'custom:gen/x.ts': 'ok' } }), { config: { checks: ['checks/gizmo.check.ts'] } });
+  assert.deepEqual(unrelated.diagnostics, []);
+});

@@ -509,3 +509,71 @@ test('implementation arms: declared fields and data kinds load, bad declarations
     assert.equal(loaded.manifests.length, 0);
   }
 });
+
+const gadget = { id: 'gadget', contract: 'definitions/gadget.family.ts', manifests: 'catalog/gadgets/*.item.ts' };
+const gadgetContract = `import { defineFamily, s } from 'block-beaver/kernel';
+export default defineFamily({id:'gadget',fields:s.object({tag:s.string()}),implementation:['none']});\n`;
+const gadgetValue = (id) => ({ ...value(id), family: 'gadget' });
+const setWide = (diagnostics) => diagnostics.filter((item) => item.rule === 'family-valid');
+
+test('family checkAll runs once per family over its valid manifests and reports under family-valid', async (t) => {
+  const source = contract(`checkAll: (manifests, ctx) => { if (!Object.isFrozen(manifests) || (manifests.length && !Object.isFrozen(manifests[0])) || !Object.isFrozen(ctx) || !Object.isFrozen(ctx.families)) throw Error('not frozen'); if (ctx.families.map((f) => f.id).join() !== 'widget') throw Error('families'); if (ctx.all('widget').length !== manifests.length || ctx.all('missing').length !== 0) throw Error('all'); if (manifests.length && !ctx.get('widget:' + manifests[0].id)) throw Error('get'); return manifests.length ? [] : [{ message: 'Need at least one widget', code: 'widgets-required' }]; },`);
+  const none = await loadFamilies(await fixture(t, { [family.contract]: source }, configFor({ families: [{ ...family, manifests: 'catalog/nothing/*.item.ts' }] })));
+  assert.deepEqual(setWide(none.diagnostics).map((item) => [item.code, item.checkCode, item.file, item.family, item.block]), [['family-check-all-failed', 'widgets-required', family.contract, 'widget', undefined]], JSON.stringify(none.diagnostics));
+  assert.equal(none.families[0].hasCheckAll, true);
+  assert.equal(none.families[0].checkAll, undefined);
+  const ok = await loadFamilies(await fixture(t, { [family.contract]: source }));
+  assert.deepEqual(setWide(ok.diagnostics), [], JSON.stringify(ok.diagnostics));
+  assert.deepEqual(ok.manifests.map((item) => item.id), ['alpha']);
+});
+
+test('family checkAll uniqueness names each offending manifest file and keeps the manifests', async (t) => {
+  const source = contract(`checkAll: (manifests) => { const seen = new Map(); const issues = []; for (const m of manifests) { if (seen.has(m.tag)) issues.push({ block: m.id, field: '$.tag', message: 'tag ' + m.tag + ' already used by ' + seen.get(m.tag), code: 'tag-unique' }); else seen.set(m.tag, m.id); } return issues; },`);
+  const data = await fixture(t, { [family.contract]: source, 'catalog/widgets/bravo.item.ts': manifest('bravo'), 'catalog/widgets/charlie.item.ts': manifest('charlie', { tag: 'red' }) });
+  const result = await loadFamilies(data);
+  assert.deepEqual(setWide(result.diagnostics).map((item) => [item.code, item.checkCode, item.file, item.block, item.field]), [['family-check-all-failed', 'tag-unique', 'catalog/widgets/bravo.item.ts', 'widget:bravo', '$.tag']]);
+  assert.deepEqual(result.manifests.map((item) => item.id), ['alpha', 'bravo', 'charlie'], 'Set-wide failures do not remove individually valid manifests.');
+});
+
+test('config checks modules see every family, and changing one invalidates the loader cache', async (t) => {
+  const checks = (body) => `export default (ctx) => { ${body} };\n`;
+  const coverage = checks(`if (!Object.isFrozen(ctx)) throw Error('mutable'); const have = new Set(ctx.all('gadget').map((m) => m.id)); return ctx.all('widget').filter((m) => !have.has(m.id)).map((m) => ({ block: 'widget:' + m.id, message: 'Widget ' + m.id + ' has no gadget', code: 'gadget-coverage' }));`);
+  const data = await fixture(t, { [gadget.contract]: gadgetContract, 'checks/coverage.ts': coverage }, configFor({ families: [family, gadget], checks: ['checks/coverage.ts'] }));
+  const first = await loadFamilies(data);
+  assert.deepEqual(setWide(first.diagnostics).map((item) => [item.code, item.checkCode, item.file, item.block]), [['family-check-all-failed', 'gadget-coverage', 'catalog/widgets/alpha.item.ts', 'widget:alpha']]);
+  assert.deepEqual(first.manifests.map((item) => item.ref), ['widget:alpha']);
+  assert.ok(first.loadedFiles.includes('checks/coverage.ts'));
+  assert.equal((await loadFamilies(data)).key, first.key, 'Unchanged inputs reuse the cache.');
+  await writeFile(join(data.root, 'checks/coverage.ts'), checks('return [];'));
+  const changed = await loadFamilies(data);
+  assert.notEqual(changed.key, first.key);
+  assert.deepEqual(setWide(changed.diagnostics), []);
+  await mkdir(join(data.root, 'catalog/gadgets'), { recursive: true });
+  await writeFile(join(data.root, 'catalog/gadgets/alpha.item.ts'), `export default ${JSON.stringify(gadgetValue('alpha'))};\n`);
+  await writeFile(join(data.root, 'checks/coverage.ts'), coverage);
+  assert.deepEqual(setWide((await loadFamilies({ ...data, paths: await discoverFiles(data.root) })).diagnostics), [], 'Coverage passes once the gadget exists.');
+});
+
+test('failing, malformed and unloadable set-wide checks name their module under family-valid', async (t) => {
+  const data = await fixture(t, {
+    [family.contract]: contract(`checkAll: () => { throw new Error('contract boom'); },`),
+    'checks/throws.ts': "export default () => { throw new Error('module boom'); };\n",
+    'checks/shape.ts': "export default () => [{ code: 'no-message' }];\n",
+    'checks/notfn.ts': 'export default 1;\n',
+    'checks/broken.ts': "import './missing-dependency';\nexport default () => [];\n",
+  }, configFor({ checks: ['checks/throws.ts', 'checks/shape.ts', 'checks/notfn.ts', 'checks/broken.ts'] }));
+  const result = await loadFamilies(data);
+  const found = setWide(result.diagnostics).map((item) => [item.code, item.file]);
+  assert.deepEqual(found, [['family-check-all-failed', family.contract], ['family-check-all-failed', 'checks/throws.ts'], ['family-check-all-failed', 'checks/shape.ts'], ['check-module-invalid', 'checks/notfn.ts'], ['unresolved-import', 'checks/broken.ts']], JSON.stringify(result.diagnostics));
+  assert.match(setWide(result.diagnostics)[0].message, /contract boom/);
+  assert.match(setWide(result.diagnostics)[1].message, /checks\/throws\.ts.*module boom/);
+  assert.deepEqual(result.manifests.map((item) => item.id), ['alpha']);
+});
+
+test('contracts reject a non-function checkAll and configs without set-wide checks behave as before', async (t) => {
+  const bad = await loadFamilies(await fixture(t, { [family.contract]: contract(`checkAll: 'nope',`) }));
+  assert.ok(bad.diagnostics.some((item) => item.code === 'contract-invalid' && item.field === '$.checkAll'), JSON.stringify(bad.diagnostics));
+  const plain = await loadFamilies(await fixture(t));
+  assert.deepEqual(plain.diagnostics, []);
+  assert.equal(plain.families[0].hasCheckAll, false);
+});

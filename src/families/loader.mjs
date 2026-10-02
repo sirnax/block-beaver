@@ -6,7 +6,7 @@ import { join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { promisify } from 'node:util';
 import { canonicalJson } from './canonical.mjs';
-import { parseFamiliesConfig } from './config.mjs';
+import { isFamilyPath, parseFamiliesConfig } from './config.mjs';
 import { discoverFiles, matchManifests } from './glob.mjs';
 
 const cliVersion = createRequire(import.meta.url)('../../package.json').version;
@@ -114,7 +114,7 @@ export async function loadFamilies({ root: inputRoot, config, paths, resolutionS
   const ignored = Array.isArray(config?.ignore) && config.ignore.length ? (await import('../project-model.mjs')).ignoreMatcher(config.ignore) : () => false;
   const manifestCandidates = matchingPaths.filter((path) => !ignored(path));
   const matched = parsed.families.flatMap((entry) => matchManifests(manifestCandidates, entry));
-  const direct = [...parsed.families.map((entry) => entry.contract), ...parsed.families.flatMap((entry) => entry.generators || []), ...parsed.generators, ...matched];
+  const direct = [...parsed.families.map((entry) => entry.contract), ...parsed.families.flatMap((entry) => entry.generators || []), ...parsed.generators, ...(Array.isArray(config.checks) ? config.checks.filter(isFamilyPath) : []), ...matched];
   const state = rootCache(root);
   let loaderUrl;
   try { loaderUrl = await resolveLoader(root, parsed.loader); }

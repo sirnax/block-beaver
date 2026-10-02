@@ -36,10 +36,10 @@ export function evaluateAuditRules({ graph, config, configPresent = config !== n
     }
     for (const entry of graph.diagnostics || []) configFindings.push(finding(`${entry.app || 'config'} ${entry.field}: ${entry.message}`, '.blocks/config.json'));
   }
-  const manifestFindings = [];
+  const manifestFindings = [], validFindings = [];
   for (const diagnostic of graph.familyDiagnostics || []) {
     if (diagnostic.severity && diagnostic.severity !== 'error') continue;
-    const target = diagnostic.rule === 'config-valid' ? configFindings : diagnostic.rule === 'family-drift' ? familyFindings : manifestFindings;
+    const target = diagnostic.rule === 'config-valid' ? configFindings : diagnostic.rule === 'family-drift' ? familyFindings : diagnostic.rule === 'family-valid' ? validFindings : manifestFindings;
     target.push(finding(diagnostic.message, diagnostic.file, diagnostic.remediation));
   }
   const manifestNodes = manifests.filter((entry) => object(entry.value)).map(({ value, path }) => ({ id: `block:local:${value.id}`, kind: 'block', family: 'local', manifest: value, path }));
@@ -115,5 +115,5 @@ export function evaluateAuditRules({ graph, config, configPresent = config !== n
       else if (object(priorBaseline) && count > (oldLint?.[path] ?? 0)) lintFindings.push(finding(`no-block-id-literal allowance for ${path} increased from ${oldLint?.[path] ?? 0} to ${count}.`, '.blocks/baseline.json', 'Lint allowances can only decrease.'));
     }
   }
-  return [rule('managed-current', installed ? managedFindings : [], { skipped: !installed, advisories: managedAdvisories }), rule('config-valid', configFindings), rule('manifest-valid', manifestFindings), rule('view-fresh', installed ? viewFindings : [], { skipped: !installed }), rule('undeclared-link', linkFindings), ratchet('coverage-ratchet', 'coverage', installed || baseline !== null), ratchet('resolution-ratchet', 'resolution', strict && (installed || baseline !== null)), rule('exception-valid', exceptionFindings), rule('family-drift', familyFindings, { skipped: !familyEnabled && !familyFindings.length }), rule('lint-baseline-ratchet', lintFindings, { skipped: !lintEnabled })];
+  return [rule('managed-current', installed ? managedFindings : [], { skipped: !installed, advisories: managedAdvisories }), rule('config-valid', configFindings), rule('manifest-valid', manifestFindings), rule('family-valid', validFindings), rule('view-fresh', installed ? viewFindings : [], { skipped: !installed }), rule('undeclared-link', linkFindings), ratchet('coverage-ratchet', 'coverage', installed || baseline !== null), ratchet('resolution-ratchet', 'resolution', strict && (installed || baseline !== null)), rule('exception-valid', exceptionFindings), rule('family-drift', familyFindings, { skipped: !familyEnabled && !familyFindings.length }), rule('lint-baseline-ratchet', lintFindings, { skipped: !lintEnabled })];
 }
