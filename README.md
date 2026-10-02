@@ -21,7 +21,7 @@ Block Beaver makes the shape of a codebase visible. Scan a JavaScript, TypeScrip
 
 ## Supported environments
 
-The CLI and local browser console run with **Node.js 22.18+, 24, or 26**. Family contract loading uses Node's built-in TypeScript stripping and `module.registerHooks`, so it requires Node 22.18+ (or a compatible newer release). A repository can configure its own TypeScript loader package with `.blocks/config.json`'s `loader` field. CI checks Linux on Node 22.18.0, 22, 24, and 26 and macOS and Windows on Node 24. The scanner reads JavaScript, JSX, TypeScript, and TSX, including MJS, CJS, MTS, and CTS files. Git is needed for roadmap checks and worktrees. Install the published CLI with `npm install --save-dev --save-exact block-beaver@0.6.0`. Source contributors can use `npm ci` and `npm link` from this checkout.
+The CLI and local browser console run with **Node.js 22.18+, 24, or 26**. Family contract loading uses Node's built-in TypeScript stripping and `module.registerHooks`, so it requires Node 22.18+ (or a compatible newer release). A repository can configure its own TypeScript loader package with `.blocks/config.json`'s `loader` field. CI checks Linux on Node 22.18.0, 22, 24, and 26 and macOS and Windows on Node 24. The scanner reads JavaScript, JSX, TypeScript, and TSX, including MJS, CJS, MTS, and CTS files. Git is needed for roadmap checks and worktrees. Install the published CLI with `npm install --save-dev --save-exact block-beaver@0.7.0`. Source contributors can use `npm ci` and `npm link` from this checkout.
 
 ## Why use it?
 
@@ -36,8 +36,8 @@ The visual console explores and previews. The CLI and optional authenticated wor
 Requires **Node.js 22.18+**. From your project repository, inspect and install the managed integration:
 
 ```sh
-npx block-beaver@0.6.0 install --agents claude,codex --dry-run
-npx block-beaver@0.6.0 install --agents claude,codex
+npx block-beaver@0.7.0 install --agents claude,codex --dry-run
+npx block-beaver@0.7.0 install --agents claude,codex
 npx --no-install block-beaver start
 ```
 
@@ -55,7 +55,7 @@ Open **http://127.0.0.1:4173**, enter an absolute path to a project, and select 
 For a terminal first look:
 
 ```sh
-npx block-beaver@0.6.0 scan --root /path/to/project
+npx block-beaver@0.7.0 scan --root /path/to/project
 ```
 
 ## Use it with your AI editor
@@ -63,7 +63,7 @@ npx block-beaver@0.6.0 scan --root /path/to/project
 Install the command in the project you want to build:
 
 ```sh
-npm install --save-dev --save-exact block-beaver@0.6.0
+npm install --save-dev --save-exact block-beaver@0.7.0
 ```
 
 Then run one command for the project you want to build:
@@ -80,11 +80,11 @@ For setup without a live session, use `block-beaver init --root /path/to/your-pr
 
 ## Install, upgrade and audit
 
-For a repository-local installation, run `npx block-beaver@0.6.0 install`. Installation pins Block Beaver as a development dependency, detects npm, pnpm, Yarn or Bun, and plans managed editor skills, native hooks, Git hooks, CI and generated views. Use `--agents claude,codex` to select editors and `--dry-run` to inspect planned changes first.
+For a repository-local installation, run `npx block-beaver@0.7.0 install`. Installation pins Block Beaver as a development dependency, detects npm, pnpm, Yarn or Bun, and plans managed editor skills, native hooks, Git hooks, CI and generated views. Use `--agents claude,codex` to select editors and `--dry-run` to inspect planned changes first.
 
 `block-beaver upgrade` preserves owner content and refuses edited managed sections; `--force` repairs the owned sections. `block-beaver uninstall` removes owned integration while preserving project data. Removing `.blocks/` requires `--remove-data --yes`. Ignore/exclusion adjustments are opt-in through `--fix-ignores` and `--fix-excludes`.
 
-`block-beaver audit --staged` checks the staged snapshot; CI uses `audit --base merge-base --strict` after fetching its target branch and regenerating the view. In staged and range audits a gitignored, uncommitted view is regenerated inside the snapshot, so the pre-commit hook passes without a manual `update`; a committed view, and a working-tree `audit`, are still compared against the files on disk. `block-beaver baseline --lower [--dry-run]` records lower coverage and resolution counts in `.blocks/baseline.json` (for example after adding `ignore` entries) and never raises them; `upgrade` does the same. Stable rules include `config-valid`, `manifest-valid`, `family-valid`, `managed-current`, `view-fresh`, `undeclared-link`, `coverage-ratchet`, `resolution-ratchet`, `exception-valid`, `family-drift`, `lint-baseline-ratchet` and `reviewed-content`. Resolution is strict on request; coverage and opt-in lint allowances can only go down. Approved slices are applied and receipted with `block-beaver integrate ROADMAP BLOCK`. Native `hook-check` uses cached context and fails open on missing or invalid cache; audit and workflow commands enforce the recorded gates.
+`block-beaver audit --staged` checks the staged snapshot; CI uses `audit --base merge-base --strict` after fetching its target branch and regenerating the view. In staged and range audits a gitignored, uncommitted view is regenerated inside the snapshot, so the pre-commit hook passes without a manual `update`; a committed view, and a working-tree `audit`, are still compared against the files on disk. `block-beaver baseline --lower [--dry-run]` records lower coverage and resolution counts in `.blocks/baseline.json` (for example after adding `ignore` entries) and never raises them; `upgrade` does the same. Stable rules include `config-valid`, `manifest-valid`, `family-valid`, `managed-current`, `view-fresh`, `undeclared-link`, `coverage-ratchet`, `resolution-ratchet`, `exception-valid`, `family-drift`, `lint-baseline-ratchet` and `reviewed-content`. Resolution is strict on request; coverage and opt-in lint allowances can only go down. `audit` prints JSON by default. `--format summary` prints one line when it passes (`block-beaver audit: pass (N files, 0 errors)`, plus the warning count if there are warnings). On failure it prints `block-beaver audit: fail (N files, E errors)`, then one line per error (`rule · path · field · message - fix: <remediation>`) and the distinct warnings (`warning · code · path · message`). Exit codes do not change. The managed pre-commit and lefthook hooks and the GitHub and GitLab CI jobs use `--format summary`; run `block-beaver audit` for the full report. Approved slices are applied and receipted with `block-beaver integrate ROADMAP BLOCK`. Native `hook-check` uses cached context and fails open on missing or invalid cache; audit and workflow commands enforce the recorded gates.
 
 ## How it works
 
@@ -144,6 +144,12 @@ export default defineFamily({
 
 Each manifest module has one export and its ID must match the single `*` captured by the configured manifest glob. Use `implementation: { kind: 'module', module: './widget.js' }` for code-backed blocks or `{ kind: 'none' }` for data-only blocks. The `.blocks/index.json` generator writes the canonical JSON index; request it by setting `generators: ['index']` in the family contract. `registry` also requires `registry.out` in that family's config. Config-level `generators` can name custom generator modules.
 
+A link can also match values instead of naming one target. `links: [{ field: 'tools', to: 'tool', match: 'modes[]', kind: 'can-use' }]` adds an edge to every manifest of the `to` family whose `match` values share a primitive value with the source `field` values. `match` is a `.`/`[]` path over the target family's fields and is checked against its contract (`link-path-invalid`); `to` must name exactly one family (`link-target-family`). Strings, numbers and booleans are compared by type; objects, arrays and null are ignored. No match means no edge and no diagnostic, and a block never joins itself. Join edges are ordinary link edges, so `dependencies`, `undeclared-link`, `unused` and the map treat them like any other. Their evidence reads like `$.tools ↔ tool.$.modes[] → tool:create-note`.
+
+A contract can group its blocks on the map with `map: { group: { field, join?, empty?, format? } }`. Primitive values at the `field` path are joined with `join` (default `', '`). If there are none, the block uses `empty`, or stays ungrouped when `empty` is unset. `format` has exactly one `{value}` and also applies to the `empty` fallback. A family's `group` wins over config `map.groupBy`; a family with neither shows no grouping. Invalid settings fail `contract-invalid` at `$.map.group`, `.field`, `.join`, `.empty` or `.format`.
+
+Custom generators receive a context with `ctx.manifests`, `ctx.blocks()` and `ctx.entries(family?)`. `entries` is read-only and returns `{ ref, family, id, path, exportName, hash, value }` in `ctx.manifests` order, for every family when called without an argument. A generator that needs each manifest's import path and export name can read them from there. A changed path or export name re-runs cached generators.
+
 ### Adopting an existing family system
 
 A project that already has hand-built typed blocks (manifests, codegen and a map) can move its build-time engine onto families without changing manifest data. The following options exist for that move. Every one of them is optional, and leaving it out keeps 0.5.1 behaviour.
@@ -164,7 +170,29 @@ A project that already has hand-built typed blocks (manifests, codegen and a map
   - Each history snapshot adds `gone`, the blocks that had been removed by that point.
   - The map draws all of these. `map.groupBy` clusters blocks within a floor by a manifest field. `map.skins: [{ "id", "path", "tokens" }]` offers several skins with a viewer toggle; `map.skin` and `map.tokens` still work.
 
-The runtime kernel is not meant to replace an adopting project's own runtime schema or registry kernel. Result shapes, coercion leniency, plan kinds and registry ordering are domain decisions, and `block-beaver/kernel` stays small and generic. Generated non-JSON outputs keep their one-line "generated by block-beaver" header.
+### Taking over existing outputs
+
+`gen` will not overwrite a claimed output that has no Block Beaver header: it reports `output-conflict`, and the message names `gen --adopt`. `block-beaver gen --adopt PATH…` takes over the listed outputs; a bare `--adopt` takes over every conflicting claimed output. Adopted outputs report `status: "adopted"` and `bodyIdentical`, which is true when only a recognised header line differs. Review with `gen --adopt --dry-run`. `gen --check` never adopts and rejects `--adopt` as a usage error. A listed path that no generator claims fails `adopt-not-claimed`. Nothing is deleted, so a file that predates Block Beaver stays in place.
+
+Claimed outputs are known from registry `out` values, the index and history paths, literal `out:` values in generator modules and outs recorded in the generator cache. Contracts and checks may import generated outputs. If one is deleted, loading fails before the generator could recreate it, and Block Beaver reports `output-required-for-load` naming the output and the importer. Run `git restore <out>`, then `gen --adopt <out>` if it predates Block Beaver. Do not delete outputs that contracts or checks import.
+
+A generator can own part of a file instead of the whole file. `defineGenerator({ out: 'README.md', region: 'roadmap-badge', inputs, generate })` writes only between two marker lines in the file's comment style:
+
+- Markdown and HTML: `<!-- block-beaver:region ID -->` and `<!-- /block-beaver:region ID -->`
+- JS and TS: `// block-beaver:region ID` and `// /block-beaver:region ID`
+- CSS: `/* block-beaver:region ID */` and `/* /block-beaver:region ID */`
+
+Markers are whole lines. Region outputs have no header, the rest of the file is never touched and CRLF line endings are kept. Missing or duplicate markers fail `region-missing` or `region-duplicate` and nothing is written. `gen --check` compares only the region. Two generators may own different regions of one file; the same region twice, or a whole-file and a region output on one file, is `output-collision`. JSON outputs cannot have regions.
+
+The history label can come from code. Set `history.label` to `{ "module": ".blocks/history-label.ts" }`. The module's default export `(ctx) => string | null` receives the generator context, and an optional `export const inputs` declares its cache inputs. It runs only when a history entry is appended, `--label` still overrides it, and a plain string label is unchanged. An invalid module fails `history-label-invalid` and nothing is written.
+
+### Hosting the map
+
+`block-beaver view --format module --out PATH` exports the map as a module for a host app. `--detail full` (the default) embeds the whole graph. `--detail map` embeds only what the family map draws: blocks, family links, code reach, unused blocks, app and folder slabs with counts, and history. It leaves out the file-level graph and source evidence text. On a 174-block, 1800-file synthetic graph this was about 4% of the full size (8.95 MB to 388 KB). `--max-bytes N` fails with `view-too-large` (exit 2) and writes nothing when the module would be larger. The result reports `bytes` and `detail`.
+
+Config `view.detail` (`full` or `map`) sets the default for new exports. An existing `.blocks/view-exports.json` entry keeps its recorded detail unless `--detail` is given. Entries are `{ path, format, detail? }`, and `detail` is written only when it is not `full`. `gen`, `gen --check` and the `view-fresh` rule render each module at its recorded detail.
+
+The runtime kernel is not meant to replace an adopting project's own runtime schema or registry kernel. Result shapes, coercion leniency, plan kinds and registry ordering are domain decisions, and `block-beaver/kernel` stays small and generic. Generated non-JSON outputs keep their one-line "generated by block-beaver" header; region outputs have none.
 
 ```sh
 block-beaver gen                 # write generated outputs
@@ -195,7 +223,8 @@ The runtime-only package entry point is `block-beaver/kernel`. It exports the JS
 | `families[]` | `{ id, contract, manifests, exclude?, registry?: { out, exportName?, importExtension? }, generators? }`. |
 | `generators` | Repository-wide custom generator modules. |
 | `checks` | Set-wide check modules run after all families load. |
-| `history.label` | Label for the current state in the history slider. |
+| `history.label` | Label for the current state in the history slider: a string, or `{ module }` naming a module whose default export `(ctx) => string \| null` is evaluated when an entry is appended. |
+| `view.detail` | `full` (default) or `map`: the detail for new exported view modules. |
 | `map.floors` | Family IDs in map floor order, top first. |
 | `map.groupBy` | Manifest field that clusters blocks within a floor. |
 | `map.skin`, `map.tokens` | A single skin stylesheet and CSS custom-property tokens. |
