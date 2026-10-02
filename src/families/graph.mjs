@@ -139,6 +139,13 @@ export function attachMapParity(graph, { bindings = [], sourceText } = {}) {
   return graph;
 }
 
+/** A family's `map.group` label for one manifest: primitive values at the path joined, else `empty`, then `format`; null when there is nothing to show. */
+function groupLabel(value, { field, join = ', ', empty, format }) {
+  const values = valuesAt(value, field).map((entry) => entry.value).filter((leaf) => ['string', 'number', 'boolean'].includes(typeof leaf)).map(String).filter(Boolean);
+  const label = values.length ? values.join(join) : empty;
+  return label === undefined ? null : format === undefined ? label : format.replace('{value}', () => label);
+}
+
 /** Add validated family manifests to the existing project graph in place. */
 export function attachFamilies(graph, { load, project, history, bindings, sourceText, groupBy }) {
   const families = load.families || [], manifests = load.manifests || [];
@@ -171,8 +178,10 @@ export function attachFamilies(graph, { load, project, history, bindings, source
     const family = familyById.get(item.family);
     if (!family) continue; // The loader reports unknown family definitions.
     const node = { id, kind: 'block', family: item.family, floor: family.floor ?? families.indexOf(family), name: item.value.name, description: item.value.description, manifest: item.value, path: item.path, dependencies: [], app: null, usedBy: [] };
-    // map.groupBy (0.6.0): the map clusters a floor by this manifest field; scalar values only, else null.
-    if (grouping) node.group = ['string', 'number', 'boolean'].includes(typeof item.value?.[grouping]) ? String(item.value[grouping]) : null;
+    // map.group (0.7.0) on the family's contract wins over config map.groupBy (0.6.0); a floor without either carries no group.
+    const rule = family.map?.group;
+    if (rule) node.group = groupLabel(item.value, rule);
+    else if (grouping) node.group = ['string', 'number', 'boolean'].includes(typeof item.value?.[grouping]) ? String(item.value[grouping]) : null;
     graph.nodes.push(node); nodes.set(id, node); accepted.push({ item, node, family });
   }
   for (const family of families) {
@@ -245,7 +254,7 @@ export function attachFamilies(graph, { load, project, history, bindings, source
     const from = nodes.get(edge.from), to = nodes.get(edge.to);
     if (from && to && from.app !== to.app) edge.crossApp = true;
   }
-  graph.families = families.map((family, position) => ({ id: family.id, floor: family.floor ?? position, title: family.map?.title ?? family.id, blurb: family.map?.blurb ?? '', linkKinds: sorted((family.links || []).map((link) => link.kind)), count: accepted.filter(({ item }) => item.family === family.id).length })).sort((a, b) => a.floor - b.floor); // map floor order; sort is stable
+  graph.families = families.map((family, position) => ({ id: family.id, floor: family.floor ?? position, title: family.map?.title ?? family.id, blurb: family.map?.blurb ?? '', ...(family.map?.group ? { group: family.map.group } : {}), linkKinds: sorted((family.links || []).map((link) => link.kind)), count: accepted.filter(({ item }) => item.family === family.id).length })).sort((a, b) => a.floor - b.floor); // map floor order; sort is stable
   graph.familyDiagnostics = diagnostics;
   if (history !== undefined) {
     try { graph.history = historySnapshots(readHistory(JSON.stringify(history))); }
