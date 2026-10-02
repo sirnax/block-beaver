@@ -206,6 +206,21 @@ test('cache tracks imported source changes and generation always runs in a fresh
   assert.equal(output.label, 'test');
 });
 
+test('a history label module is a tracked input, and a label-only config still reaches the generate pass', async (t) => {
+  const label = { module: '.blocks/history-label.mjs' };
+  const data = await fixture(t, { '.blocks/history-label.mjs': "export default () => 'one';\n" }, configFor({ history: { label } }));
+  const first = await loadFamilies(data);
+  assert.equal((await loadFamilies(data)).key, first.key);
+  await writeFile(join(data.root, '.blocks/history-label.mjs'), "export default () => 'two';\n");
+  assert.notEqual((await loadFamilies(data)).key, first.key, 'editing the module invalidates the cached load');
+
+  const only = await fixture(t, { '.blocks/history-label.mjs': "export default (ctx) => 'only ' + ctx.blocks().length;\n" }, { schemaVersion: 1, history: { label } });
+  const run = await loadFamilies({ ...only, generate: { keys: [], graph: { nodes: [] }, label: null, labelModule: label.module } });
+  assert.deepEqual([run.diagnostics, run.label], [[], 'only 0'], 'no families or generators, but the label module still ran');
+  const plain = await loadFamilies({ ...only, generate: { keys: [], graph: { nodes: [] }, label: null } });
+  assert.equal(plain.label, undefined, 'without labelModule in the request nothing is evaluated');
+});
+
 test('configured loader uses its package and does not install Block Beaver hooks', async (t) => {
   const config = configFor({ loader: 'fixture-loader' });
   const data = await fixture(t, {

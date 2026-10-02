@@ -9,7 +9,7 @@ import { isSchema, validateManifest } from '../kernel/index.mjs';
 import { ignoreMatcher, loadProjectModel } from '../project-model.mjs';
 import { parseFamiliesConfig, isFamilyGlob, isFamilyPath } from './config.mjs';
 import { canonicalJson, manifestHash } from './canonical.mjs';
-import { captureManifestId, discoverFiles, matchManifests } from './glob.mjs';
+import { captureManifestId, discoverFiles, matchGlobs, matchManifests } from './glob.mjs';
 import { assertSafeSource, installFamilyHooks, runtimeSourcePath } from './hooks.mjs';
 
 const coreKeys = new Set(['id', 'family', 'version', 'name', 'description', 'rationale', 'implementation', 'files']);
@@ -281,8 +281,23 @@ async function execute(message) {
       const manifests = readonly(result.manifests.map((item) => item.value));
       const selected = new Set(generate.keys);
       let ctx, contextError;
-      try { ctx = readonly({ config: jsonCopy(config), families: jsonCopy(result.families), manifests: (family) => readonly(manifests.filter((item) => item.family === family)), blocks: () => manifests, graph: jsonCopy(generate.graph), resolve: (from, spec) => readonly(project.resolveImport(from, spec, { mode: 'import' })), label: generate.label ?? null }); }
+      const buildContext = (label) => readonly({ config: jsonCopy(config), families: jsonCopy(result.families), manifests: (family) => readonly(manifests.filter((item) => item.family === family)), blocks: () => manifests, graph: jsonCopy(generate.graph), resolve: (from, spec) => readonly(project.resolveImport(from, spec, { mode: 'import' })), label });
+      try { ctx = buildContext(generate.label ?? null); }
       catch (error) { contextError = new TypeError(`Generator context must contain only JSON data: ${error.message}`); }
+      // A derived history label runs first, fresh in this child, and becomes ctx.label for every generator below.
+      if (generate.labelModule && !contextError) {
+        const path = generate.labelModule;
+        try {
+          const exports = await importSource(path);
+          if (typeof exports.default !== 'function') throw new TypeError('its default export must be a function (ctx) => string | null');
+          if (exports.inputs !== undefined && (!Array.isArray(exports.inputs) || exports.inputs.some((input) => !isFamilyGlob(input)))) throw new TypeError('inputs must be an array of repository-relative globs');
+          const value = await exports.default(ctx);
+          if (value !== null && typeof value !== 'string') throw new TypeError(`it returned ${typeof value}; the label must be a string or null`);
+          for (const input of matchGlobs(discovered, exports.inputs ?? [])) loadedFiles.add(input);
+          result.label = value;
+          ctx = buildContext(value);
+        } catch (error) { diagnostic('history-label-invalid', `History label module ${path} is invalid: ${error?.message || String(error)}`, { file: path, field: '$.history.label.module' }, 'family-drift'); }
+      }
       for (const info of result.generators) {
         if (info.source !== 'custom' || !selected.has(info.key)) continue;
         try {

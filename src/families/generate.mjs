@@ -2,7 +2,7 @@ import { posix } from 'node:path';
 import { readProjectFile, writeProjectFiles } from '../project-files.mjs';
 import { indexPath, renderIndex, renderRegistry } from './builtin-generators.mjs';
 import { cachePath, hashInputs, inputsHash, outputHash, readCache, serializeCache } from './cache.mjs';
-import { isFamilyPath } from './config.mjs';
+import { historyLabelModule, isFamilyPath } from './config.mjs';
 import { discoverFiles, matchGlobs } from './glob.mjs';
 import { appendHistory, historyPath, readHistory, serializeHistory } from './history.mjs';
 
@@ -76,7 +76,7 @@ export async function planGeneration({ root, config = {}, graph, paths, label = 
   const diagnostics = [...(loaded.diagnostics ?? [])];
   const families = [...(loaded.families ?? [])].sort((a, b) => configIndexOf(a) - configIndexOf(b));
   const manifests = loaded.manifests ?? [];
-  const resolvedLabel = label ?? config?.history?.label ?? null;
+  let resolvedLabel = label ?? (typeof config?.history?.label === 'string' ? config.history.label : null);
   // Everything exposed by ctx can affect the result, even when it is not a
   // matched input file. A scan's wall-clock timestamp is not project state.
   const { scannedAt: _scannedAt, ...stableGraph } = graph ?? {};
@@ -101,7 +101,7 @@ export async function planGeneration({ root, config = {}, graph, paths, label = 
   if (asks('history')) claims.push({ key: 'history', kind: 'history', out: historyPath, inputs: [] });
 
   // 2. Reject unsafe outputs, then collisions, before any generator runs.
-  const protectedPaths = new Set(['.blocks/config.json', '.blocks/WORKFLOW.md', '.blocks/managed-files.json', '.blocks/install.json', '.blocks/baseline.json', '.blocks/view-exports.json', '.blocks/view/exports.json', '.github/copilot-instructions.md', cachePath, ...manifests.map((item) => item.path), ...families.map((family) => family.config?.contract), ...customs.map((info) => info.path), ...(Array.isArray(config?.checks) ? config.checks.filter(isFamilyPath) : [])].filter(Boolean).map((path) => path.toLowerCase()));
+  const protectedPaths = new Set(['.blocks/config.json', '.blocks/WORKFLOW.md', '.blocks/managed-files.json', '.blocks/install.json', '.blocks/baseline.json', '.blocks/view-exports.json', '.blocks/view/exports.json', '.github/copilot-instructions.md', cachePath, ...manifests.map((item) => item.path), ...families.map((family) => family.config?.contract), ...customs.map((info) => info.path), historyLabelModule(config), ...(Array.isArray(config?.checks) ? config.checks.filter(isFamilyPath) : [])].filter(Boolean).map((path) => path.toLowerCase()));
   const safe = [];
   for (const claim of claims) {
     const reason = unsafeReason(claim, protectedPaths);
@@ -130,6 +130,13 @@ export async function planGeneration({ root, config = {}, graph, paths, label = 
     else { currents.set(claim.key, read.text); readable.push(claim); }
   }
 
+  // 3b. A label module runs (in the generate pass) only when an entry will really be appended and no --label was given.
+  let labelModule = null;
+  if (label === null && historyLabelModule(config) && currents.has('history')) {
+    try { if (appendHistory(readHistory(currents.get('history')), new Map(manifests.map((item) => [item.ref, item.hash])), { now: stamp }).changed) labelModule = historyLabelModule(config); }
+    catch { /* an unreadable history is reported when it is rendered */ }
+  }
+
   // 4. Custom generators: skip those whose inputs, code and output are unchanged.
   const cacheRead = await safeRead(root, cachePath);
   const cache = readCache(cacheRead.text);
@@ -140,17 +147,18 @@ export async function planGeneration({ root, config = {}, graph, paths, label = 
     const files = [...new Set([...(await discoverFiles(root)), ...(paths ?? [])])];
     for (const claim of cacheable) {
       const matched = matchGlobs(files, claim.info.inputs);
-      hashes.set(claim.key, inputsHash({ closureHash: claim.info.closureHash, out: claim.out, inputs: await hashInputs(root, matched), context: generationContext }));
+      hashes.set(claim.key, inputsHash({ closureHash: claim.info.closureHash, out: claim.out, inputs: await hashInputs(root, matched), context: labelModule ? { ...generationContext, label: { derived: labelModule } } : generationContext }));
     }
   }
-  const skipped = new Set(cacheable.filter((claim) => {
+  const skipped = new Set(labelModule ? [] : cacheable.filter((claim) => {
     const entry = cache.entries[claim.key], current = currents.get(claim.key);
     return hashes.has(claim.key) && entry?.inputsHash === hashes.get(claim.key) && current !== null && entry.outHash === outputHash(current);
   }).map((claim) => claim.key));
   const toRun = wanted.filter((claim) => !skipped.has(claim.key)).map((claim) => claim.key);
   const generated = new Map();
-  if (toRun.length) {
-    const result = await load({ ...base, generate: { keys: toRun, graph, label: resolvedLabel } });
+  if (toRun.length || labelModule) {
+    const result = await load({ ...base, generate: { keys: toRun, graph, label: resolvedLabel, ...(labelModule ? { labelModule } : {}) } });
+    if (labelModule && typeof result.label === 'string') resolvedLabel = result.label;
     for (const output of result.outputs ?? []) generated.set(output.key, output);
     const outputDiagnostics = new Set((result.outputs ?? []).filter((output) => output.diagnostic).map((output) => JSON.stringify(output.diagnostic)));
     for (const item of result.diagnostics ?? []) {
