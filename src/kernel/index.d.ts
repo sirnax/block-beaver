@@ -58,7 +58,11 @@ export type SetCheckIssues = readonly {message:string;block?:string;field?:strin
 type ImplementationOf<F extends FamilyDefinition> = F['implementation'][number] extends infer K ? K extends string
   ? {kind:K} & (K extends 'module' ? {module:string} : unknown) & (F['implementationFields'] extends infer R ? K extends keyof R ? R[K] extends ObjectNode ? Infer<R[K]> : unknown : unknown : unknown) : never : never;
 export type ManifestOf<F extends FamilyDefinition> = Omit<CoreManifest,'implementation'> & {family:F['id'];implementation:ImplementationOf<F>} & Infer<F['fields']>;
-export type GeneratorContext = {config:unknown;families:readonly unknown[];manifests(familyId:string):readonly CoreManifest[];blocks():readonly CoreManifest[];graph:unknown;resolve(from:string,spec:string):unknown;label:string|null};
+/** A loaded manifest with where it lives: `path` is repository-relative and `exportName` is its single runtime export. */
+export type GeneratorEntry = Readonly<{ref:string;family:string;id:string;path:string;exportName:string;hash:string;value:CoreManifest}>;
+export type GeneratorContext = {config:unknown;families:readonly unknown[];manifests(familyId:string):readonly CoreManifest[];blocks():readonly CoreManifest[];
+  /** Manifests with their path and export name, in `manifests`/`blocks` order; omit `familyId` for every family. */
+  entries(familyId?:string):readonly GeneratorEntry[];graph:unknown;resolve(from:string,spec:string):unknown;label:string|null};
 export type GeneratorDefinition = {out:string;inputs:readonly string[];cache?:boolean;generate(ctx:GeneratorContext):string|Promise<string>};
 export declare function defineFamily<const F extends FamilyDefinition>(definition:F): DeepReadonly<F>;
 export declare function defineGenerator<const G extends GeneratorDefinition>(definition:G): DeepReadonly<G>;

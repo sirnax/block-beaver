@@ -2,6 +2,7 @@ import { posix } from 'node:path';
 import { readProjectFile, writeProjectFiles } from '../project-files.mjs';
 import { indexPath, renderIndex, renderRegistry } from './builtin-generators.mjs';
 import { cachePath, hashInputs, inputsHash, outputHash, readCache, serializeCache } from './cache.mjs';
+import { explainMissingOutputs } from './claimed-outputs.mjs';
 import { isFamilyPath } from './config.mjs';
 import { discoverFiles, matchGlobs } from './glob.mjs';
 import { appendHistory, historyPath, readHistory, serializeHistory } from './history.mjs';
@@ -47,6 +48,17 @@ const toDate = (now) => {
   return date;
 };
 
+/** A first line another tool may have written as a header: a comment in the output's own style that mentions generation. */
+const foreignHeader = { line: /^\s*(?:\/\/.*|\/\*.*\*\/\s*)$/, block: /^\s*\/\*.*\*\/\s*$/, html: /^\s*<!--.*-->\s*$/ };
+const withoutFirstLine = (text) => text.slice(text.indexOf('\n') + 1 || text.length);
+/** Adoption compares bodies only: the header line is the one difference a lossless takeover makes. */
+function bodyIdentical(out, current, expected) {
+  const lf = (text) => text.replace(/\r\n?/g, '\n');
+  const body = withoutFirstLine(lf(expected)), first = lf(current).split('\n', 1)[0];
+  return lf(current) === body || (!!foreignHeader[headerStyle(out)]?.test(first) && /generated/i.test(first) && withoutFirstLine(lf(current)) === body);
+}
+const writes = (item) => item.status === 'stale' || item.status === 'missing' || item.status === 'adopted';
+
 const fileHashesOf = (graph) => Object.fromEntries((graph?.nodes ?? []).filter((node) => node.kind === 'file' && node.hash).map((node) => [node.path, node.hash]));
 
 async function safeRead(root, path) {
@@ -67,13 +79,14 @@ function unsafeReason(claim, protectedPaths) {
 /**
  * Decide every generated output without touching the disk. Order is fixed: registries in
  * family order, index, family generators, top-level generators, extra outputs, history.
+ * `adopt` (true, or output paths) takes over existing outputs that lack a header.
  */
-export async function planGeneration({ root, config = {}, graph, paths, label = null, now, extraOutputs = [], loadFamilies } = {}) {
+export async function planGeneration({ root, config = {}, graph, paths, label = null, now, extraOutputs = [], loadFamilies, adopt = null } = {}) {
   const stamp = toDate(now);
   const load = loadFamilies ?? (await import('./loader.mjs')).loadFamilies;
   const base = { root, config, paths, fileHashes: fileHashesOf(graph), ...(graph?.resolutionSignature ? { resolutionSignature: graph.resolutionSignature } : {}) };
   const loaded = await load(base);
-  const diagnostics = [...(loaded.diagnostics ?? [])];
+  const diagnostics = await explainMissingOutputs(root, config, [...(loaded.diagnostics ?? [])]);
   const families = [...(loaded.families ?? [])].sort((a, b) => configIndexOf(a) - configIndexOf(b));
   const manifests = loaded.manifests ?? [];
   const resolvedLabel = label ?? config?.history?.label ?? null;
@@ -81,7 +94,7 @@ export async function planGeneration({ root, config = {}, graph, paths, label = 
   // matched input file. A scan's wall-clock timestamp is not project state.
   const { scannedAt: _scannedAt, ...stableGraph } = graph ?? {};
   const generationContext = { config, label: resolvedLabel, graph: stableGraph,
-    families, manifests: manifests.map((item) => ({ family: item.family, id: item.id, hash: item.hash, value: item.value })) };
+    families, manifests: manifests.map((item) => ({ ref: item.ref, family: item.family, id: item.id, path: item.path, exportName: item.exportName, hash: item.hash, value: item.value })) };
   const asks = (kind) => families.some((family) => family.generators?.includes(kind));
 
   // 1. Claims, in the fixed order.
@@ -99,6 +112,9 @@ export async function planGeneration({ root, config = {}, graph, paths, label = 
   claims.push(...customs.filter((info) => !info.family || !known.has(info.family)).map(customClaim));
   for (const extra of extraOutputs) claims.push({ key: extra.key, kind: 'extra', out: extra.out, extra, inputs: extra.inputs ?? [] });
   if (asks('history')) claims.push({ key: 'history', kind: 'history', out: historyPath, inputs: [] });
+  const listed = adopt && adopt !== true ? new Set(adopt) : null;
+  const adopting = (out) => adopt === true || !!listed?.has(out);
+  if (listed) for (const out of listed) if (!claims.some((claim) => claim.out === out)) diagnostics.push(problem('adopt-not-claimed', `${out} is not claimed by any generator, so there is nothing to adopt`, { file: out }));
 
   // 2. Reject unsafe outputs, then collisions, before any generator runs.
   const protectedPaths = new Set(['.blocks/config.json', '.blocks/WORKFLOW.md', '.blocks/managed-files.json', '.blocks/install.json', '.blocks/baseline.json', '.blocks/view-exports.json', '.blocks/view/exports.json', '.github/copilot-instructions.md', cachePath, ...manifests.map((item) => item.path), ...families.map((family) => family.config?.contract), ...customs.map((info) => info.path), ...(Array.isArray(config?.checks) ? config.checks.filter(isFamilyPath) : [])].filter(Boolean).map((path) => path.toLowerCase()));
@@ -153,7 +169,7 @@ export async function planGeneration({ root, config = {}, graph, paths, label = 
     const result = await load({ ...base, generate: { keys: toRun, graph, label: resolvedLabel } });
     for (const output of result.outputs ?? []) generated.set(output.key, output);
     const outputDiagnostics = new Set((result.outputs ?? []).filter((output) => output.diagnostic).map((output) => JSON.stringify(output.diagnostic)));
-    for (const item of result.diagnostics ?? []) {
+    for (const item of await explainMissingOutputs(root, config, result.diagnostics ?? [])) {
       if (!outputDiagnostics.has(JSON.stringify(item)) && !diagnostics.some((existing) => JSON.stringify(existing) === JSON.stringify(item))) diagnostics.push(item);
     }
   }
@@ -193,10 +209,10 @@ export async function planGeneration({ root, config = {}, graph, paths, label = 
     if (current === null) status = 'missing';
     else if (current === expected) status = 'fresh';
     else if (headerStyle(claim.out) !== 'none' && !generatedHeader.test(current)) {
-      status = 'conflict';
-      diagnostics.push(problem('output-conflict', `${claim.out} exists and was not generated by block-beaver; refusing to overwrite it`, { file: claim.out }));
+      status = adopting(claim.out) ? 'adopted' : 'conflict';
+      if (status === 'conflict') diagnostics.push(problem('output-conflict', `${claim.out} exists and was not generated by block-beaver; refusing to overwrite it (gen --adopt ${claim.out} takes it over)`, { file: claim.out }));
     } else status = 'stale';
-    outputs.push({ key: claim.key, out: claim.out, expected, current, status });
+    outputs.push({ key: claim.key, out: claim.out, expected, current, status, ...(status === 'adopted' ? { bodyIdentical: bodyIdentical(claim.out, current, expected) } : {}) });
     if (claim.kind === 'custom' && status !== 'conflict') settled.set(claim.key, expected);
   }
 
@@ -204,17 +220,17 @@ export async function planGeneration({ root, config = {}, graph, paths, label = 
   let cacheUpdate = null;
   if (!cacheRead.error) {
     const entries = {};
-    for (const claim of cacheable) if (settled.has(claim.key) && hashes.has(claim.key)) entries[claim.key] = { inputsHash: hashes.get(claim.key), outHash: outputHash(settled.get(claim.key)) };
+    for (const claim of cacheable) if (settled.has(claim.key) && hashes.has(claim.key)) entries[claim.key] = { inputsHash: hashes.get(claim.key), outHash: outputHash(settled.get(claim.key)), out: claim.out };
     const content = serializeCache(entries);
     if (content !== cacheRead.text && (cacheRead.text !== null || Object.keys(entries).length)) cacheUpdate = { path: cachePath, before: cacheRead.text, content };
   }
   return { outputs, diagnostics, cacheUpdate };
 }
 
-/** Write stale and missing outputs (and the cache) through the safe writer; refuse on any error. */
+/** Write stale, missing and adopted outputs (and the cache) through the safe writer; refuse on any error. */
 export async function applyGeneration(root, plan) {
   if (plan.diagnostics.some((item) => item.severity === 'error')) return { written: [], diagnostics: plan.diagnostics };
-  const files = plan.outputs.filter((item) => item.status === 'stale' || item.status === 'missing').map((item) => ({ path: item.out, before: item.current, content: item.expected }));
+  const files = plan.outputs.filter(writes).map((item) => ({ path: item.out, before: item.current, content: item.expected }));
   if (plan.cacheUpdate) files.push({ path: plan.cacheUpdate.path, before: plan.cacheUpdate.before, content: plan.cacheUpdate.content });
   try {
     const changed = await writeProjectFiles(root, files);
@@ -236,7 +252,7 @@ export function checkGeneration(plan) {
 }
 
 /** Outputs a plan would still write. */
-export const changedOutputs = (plan) => plan.outputs.filter((item) => item.status === 'stale' || item.status === 'missing').map((item) => item.out);
+export const changedOutputs = (plan) => plan.outputs.filter(writes).map((item) => item.out);
 
 /** Generation kept changing its own inputs; name the files still changing on the last pass. */
 export const generatorUnstable = (files, passes) => problem('generator-unstable',
