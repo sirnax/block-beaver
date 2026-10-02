@@ -50,7 +50,7 @@ const toDate = (now) => {
 };
 
 /** A first line another tool may have written as a header: a comment in the output's own style that mentions generation. */
-const foreignHeader = { line: /^\s*(?:\/\/.*|\/\*.*\*\/\s*)$/, block: /^\s*\/\*.*\*\/\s*$/, html: /^\s*<!--.*-->\s*$/ };
+const foreignHeader = { line: /^\s*(?:\/\/.*|\/\*.*\*\/\s*)$/, block: /^\s*\/\*.*\*\/\s*$/, html: /^\s*<!--[\s\S]*--!?>\s*$/ };
 const withoutFirstLine = (text) => text.slice(text.indexOf('\n') + 1 || text.length);
 /** Adoption compares bodies only: the header line is the one difference a lossless takeover makes. */
 function bodyIdentical(out, current, expected) {
