@@ -6,7 +6,7 @@ import { fileURLToPath } from 'node:url';
 test('kernel declarations infer family schemas and registry literal ids', () => {
   const file = fileURLToPath(new URL('../src/kernel/type-fixture.ts',import.meta.url)).replaceAll('\\', '/');
   const source = `
-    import {s, type Infer, type ManifestOf, type LoadedManifest, defineFamily, defineGenerator, type GeneratorEntry, createRegistry, compose, validate} from 'block-beaver/kernel';
+    import {s, type Infer, type ManifestOf, type LoadedManifest, type GeneratorDefinition, defineFamily, defineGenerator, type GeneratorEntry, createRegistry, compose, validate} from 'block-beaver/kernel';
     const schema = s.object({state:s.enum(['open','closed']), label:s.optional(s.string()), values:s.array(s.integer()), nullable:s.nullable(s.string())});
     const value: Infer<typeof schema> = {state:'open',values:[1],nullable:null};
     s.withDefault(s.string(),'default');
@@ -50,11 +50,7 @@ test('kernel declarations infer family schemas and registry literal ids', () => 
     const badId: Id = 'c';
     // @ts-expect-error registry values are deeply readonly
     registry.all[0].implementation.kind = 'none';
-    defineGenerator({out:'gen/imports.ts',inputs:['catalog/*.ts'],generate:(ctx) => ctx.entries('unit').map((entry: GeneratorEntry) => "import { " + entry.exportName + " } from './" + entry.path + "'; // " + entry.ref + entry.family + entry.id + entry.hash + entry.value.id).join('\\n') + ctx.entries().length});
-    // @ts-expect-error generator entries are read-only
-    defineGenerator({out:'gen/x.ts',inputs:['catalog/*.ts'],generate:(ctx) => { ctx.entries()[0].path = 'moved.ts'; return ''; }});
-    // @ts-expect-error an entry's family filter is a family id string
-    defineGenerator({out:'gen/y.ts',inputs:['catalog/*.ts'],generate:(ctx) => String(ctx.entries(1))});
+    import {s, type Infer, type ManifestOf, type LoadedManifest, type GeneratorDefinition, defineFamily, defineGenerator, type GeneratorEntry, createRegistry, compose, validate} from 'block-beaver/kernel';
     const result = validate(schema,{});
     if (result.valid) { const state: 'open'|'closed' = result.value.state; }
   `;

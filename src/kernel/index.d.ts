@@ -66,7 +66,9 @@ export type GeneratorContext = {config:unknown;families:readonly unknown[];manif
   /** Manifests with their path and export name, in `manifests`/`blocks` order; omit `familyId` for every family. */
   entries(familyId?:string):readonly GeneratorEntry[];graph:unknown;resolve(from:string,spec:string):unknown;label:string|null};
 export type HistoryLabel = (ctx:GeneratorContext)=>string|null|Promise<string|null>;
-export type GeneratorDefinition = {out:string;inputs:readonly string[];cache?:boolean;generate(ctx:GeneratorContext):string|Promise<string>};
+export type GeneratorDefinition = {out:string;
+  /** Kebab-case region id: the generator owns only the lines between whole-line `block-beaver:region ID` and `/block-beaver:region ID` markers in `out` (.md/.html/.htm, .js/.ts family or .css comment style), with no header. */
+  region?:string;inputs:readonly string[];cache?:boolean;generate(ctx:GeneratorContext):string|Promise<string>};
 export declare function defineFamily<const F extends FamilyDefinition>(definition:F): DeepReadonly<F>;
 export declare function defineGenerator<const G extends GeneratorDefinition>(definition:G): DeepReadonly<G>;
 export declare function isFamily(value:unknown): value is FamilyDefinition;

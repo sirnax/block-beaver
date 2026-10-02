@@ -11,6 +11,7 @@ import { parseFamiliesConfig, isFamilyGlob, isFamilyPath } from './config.mjs';
 import { canonicalJson, manifestHash } from './canonical.mjs';
 import { captureManifestId, discoverFiles, matchGlobs, matchManifests } from './glob.mjs';
 import { assertSafeSource, installFamilyHooks, runtimeSourcePath } from './hooks.mjs';
+import { regionIdPattern, regionStyle, regionStyles } from './regions.mjs';
 
 const coreKeys = new Set(['id', 'family', 'version', 'name', 'description', 'rationale', 'implementation', 'files']);
 const idPattern = /^[a-z][a-z0-9]*(-[a-z0-9]+)*$/;
@@ -278,10 +279,13 @@ async function execute(message) {
         if (!object(definition) || definition[Symbol.for('block-beaver.generator')] !== true || !isFamilyPath(definition.out) || !Array.isArray(definition.inputs) || !definition.inputs.length || definition.inputs.some((input) => !isFamilyGlob(input)) || !definition.inputs.some((input) => !input.startsWith('!')) || typeof definition.generate !== 'function' || (definition.cache !== undefined && typeof definition.cache !== 'boolean')) {
           diagnostic('generator-invalid', 'Generator needs a defineGenerator() default, safe out, nonempty input globs and generate function', { file: path, ...(family ? { family } : {}) }); continue;
         }
+        if (definition.region !== undefined && (typeof definition.region !== 'string' || !regionIdPattern.test(definition.region) || !regionStyle(definition.out))) {
+          diagnostic('generator-invalid', `Generator region must be a kebab-case id, and a region out needs a comment style (${regionStyles})`, { file: path, ...(family ? { family } : {}) }); continue;
+        }
         const { generate: fn, ...metadata } = definition;
         try { jsonCopy(metadata); } catch { diagnostic('generator-invalid', 'Generator metadata must contain only JSON data', { file: path, ...(family ? { family } : {}) }); continue; }
         const key = `custom:${path}`;
-        result.generators.push({ key, source: 'custom', ...(family ? { family } : {}), path, out: definition.out, inputs: [...definition.inputs], cache: definition.cache !== false, closureHash: '' });
+        result.generators.push({ key, source: 'custom', ...(family ? { family } : {}), path, out: definition.out, ...(definition.region === undefined ? {} : { region: definition.region }), inputs: [...definition.inputs], cache: definition.cache !== false, closureHash: '' });
         generatorFunctions.set(key, fn);
       } catch (error) { errorDiagnostic(error, { file: path, ...(family ? { family } : {}) }); }
     }
