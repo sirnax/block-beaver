@@ -23,7 +23,7 @@ All notable user visible changes are recorded here. Releases follow semantic ver
   - It may lower counts in `.blocks/baseline.json`; it never raises them.
   - The managed `WORKFLOW.md` and agent skill reference gain a paragraph on the staged view and on lowering the baseline, so `upgrade` rewrites those managed files.
 - **Floor order direction.** `map.floors` lists floors top first, the order the map already draws `families`. This deliberately differs from the "bottom to top" wording in #29, to keep existing maps unchanged.
-- **Kernel types.** `FamilyDefinition.implementation` is now `readonly string[]`, and `ManifestOf` derives implementation arms from the family.
+- **Kernel types.** `FamilyDefinition.implementation` is now `readonly string[]`, and `ManifestOf` derives implementation arms from the family. `check`, `checkAll` and generator callbacks keep their 0.5.1 parameter types. A family with `dataKinds` can annotate a callback parameter with the new `LoadedManifest` type to compare its data kinds.
 
 **Changes**
 

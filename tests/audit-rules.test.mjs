@@ -6,6 +6,7 @@ import { dirname, join } from 'node:path';
 import { execFileSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { evaluateAuditRules, auditCounts } from '../src/audit-rules.mjs';
+import { parseFamiliesConfig } from '../src/families/config.mjs';
 import { auditProject, recordException } from '../src/compliance.mjs';
 import { installCompliance } from '../src/compliance-setup.mjs';
 
@@ -421,4 +422,14 @@ export default defineFamily({ id: 'part', fields: s.object({}), implementation: 
   const fixed = await auditProject(root);
   assert.equal(fixed.rules.find((rule) => rule.id === 'family-valid').pass, true, JSON.stringify(fixed.rules.find((rule) => rule.id === 'family-valid')));
   assert.equal((await generateProject(root, { check: true })).diagnostics.some((item) => item.rule === 'family-valid'), false);
+});
+
+test('config-valid findings keep the diagnostic code and field path', () => {
+  const graph = { nodes: [], edges: [], diagnostics: [] };
+  const config = { schemaVersion: 1, apps: [], families: [{ id: 'unit', contract: 'u.ts', manifests: 'u/*.unit.ts' }], map: { bindings: [{ family: 'unit', call: true, registry: 'units' }] } };
+  const rules = evaluateAuditRules({ graph: { ...graph, familyDiagnostics: parseFamiliesConfig(config).diagnostics }, config });
+  const findings = rules.find((item) => item.id === 'config-valid').findings;
+  assert.equal(findings.length, 1);
+  assert.equal(findings[0].field, '$.map.bindings[0]');
+  assert.equal(findings[0].code, 'family-path-invalid');
 });

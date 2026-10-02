@@ -554,6 +554,21 @@ export default defineGenerator({ out: 'generated/count.json', inputs: ['catalog/
   assert.equal(again.passes, 1);
 });
 
+test('a generator that throws during the verification plan fails gen instead of reporting convergence', async (t) => {
+  const { generateProject } = await import('../src/families/commands.mjs');
+  const root = await realProject(t, {
+    'generators/late.ts': `import { defineGenerator } from 'block-beaver/kernel';
+import { readFileSync } from 'node:fs';
+const file = new URL('../generated/late.json', import.meta.url);
+let n = 0;
+try { n = JSON.parse(readFileSync(file, 'utf8')).n; } catch {}
+export default defineGenerator({ out: 'generated/late.json', inputs: ['catalog/*.entry.ts'], cache: false, generate() { if (n >= 3) throw new Error('late failure'); return JSON.stringify({ n: n + 1 }); } });\n`,
+  });
+  const result = await generateProject(root, { now: NOW });
+  assert.equal(result.ok, false);
+  assert.ok(result.diagnostics.some((item) => item.severity === 'error' && /late failure/.test(item.message)), JSON.stringify(result.diagnostics));
+});
+
 test('a generator that settles on the third write is stable, and gen --check agrees', async (t) => {
   const { generateProject } = await import('../src/families/commands.mjs');
   const root = await realProject(t, {

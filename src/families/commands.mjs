@@ -79,7 +79,9 @@ export async function generateProject(inputRoot, { check = false, label, dryRun 
     const verify = await planGeneration({ root, config: ready.config, graph: verifyGraph, paths: graph || paths ? ready.paths : graphPaths(verifyGraph), label: label ?? null, now,
       extraOutputs: extraOutputs ?? [], loadFamilies });
     passes += 1;
-    if (changedOutputs(verify).length) applied.diagnostics = [...applied.diagnostics, generatorUnstable(changedOutputs(verify), passes)];
+    // A verification plan that errors (for example a generator throwing on the third write) is not convergence.
+    if (hasError(verify.diagnostics)) applied.diagnostics = [...applied.diagnostics, ...verify.diagnostics];
+    else if (changedOutputs(verify).length) applied.diagnostics = [...applied.diagnostics, generatorUnstable(changedOutputs(verify), passes)];
   }
   if (!hasError(applied.diagnostics) && extraOutputs === undefined && viewOutputs.length) {
     // Registries add source files and history changes the view. Render exports

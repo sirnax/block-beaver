@@ -6,7 +6,7 @@ import { fileURLToPath } from 'node:url';
 test('kernel declarations infer family schemas and registry literal ids', () => {
   const file = fileURLToPath(new URL('../src/kernel/type-fixture.ts',import.meta.url)).replaceAll('\\', '/');
   const source = `
-    import {s, type Infer, type ManifestOf, defineFamily, createRegistry, compose, validate} from 'block-beaver/kernel';
+    import {s, type Infer, type ManifestOf, type LoadedManifest, defineFamily, createRegistry, compose, validate} from 'block-beaver/kernel';
     const schema = s.object({state:s.enum(['open','closed']), label:s.optional(s.string()), values:s.array(s.integer()), nullable:s.nullable(s.string())});
     const value: Infer<typeof schema> = {state:'open',values:[1],nullable:null};
     s.withDefault(s.string(),'default');
@@ -24,7 +24,8 @@ test('kernel declarations infer family schemas and registry literal ids', () => 
     const arms = defineFamily({id:'arms',fields:s.object({}),implementation:['module','none','plan'],dataKinds:['plan'],implementationFields:{module:s.object({export:s.optional(s.string()),loading:s.optional(s.enum(['eager','lazy']))}),plan:s.object({steps:s.integer()})}});
     const base = {id:'a',family:'arms',version:1,name:'a',description:'a',rationale:'a'} as const;
     defineFamily({id:'set',fields:s.object({}),implementation:['none'],checkAll:(manifests,{all,get}) => manifests.length || all('other').length || get('other:x') ? [] : [{message:'empty',code:'empty'}]});
-    defineFamily({id:'plans',fields:s.object({}),implementation:['plan'],dataKinds:['plan'],check:(manifest) => manifest.implementation.kind === 'plan' ? [] : [{path:'$.implementation',message:'plan only'}]});
+    defineFamily({id:'plans',fields:s.object({}),implementation:['plan'],dataKinds:['plan'],check:(manifest: LoadedManifest) => manifest.implementation.kind === 'plan' ? [] : [{path:'$.implementation',message:'plan only'}]});
+    defineFamily({id:'legacy',fields:s.object({}),implementation:['module'],check:(manifest) => manifest.implementation.kind === 'module' && manifest.implementation.module.endsWith('.ts') ? [] : [{path:'$',message:'ts only'}]});
     // @ts-expect-error set-wide issues need a message
     defineFamily({id:'set',fields:s.object({}),implementation:['none'],checkAll:() => [{code:'x'}]});
     const eager: ManifestOf<typeof arms> = {...base,implementation:{kind:'module',module:'@/x',export:'X',loading:'eager'}};

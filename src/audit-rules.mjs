@@ -4,8 +4,10 @@ import { validateBlock } from './contracts.mjs';
 const object = (value) => value !== null && typeof value === 'object' && !Array.isArray(value);
 const safePath = (path) => typeof path === 'string' && !!path && !path.startsWith('/') && !path.includes('\\') && !path.includes('\0') && path.split('/').every((part) => part && part !== '.' && part !== '..');
 const finding = (message, path, remediation) => ({ ...(path ? { path } : {}), message, ...(remediation ? { remediation } : {}) });
+// Keep the stable code and field path a diagnostic carries, so audit output matches `gen --check`.
+const withMetadata = (diagnostic) => ({ ...finding(diagnostic.message, diagnostic.file, diagnostic.remediation), ...Object.fromEntries(['code', 'checkCode', 'field', 'family', 'block'].filter((key) => typeof diagnostic[key] === 'string').map((key) => [key, diagnostic[key]])) });
 const rule = (id, findings = [], extra = {}) => {
-  const unique = findings.filter((entry, index) => findings.findIndex((other) => other.path === entry.path && other.message === entry.message) === index);
+  const unique = findings.filter((entry, index) => findings.findIndex((other) => other.path === entry.path && other.message === entry.message && other.code === entry.code && other.field === entry.field) === index);
   return { id, pass: unique.length === 0, findings: unique, ...extra };
 };
 
@@ -23,7 +25,7 @@ export function evaluateAuditRules({ graph, config, configPresent = config !== n
   if (configPresent) {
     if (!object(config)) configFindings.push(finding('Config must be an object.', '.blocks/config.json'));
     else {
-      for (const diagnostic of parseFamiliesConfig(config).diagnostics) configFindings.push(finding(diagnostic.message, diagnostic.file));
+      for (const diagnostic of parseFamiliesConfig(config).diagnostics) configFindings.push(withMetadata(diagnostic));
       if (config.schemaVersion !== 1) configFindings.push(finding('Unsupported config schemaVersion.', '.blocks/config.json'));
       if (!Array.isArray(config.apps)) configFindings.push(finding('Config apps must be an array.', '.blocks/config.json'));
       if (config.enforcement !== undefined && !object(config.enforcement)) configFindings.push(finding('enforcement must be an object.', '.blocks/config.json'));
@@ -40,8 +42,7 @@ export function evaluateAuditRules({ graph, config, configPresent = config !== n
   for (const diagnostic of graph.familyDiagnostics || []) {
     if (diagnostic.severity && diagnostic.severity !== 'error') continue;
     const target = diagnostic.rule === 'config-valid' ? configFindings : diagnostic.rule === 'family-drift' ? familyFindings : diagnostic.rule === 'family-valid' ? validFindings : manifestFindings;
-    // Keep the stable codes and field path that `gen --check` reports, so audit output is just as precise.
-    target.push({ ...finding(diagnostic.message, diagnostic.file, diagnostic.remediation), ...Object.fromEntries(['code', 'checkCode', 'field', 'family', 'block'].filter((key) => typeof diagnostic[key] === 'string').map((key) => [key, diagnostic[key]])) });
+    target.push(withMetadata(diagnostic));
   }
   const manifestNodes = manifests.filter((entry) => object(entry.value)).map(({ value, path }) => ({ id: `block:local:${value.id}`, kind: 'block', family: 'local', manifest: value, path }));
   const validationGraph = { ...graph, nodes: graph.nodes.filter((node) => node.kind !== 'block' || node.family !== 'local').concat(manifestNodes, paths.filter((path) => !graph.nodes.some((node) => node.id === `file:${path}`)).map((path) => ({ id: `file:${path}`, kind: 'file', path }))) };
