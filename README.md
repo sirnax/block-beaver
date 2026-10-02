@@ -169,6 +169,11 @@ A project that already has hand-built typed blocks (manifests, codegen and a map
   - It also adds `unused`, the blocks that no other block links to and no ordinary code reaches.
   - Each history snapshot adds `gone`, the blocks that had been removed by that point.
   - The map draws all of these. `map.groupBy` clusters blocks within a floor by a manifest field. `map.skins: [{ "id", "path", "tokens" }]` offers several skins with a viewer toggle; `map.skin` and `map.tokens` still work.
+- **Map drawing.** The map is an exploded isometric tower: one tilted floor plate per family, one solid brick per block (top, two shaded sides and a stud), packed in a near-square grid with a pill tag showing the family title and count.
+  - Dotted risers up the left side carry the number of links between floors, by kind. Ordinary code is a rail of grey bars, one row per folder, longest reach first.
+  - Selecting a brick lights it and its links and dims the rest. `Fit`, `+` and `-` zoom the map, Ctrl or ⌘ with the scroll wheel zooms, dragging pans when zoomed in, and `Play` steps through the history.
+  - Floors take colours from a built-in palette by floor order. The token `family-<id>` recolours one floor, for example `"tokens": { "family-tool": "#3d96d3" }`.
+  - A skin can restyle `.top`, `.l`, `.r` and `.stud` (`.stud { display: none }` gives a flat brick). Per-state looks use the custom properties `--edge`, `--dash`, `--fo`, `--face` and `--top` on `.family-node`, because a brick's faces are shared `<use>` copies.
 
 ### Taking over existing outputs
 

@@ -20,8 +20,11 @@ All notable user visible changes are recorded here. Releases follow semantic ver
 - **View exports registry.** `.blocks/view-exports.json` entries may carry `detail`. It is written only when the detail is not `full`, so existing entries keep their bytes.
 - **Generator cache.** A generator's cache context now includes each manifest's path and export name, and the cache records each generator's `out`. Every cached generator therefore re-runs once after upgrading.
 
+- **The family map is redrawn.** Blocks are isometric bricks on floor plates in an exploded tower, as in the original design, instead of flat tiles. The `data-*` hooks, element ids, the `map.skins` toggle and `graph.json` are unchanged, but the rendered map, the console view and exported view modules all change their bytes. Re-export any registered view module with `view --format module`, or run `gen`, and commit the result. Skin CSS that targeted `.family-block-slab` or the old `Ordinary code` slabs needs updating to the brick classes.
+
 **Changes**
 
+- The family map draws Lego-style bricks in an exploded tower with floor tags, link-count risers, a rail of ordinary code, per-family colours (`family-<id>` tokens), zoom, fit, pan and a history Play button. (#30)
 - Links can join on values: `{ field, to, match, kind }` adds an edge to every manifest of the target family whose `match` path shares a primitive value with the source field. The edges are ordinary link edges. (#36)
 - A contract's `map.group` groups blocks on the map by a field with a joiner, an `empty` fallback and a `{value}` format. It takes precedence over config `map.groupBy`. (#37)
 - `gen --adopt [PATH…]` takes over existing outputs that have no Block Beaver header, reports `status: "adopted"` and `bodyIdentical`, and works with `--dry-run`. Loading fails with `output-required-for-load` when a contract or check imports a deleted generated output; restore it with `git restore` instead of deleting it. (#38)

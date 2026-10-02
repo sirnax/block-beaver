@@ -151,6 +151,22 @@ Issues #36–#43 came from the next adoption steps in the repository that drove 
   - An unchanged set keeps exact bytes, and the module isn't evaluated.
   - Invalid modules give `history-label-invalid`, and nothing is written.
 
+### B — Brick map (owner correction)
+- **Purpose:** after the first candidate, the owner rejected the map as not matching the original design, TeaCake's exploded tower of Lego bricks. Block Beaver drew flat diamond tiles on oversized plates. 0.6.0's "map parity" had covered the data (code reach, unused, gone, grouping, skins) but not the drawing.
+- **Boundary:**
+  - `renderFamilyMap` and `installFamilyMap` in `src/families/map-render.mjs`, plus `FAMILY_MAP_CSS`;
+  - one line in `src/block-map.mjs`;
+  - tests that pinned the old geometry.
+- **Connections:**
+  - Every `data-*` hook, element id, the `map.skins` toggle, the map-detail payload and `graph.json` are unchanged.
+  - Bricks are one shared `<defs>` shape placed with `<use>`, so the map-detail export stays small.
+- **Acceptance:**
+  - Bricks have a lit top, two shaded sides and a stud, on tight tilted plates with grid lines.
+  - Floors have pill tags with counts, link-count risers between floors and per-family colours.
+  - Ordinary code is a rail of grey bars.
+  - Selecting a brick lights it and its links and dims the rest. Zoom, fit, pan and Play work.
+  - A real-browser run under the strict CSP shows no console messages.
+
 ## Release gate
 
 - Every issue has a passing and a failing fixture.
@@ -182,6 +198,8 @@ Issues #36–#43 came from the next adoption steps in the repository that drove 
 - **Label module dependencies are tracked in loader memory.** A fresh process learns them after its first generate pass that evaluates the module.
 - **Region markers match the managed-section parsers exactly.** A stray exact `block-beaver:start` token earlier in a file, even inside a code fence, blocks any later region in that file. In Markdown, marker lines inside fenced code blocks are examples and never count as region markers.
 - **`output-required-for-load` recognises relative imports and tsconfig aliases.** Specifiers only Node's own resolver can resolve, such as package `exports` maps, stay `unresolved-import`. Index and history count as claimed outputs only through a contract's literal `generators` array.
+- **Brick map.** On grouped floors the gap between groups leaves some empty plate. When zoomed, labels on dense floors can overlap, as they do in TeaCake's map. Skin CSS cannot target a brick face by state, such as `.family-node.unused .top`, because faces are `<use>` copies; it sets the custom properties instead. The default look follows Block Beaver's light map background, not TeaCake's dark theme.
+- **Adoption fixture size.** The map-detail fixture's library grew from 400 to 480 files so the 4x ratio assertion still holds: the brick map's CSS and controller code are about 4-5 KB larger and both detail levels carry them.
 - **A staged audit snapshot is built from tracked files.** A tracked `node_modules` symlink that points outside the repository fails the hook with "Snapshot symlink leaves repository". This predates 0.7.0.
 - **`gen --adopt` paths resolve against `--root`**, not its real path, so an absolute path in a different symlink form than `--root` is refused as outside the project root.
 
