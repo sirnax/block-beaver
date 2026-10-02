@@ -279,9 +279,10 @@ async function execute(message) {
     if (result.families.some((family) => family.generators?.includes('history'))) result.generators.push({ key: 'history', source: 'builtin', out: '.blocks/history.json', inputs: allInputs, cache: true, closureHash: '' });
     if (generate) {
       const manifests = readonly(result.manifests.map((item) => item.value));
+      const entries = readonly(result.manifests.map(({ ref, family, id, path, exportName, hash }, index) => ({ ref, family, id, path, exportName, hash, value: manifests[index] })));
       const selected = new Set(generate.keys);
       let ctx, contextError;
-      try { ctx = readonly({ config: jsonCopy(config), families: jsonCopy(result.families), manifests: (family) => readonly(manifests.filter((item) => item.family === family)), blocks: () => manifests, graph: jsonCopy(generate.graph), resolve: (from, spec) => readonly(project.resolveImport(from, spec, { mode: 'import' })), label: generate.label ?? null }); }
+      try { ctx = readonly({ config: jsonCopy(config), families: jsonCopy(result.families), manifests: (family) => readonly(manifests.filter((item) => item.family === family)), blocks: () => manifests, entries: (family) => family === undefined ? entries : readonly(entries.filter((item) => item.family === family)), graph: jsonCopy(generate.graph), resolve: (from, spec) => readonly(project.resolveImport(from, spec, { mode: 'import' })), label: generate.label ?? null }); }
       catch (error) { contextError = new TypeError(`Generator context must contain only JSON data: ${error.message}`); }
       for (const info of result.generators) {
         if (info.source !== 'custom' || !selected.has(info.key)) continue;
