@@ -21,7 +21,7 @@ Block Beaver makes the shape of a codebase visible. Scan a JavaScript, TypeScrip
 
 ## Supported environments
 
-The CLI and local browser console run with **Node.js 22.18+, 24, or 26**. Family contract loading uses Node's built-in TypeScript stripping and `module.registerHooks`, so it requires Node 22.18+ (or a compatible newer release). A repository can configure its own TypeScript loader package with `.blocks/config.json`'s `loader` field. CI checks Linux on Node 22.18.0, 22, 24, and 26 and macOS and Windows on Node 24. The scanner reads JavaScript, JSX, TypeScript, and TSX, including MJS, CJS, MTS, and CTS files. Git is needed for roadmap checks and worktrees. Install the published CLI with `npm install --save-dev --save-exact block-beaver@0.5.1`. Source contributors can use `npm ci` and `npm link` from this checkout.
+The CLI and local browser console run with **Node.js 22.18+, 24, or 26**. Family contract loading uses Node's built-in TypeScript stripping and `module.registerHooks`, so it requires Node 22.18+ (or a compatible newer release). A repository can configure its own TypeScript loader package with `.blocks/config.json`'s `loader` field. CI checks Linux on Node 22.18.0, 22, 24, and 26 and macOS and Windows on Node 24. The scanner reads JavaScript, JSX, TypeScript, and TSX, including MJS, CJS, MTS, and CTS files. Git is needed for roadmap checks and worktrees. Install the published CLI with `npm install --save-dev --save-exact block-beaver@0.6.0`. Source contributors can use `npm ci` and `npm link` from this checkout.
 
 ## Why use it?
 
@@ -36,8 +36,8 @@ The visual console explores and previews. The CLI and optional authenticated wor
 Requires **Node.js 22.18+**. From your project repository, inspect and install the managed integration:
 
 ```sh
-npx block-beaver@0.5.1 install --agents claude,codex --dry-run
-npx block-beaver@0.5.1 install --agents claude,codex
+npx block-beaver@0.6.0 install --agents claude,codex --dry-run
+npx block-beaver@0.6.0 install --agents claude,codex
 npx --no-install block-beaver start
 ```
 
@@ -55,7 +55,7 @@ Open **http://127.0.0.1:4173**, enter an absolute path to a project, and select 
 For a terminal first look:
 
 ```sh
-npx block-beaver@0.5.1 scan --root /path/to/project
+npx block-beaver@0.6.0 scan --root /path/to/project
 ```
 
 ## Use it with your AI editor
@@ -63,7 +63,7 @@ npx block-beaver@0.5.1 scan --root /path/to/project
 Install the command in the project you want to build:
 
 ```sh
-npm install --save-dev --save-exact block-beaver@0.5.1
+npm install --save-dev --save-exact block-beaver@0.6.0
 ```
 
 Then run one command for the project you want to build:
@@ -80,11 +80,11 @@ For setup without a live session, use `block-beaver init --root /path/to/your-pr
 
 ## Install, upgrade and audit
 
-For a repository-local installation, run `npx block-beaver@0.5.1 install`. Installation pins Block Beaver as a development dependency, detects npm, pnpm, Yarn or Bun, and plans managed editor skills, native hooks, Git hooks, CI and generated views. Use `--agents claude,codex` to select editors and `--dry-run` to inspect planned changes first.
+For a repository-local installation, run `npx block-beaver@0.6.0 install`. Installation pins Block Beaver as a development dependency, detects npm, pnpm, Yarn or Bun, and plans managed editor skills, native hooks, Git hooks, CI and generated views. Use `--agents claude,codex` to select editors and `--dry-run` to inspect planned changes first.
 
 `block-beaver upgrade` preserves owner content and refuses edited managed sections; `--force` repairs the owned sections. `block-beaver uninstall` removes owned integration while preserving project data. Removing `.blocks/` requires `--remove-data --yes`. Ignore/exclusion adjustments are opt-in through `--fix-ignores` and `--fix-excludes`.
 
-`block-beaver audit --staged` checks the staged snapshot; CI uses `audit --base merge-base --strict` after fetching its target branch and regenerating the view. In staged and range audits a gitignored, uncommitted view is regenerated inside the snapshot, so the pre-commit hook passes without a manual `update`; a committed view, and a working-tree `audit`, are still compared against the files on disk. `block-beaver baseline --lower [--dry-run]` records lower coverage and resolution counts in `.blocks/baseline.json` (for example after adding `ignore` entries) and never raises them; `upgrade` does the same. Stable rules include `config-valid`, `manifest-valid`, `managed-current`, `view-fresh`, `undeclared-link`, `coverage-ratchet`, `resolution-ratchet`, `exception-valid`, `family-drift`, `lint-baseline-ratchet` and `reviewed-content`. Resolution is strict on request; coverage and opt-in lint allowances can only go down. Approved slices are applied and receipted with `block-beaver integrate ROADMAP BLOCK`. Native `hook-check` uses cached context and fails open on missing or invalid cache; audit and workflow commands enforce the recorded gates.
+`block-beaver audit --staged` checks the staged snapshot; CI uses `audit --base merge-base --strict` after fetching its target branch and regenerating the view. In staged and range audits a gitignored, uncommitted view is regenerated inside the snapshot, so the pre-commit hook passes without a manual `update`; a committed view, and a working-tree `audit`, are still compared against the files on disk. `block-beaver baseline --lower [--dry-run]` records lower coverage and resolution counts in `.blocks/baseline.json` (for example after adding `ignore` entries) and never raises them; `upgrade` does the same. Stable rules include `config-valid`, `manifest-valid`, `family-valid`, `managed-current`, `view-fresh`, `undeclared-link`, `coverage-ratchet`, `resolution-ratchet`, `exception-valid`, `family-drift`, `lint-baseline-ratchet` and `reviewed-content`. Resolution is strict on request; coverage and opt-in lint allowances can only go down. Approved slices are applied and receipted with `block-beaver integrate ROADMAP BLOCK`. Native `hook-check` uses cached context and fails open on missing or invalid cache; audit and workflow commands enforce the recorded gates.
 
 ## How it works
 
@@ -113,7 +113,7 @@ The scanner host accepts language plugins with `accepts`, `parse`, `declarations
 
 ## Optional typed families
 
-Projects that need typed block records can opt in by adding families to `.blocks/config.json`. With no `families` key, Block Beaver uses the base file-boundary workflow. Family order is the map floor order; IDs, fields, manifest locations, suffixes, and link kinds belong to the adopting project.
+Projects that need typed block records can opt in by adding families to `.blocks/config.json`. With no `families` key, Block Beaver uses the base file-boundary workflow. Family order sets the order of the generated index and registries, and the map floor order unless `map.floors` gives a different one. IDs, fields, manifest locations, suffixes, and link kinds belong to the adopting project.
 
 ```json
 {
@@ -144,6 +144,28 @@ export default defineFamily({
 
 Each manifest module has one export and its ID must match the single `*` captured by the configured manifest glob. Use `implementation: { kind: 'module', module: './widget.js' }` for code-backed blocks or `{ kind: 'none' }` for data-only blocks. The `.blocks/index.json` generator writes the canonical JSON index; request it by setting `generators: ['index']` in the family contract. `registry` also requires `registry.out` in that family's config. Config-level `generators` can name custom generator modules.
 
+### Adopting an existing family system
+
+A project that already has hand-built typed blocks (manifests, codegen and a map) can move its build-time engine onto families without changing manifest data. The following options exist for that move. Every one of them is optional, and leaving it out keeps 0.5.1 behaviour.
+
+- **Extra implementation fields.** `implementationFields` in a contract adds fields to an implementation arm, for example `{ module: s.object({ export: s.optional(s.string()), loading: s.optional(s.enum(['eager', 'lazy'])) }) }`. Undeclared keys still fail, `module` is still required and must resolve, and `kind` and `module` cannot be redeclared.
+- **Data-only kinds.** `dataKinds: ['plan']` declares extra data-only implementation kinds. They must also be listed in `implementation`. Unlike `module`, they are accepted in runtime mode, and they never create an `implemented-by` boundary.
+- **Set-wide checks.**
+  - A contract's `checkAll(manifests, { families, get, all })` sees every valid manifest of its family. `all(familyId)` returns another family's manifests.
+  - Config `checks: ['path/to/checks.ts']` names modules whose default export `({ families, get, all })` runs after every family loads.
+  - Both return `{ message, block?, field?, code? }` issues. Within `checkAll` a `block` is a bare id; config modules use the full `family:id` ref.
+  - Findings report under the `family-valid` rule with the manifest's file, in both `audit` and `gen --check`.
+- **Excluding files from a family.** Per-family `exclude: [glob]` removes files from a family's manifests and from `family-unclaimed`. The config `ignore` list also applies to manifest discovery. A file under a `fixtures`, `__fixtures__`, `test` or `tests` folder that matches a family's suffix but no family claims is reported as a warning, not an error.
+- **Floor order.** `map.floors: [familyId, …]` sets the map floor order, listed as drawn from the top. Families it leaves out follow in config order. The index, registries and `ctx.blocks()` keep the `families` order, so their bytes don't change when only `map.floors` changes.
+- **Stable generation.** `gen` repeats plan, write and rescan until no output changes, up to three passes. This covers manifests or generators that import a generated output. If outputs still differ after the third pass, `gen` reports `generator-unstable` with the files involved. `gen --check` and `--dry-run` stay a single read-only plan.
+- **Map parity.**
+  - `graph.json` (still schema 2) adds `codeReach`: which ordinary folders import a block's implementation, or bind to it through a `map.bindings` registry call such as `{ "family": "node", "call": "withNode", "registry": "NODE_BY_ID" }`.
+  - It also adds `unused`, the blocks that no other block links to and no ordinary code reaches.
+  - Each history snapshot adds `gone`, the blocks that had been removed by that point.
+  - The map draws all of these. `map.groupBy` clusters blocks within a floor by a manifest field. `map.skins: [{ "id", "path", "tokens" }]` offers several skins with a viewer toggle; `map.skin` and `map.tokens` still work.
+
+The runtime kernel is not meant to replace an adopting project's own runtime schema or registry kernel. Result shapes, coercion leniency, plan kinds and registry ordering are domain decisions, and `block-beaver/kernel` stays small and generic. Generated non-JSON outputs keep their one-line "generated by block-beaver" header.
+
 ```sh
 block-beaver gen                 # write generated outputs
 block-beaver gen --check         # report drift without writing
@@ -156,6 +178,29 @@ block-beaver kit create widget new-widget --json '{"rationale":"Keeps one widget
 Kit commands return JSON. `kit create` requires a configured scaffold, refuses existing output paths, lists manual steps, and runs generation after writing. `--dry-run` reports planned scaffold, generated and cache files without writing them. `history import FILE --map MAPPING.json` imports an existing history using explicit old-key to `family:id` mappings. The family map is generated with the ordinary project view and includes configured floors, typed links, app/folder slabs, and available history. A repository may supply `map.skin` and `map.tokens` in config; external CSS resources are not embedded.
 
 The runtime-only package entry point is `block-beaver/kernel`. It exports the JSON schema DSL (`s`), `validate`, `coerce`, `createRegistry`, `compose`, and `validateManifest`. Runtime validation rejects module implementations and source file lists. `block-beaver/eslint` provides the opt-in `no-block-id-literal` rule. TypeScript consumers should use `moduleResolution` `node16`, `nodenext`, or `bundler` so the package `exports` type condition is resolved; legacy `node` and `classic` resolution do not read that condition. The package version matches the CLI. An unbundled production app importing generated registries from `block-beaver/kernel` must have `block-beaver` available at runtime: the installer defaults to a devDependency, so move it to `dependencies` (or otherwise provide it in the production image) when deploying without bundling.
+
+## Config reference
+
+`.blocks/config.json` is versioned with `schemaVersion: 1`. New keys are optional and validated under the `config-valid` rule with a field path.
+
+| Key | Meaning |
+| --- | --- |
+| `schemaVersion` | Always `1`. |
+| `apps` | Detected or declared apps: `{ id, root, entries }`. |
+| `ignore` | Path patterns that the scanner, coverage counts and family manifest discovery skip. `!` re-includes. |
+| `enforcement.receipts` | `required`, `optional` or `off`; see below. |
+| `enforcement.agents` | `guide` (default) or `block` for native editor hooks. |
+| `enforcement.gate` | Always `audit`. |
+| `loader` | A package or subpath that provides a TypeScript loader for contracts and manifests. |
+| `families[]` | `{ id, contract, manifests, exclude?, registry?: { out, exportName?, importExtension? }, generators? }`. |
+| `generators` | Repository-wide custom generator modules. |
+| `checks` | Set-wide check modules run after all families load. |
+| `history.label` | Label for the current state in the history slider. |
+| `map.floors` | Family IDs in map floor order, top first. |
+| `map.groupBy` | Manifest field that clusters blocks within a floor. |
+| `map.skin`, `map.tokens` | A single skin stylesheet and CSS custom-property tokens. |
+| `map.skins` | Several skins, `{ id, path?, tokens? }`, with a viewer toggle. |
+| `map.bindings` | Registry-call patterns `{ family, call, registry }` that count as code reach. |
 
 ## Multi-app projects and embedding
 

@@ -23,6 +23,9 @@ test('kernel declarations infer family schemas and registry literal ids', () => 
     const absent: ManifestOf<typeof family> = {id:'a',family:'service',version:1,name:'a',description:'a',rationale:'a',implementation:{kind:'none'}};
     const arms = defineFamily({id:'arms',fields:s.object({}),implementation:['module','none','plan'],dataKinds:['plan'],implementationFields:{module:s.object({export:s.optional(s.string()),loading:s.optional(s.enum(['eager','lazy']))}),plan:s.object({steps:s.integer()})}});
     const base = {id:'a',family:'arms',version:1,name:'a',description:'a',rationale:'a'} as const;
+    defineFamily({id:'set',fields:s.object({}),implementation:['none'],checkAll:(manifests,{all,get}) => manifests.length || all('other').length || get('other:x') ? [] : [{message:'empty',code:'empty'}]});
+    // @ts-expect-error set-wide issues need a message
+    defineFamily({id:'set',fields:s.object({}),implementation:['none'],checkAll:() => [{code:'x'}]});
     const eager: ManifestOf<typeof arms> = {...base,implementation:{kind:'module',module:'@/x',export:'X',loading:'eager'}};
     const planned: ManifestOf<typeof arms> = {...base,implementation:{kind:'plan',steps:2}};
     const bare: ManifestOf<typeof arms> = {...base,implementation:{kind:'none'}};

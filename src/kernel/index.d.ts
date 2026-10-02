@@ -48,7 +48,11 @@ export type FamilyDefinition = {id:string;fields:ObjectNode;implementation:reado
   implementationFields?:Readonly<Record<string,ObjectNode>>;
   links?:readonly {field:string;to:string|readonly string[];kind:string}[];generators?:readonly ('registry'|'index'|'history')[];
   map?:{title?:string;blurb?:string};scaffold?:{files:readonly {path:string;template:string}[];manualSteps?:readonly string[]};
-  check?:(manifest:CoreManifest & Record<string,unknown>,ctx:{family:string;get(ref:string):unknown}) => readonly {path:string;message:string;code?:string}[] | void;};
+  check?:(manifest:CoreManifest & Record<string,unknown>,ctx:{family:string;get(ref:string):unknown}) => readonly {path:string;message:string;code?:string}[] | void;
+  checkAll?:(manifests:readonly (CoreManifest & Record<string,unknown>)[],ctx:SetCheckContext) => SetCheckIssues | Promise<SetCheckIssues>;};
+/** Context for a family's `checkAll` and for config-level `checks` modules (default export `(ctx) => issues`). */
+export type SetCheckContext = {families:readonly {id:string}[];get(ref:string):unknown;all(familyId:string):readonly (CoreManifest & Record<string,unknown>)[]};
+export type SetCheckIssues = readonly {message:string;block?:string;field?:string;path?:string;code?:string}[] | void;
 type ImplementationOf<F extends FamilyDefinition> = F['implementation'][number] extends infer K ? K extends string
   ? {kind:K} & (K extends 'module' ? {module:string} : unknown) & (F['implementationFields'] extends infer R ? K extends keyof R ? R[K] extends ObjectNode ? Infer<R[K]> : unknown : unknown : unknown) : never : never;
 export type ManifestOf<F extends FamilyDefinition> = Omit<CoreManifest,'implementation'> & {family:F['id'];implementation:ImplementationOf<F>} & Infer<F['fields']>;
