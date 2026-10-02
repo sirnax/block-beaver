@@ -44,7 +44,7 @@ test('family map has configured floor order, typed links and app-relative ordina
   assert.match(html, /block-beaver:fixture-repository:family-history/);
   assert.match(html, /id="family-history"[^>]*max="2"/);
   assert.equal(html, renderBlockMap(graph));
-  for (const tag of html.matchAll(/<(script|style)\b([^>]*)>/g)) assert.match(tag[2], /nonce="__BLOCK_BEAVER_NONCE__"/);
+  for (const tag of html.matchAll(/<(script|style)\b([^>]*)>/gi)) assert.match(tag[2], /nonce="__BLOCK_BEAVER_NONCE__"/);
   assert.doesNotMatch(html, /(?:https?:)?\/\/|\son\w+=|javascript:|\beval\s*\(|\sstyle=/i);
 });
 
@@ -340,7 +340,7 @@ test('map.skins render validated, nonce-carrying sheets with a remembered per-br
   assert.doesNotMatch(html, /alert\(1\)|"><script>/);
   assert.match(html, /<select id="family-skin" data-storage-key="block-beaver:fixture-repository:family-skin"><option value="paper">paper<\/option><option value="night">night<\/option><option value="evil">evil<\/option><\/select>/);
   assert.match(html, /<section class="family-map" aria-label="Family map" data-skin="paper">/);
-  for (const tag of html.matchAll(/<(script|style)\b([^>]*)>/g)) assert.match(tag[2], /nonce="__BLOCK_BEAVER_NONCE__"/);
+  for (const tag of html.matchAll(/<(script|style)\b([^>]*)>/gi)) assert.match(tag[2], /nonce="__BLOCK_BEAVER_NONCE__"/);
   assert.doesNotMatch(html, /(?:https?:)?\/\/|\son\w+=|javascript:|\beval\s*\(|\sstyle=/i);
   assert.equal(html, renderBlockMap(graph));
 

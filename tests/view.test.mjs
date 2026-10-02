@@ -19,7 +19,7 @@ test('prepareView fills the nonce on every skin sheet of a generated family map'
   const graph = { root: '.', apps: [], families: [{ id: 'record', floor: 0 }], nodes: [{ id: 'block:record:a', kind: 'block', family: 'record', name: 'A' }], edges: [], mapStyle: { css: '', tokens: {}, skins: [{ id: 'paper', css: '', tokens: { 'map-background': '#fff' } }, { id: 'night', css: '', tokens: { 'map-background': '#000' } }] } };
   const prepared = prepareView(renderBlockMap(graph), { nonce: 'n1' });
   assert.doesNotMatch(prepared, new RegExp(` nonce="${VIEW_NONCE_PLACEHOLDER}"`));
-  const tags = [...prepared.matchAll(/<(script|style)\b([^>]*)>/g)];
+  const tags = [...prepared.matchAll(/<(script|style)\b([^>]*)>/gi)];
   assert.equal(tags.filter((tag) => /data-map-skin/.test(tag[2])).length, 2);
   for (const tag of tags) assert.match(tag[2], /nonce="n1"/);
 });

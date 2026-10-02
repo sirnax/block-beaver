@@ -48,7 +48,7 @@ test('snapshots are self-contained, CSP-ready, deterministic and escaped', () =>
   assert.equal(html, renderBlockMap(graph));
   assert.doesNotMatch(html, /(?:https?:)?\/\/|\son\w+=|javascript:|\beval\s*\(|\sstyle=/i);
   assert.match(html, /&lt;script&gt;alert\(&quot;x&quot;\)&lt;\/script&gt;/);
-  for (const tag of html.matchAll(/<(script|style)\b([^>]*)>/g)) assert.match(tag[2], /nonce="__BLOCK_BEAVER_NONCE__"/);
+  for (const tag of html.matchAll(/<(script|style)\b([^>]*)>/gi)) assert.match(tag[2], /nonce="__BLOCK_BEAVER_NONCE__"/);
   const prepared = prepareView(html, { nonce: 'request', headerHtml: '<nav>Product home</nav>' });
   assert.doesNotMatch(prepared, /__BLOCK_BEAVER_NONCE__|<!--block-beaver:host-header-->/);
   assert.match(prepared, /<nav>Product home<\/nav>/);
