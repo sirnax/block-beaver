@@ -53,7 +53,10 @@ function runShim(name, args) {
     try {
       const parsed = JSON.parse(result.stdout?.toString('utf8') || '');
       productResult = { readyForApproval: parsed.readyForApproval ?? null, slice: parsed.slice ?? null };
-    } catch { /* Not a JSON product response. */ }
+    } catch {
+      // `audit --format summary` prints text, not JSON; it is still a product response.
+      if (args[0] === 'audit' && /^block-beaver audit: (pass|fail) /.test(result.stdout?.toString('utf8') || '')) productResult = { readyForApproval: null, slice: null };
+    }
   }
   try {
     appendFileSync(process.env.BLOCK_BEAVER_LIVE_LOG, JSON.stringify({ tool: name, argv: args, cwd: process.cwd(), startedAt, endedAt: Date.now(),
