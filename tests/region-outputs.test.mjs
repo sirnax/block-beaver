@@ -292,6 +292,7 @@ test('gen and gen --check own a README region end to end through the real loader
   const checked = await generateProject(root, { check: true, now: NOW });
   assert.equal(checked.ok, false);
   assert.deepEqual(checked.diagnostics.map((item) => [item.code, item.file, item.region]), [['output-stale', 'README.md', 'unit-count']]);
+  assert.deepEqual(checked.outputs.filter((item) => item.out === 'README.md').map((item) => item.regions), [[{ region: 'unit-count', status: 'stale' }]]);
   const result = await generateProject(root, { now: NOW });
   assert.equal(result.ok, true, JSON.stringify(result.diagnostics));
   assert.deepEqual(result.written, ['README.md']);
