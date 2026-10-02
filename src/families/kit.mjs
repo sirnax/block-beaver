@@ -76,7 +76,7 @@ export async function runKit(root, command, args = [], options = {}) {
     if (command === 'list') {
       if (input.family !== undefined) getFamily(input.family);
       const visible = input.family ? families.filter((item) => item.id === input.family) : families;
-      return success({ families: visible.map((family, floor) => ({ id: family.id, floor: family.floor ?? floor, count: manifests.filter((item) => item.family === family.id).length })), blocks: manifests.filter((item) => !input.family || item.family === input.family).map((item) => ({ ref: item.ref || `${item.family}:${item.id}`, graphId: item.graphId || `block:${item.family}:${item.id}`, family: item.family, name: item.value.name })) });
+      return success({ families: visible.map((family, floor) => ({ id: family.id, floor: family.floor ?? floor, ...(family.configIndex === undefined ? {} : { configIndex: family.configIndex }), count: manifests.filter((item) => item.family === family.id).length })), blocks: manifests.filter((item) => !input.family || item.family === input.family).map((item) => ({ ref: item.ref || `${item.family}:${item.id}`, graphId: item.graphId || `block:${item.family}:${item.id}`, family: item.family, name: item.value.name })) });
     }
     if (command === 'describe') {
       const family = getFamily(args[0]);

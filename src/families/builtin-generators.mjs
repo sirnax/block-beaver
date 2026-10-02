@@ -46,10 +46,10 @@ export function renderRegistry({ family, manifests }) {
 
 /**
  * `.blocks/index.json`, index v1: a bare JSON array of the manifests exactly as authored,
- * ordered by family config order and then ID. Never wrap it; a breaking change ships a new file.
+ * ordered by family config order (never map.floors) and then ID. Never wrap it; a breaking change ships a new file.
  */
 export function renderIndex({ families, manifests }) {
-  const rank = new Map(families.map((family, position) => [family.id, position]));
+  const rank = new Map([...families].sort((a, b) => (a.configIndex ?? 0) - (b.configIndex ?? 0)).map((family, position) => [family.id, position]));
   const ordered = [...manifests].sort((a, b) => (rank.get(a.family) ?? Infinity) - (rank.get(b.family) ?? Infinity) || compare(a.family, b.family) || compare(a.id, b.id));
   return `${JSON.stringify(ordered.map((manifest) => manifest.value), null, 2)}\n`;
 }

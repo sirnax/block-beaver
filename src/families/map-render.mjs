@@ -46,7 +46,7 @@ export function renderFamilyMap(graph) {
   const nodes = new Map(graph.nodes.map((node) => [node.id, node]));
   const points = new Map();
   let y = 70, width = 1080;
-  const floors = graph.families.map((family) => {
+  const floors = [...graph.families].sort((a, b) => (Number(a.floor) || 0) - (Number(b.floor) || 0)).map((family) => {
     const blocks = graph.nodes.filter((node) => node.kind === 'block' && node.family === family.id).sort((a, b) => order(a.id, b.id));
     const rows = Math.max(1, Math.ceil(blocks.length / 4)), height = rows * 45 + 80;
     width = Math.max(width, 810 + rows * 35 + 110);

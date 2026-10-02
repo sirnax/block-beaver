@@ -143,7 +143,7 @@ export function attachFamilies(graph, { load, project, history }) {
     const from = nodes.get(edge.from), to = nodes.get(edge.to);
     if (from && to && from.app !== to.app) edge.crossApp = true;
   }
-  graph.families = families.map((family, floor) => ({ id: family.id, floor: family.floor ?? floor, title: family.map?.title ?? family.id, blurb: family.map?.blurb ?? '', linkKinds: sorted((family.links || []).map((link) => link.kind)), count: accepted.filter(({ item }) => item.family === family.id).length }));
+  graph.families = families.map((family, position) => ({ id: family.id, floor: family.floor ?? position, title: family.map?.title ?? family.id, blurb: family.map?.blurb ?? '', linkKinds: sorted((family.links || []).map((link) => link.kind)), count: accepted.filter(({ item }) => item.family === family.id).length })).sort((a, b) => a.floor - b.floor); // map floor order; sort is stable
   graph.familyDiagnostics = diagnostics;
   if (history !== undefined) {
     try { graph.history = historySnapshots(readHistory(JSON.stringify(history))); }

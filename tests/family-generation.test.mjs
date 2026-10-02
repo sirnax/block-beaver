@@ -587,3 +587,33 @@ test('gen --check and --dry-run stay single-plan and read-only', async (t) => {
   }
   assert.equal((await readdir(root)).includes('generated'), false);
 });
+
+const withIndexes = (floors) => ['gizmo', 'widget', 'sprocket'].map((id, configIndex) => ({ ...family(id, { generators: ['index', 'registry'], floor: floors[configIndex] }), configIndex }));
+const indexBlocks = [manifest('sprocket', 'a'), manifest('widget', 'b'), manifest('gizmo', 'c'), manifest('widget', 'a')];
+
+test('map floors never change index bytes, registry order or claim order', async (t) => {
+  const root = await repo(t);
+  const plain = await plan(root, fakeLoader({ families: withIndexes([0, 1, 2]), manifests: indexBlocks }));
+  const reordered = await plan(root, fakeLoader({ families: withIndexes([2, 0, 1]), manifests: indexBlocks }));
+  const keys = (result) => result.outputs.map((output) => output.key);
+  assert.deepEqual(keys(plain), ['registry:gizmo', 'registry:widget', 'registry:sprocket', 'index']);
+  assert.deepEqual(keys(reordered), keys(plain));
+  const indexOf = (result) => result.outputs.find((output) => output.key === 'index').expected;
+  assert.equal(indexOf(reordered), indexOf(plain));
+  assert.deepEqual(JSON.parse(indexOf(plain)).map((item) => `${item.family}:${item.id}`), ['gizmo:c', 'widget:a', 'widget:b', 'sprocket:a']);
+  assert.deepEqual(reordered.outputs.map((output) => output.expected), plain.outputs.map((output) => output.expected));
+});
+
+test('diagnostic field paths point at the config index, not the map floor', async (t) => {
+  const root = await repo(t);
+  const families = [{ ...family('gizmo', { floor: 2 }), configIndex: 0 }, { ...family('widget', { registry: null, floor: 0 }), configIndex: 1 }, { ...family('sprocket', { floor: 1 }), configIndex: 2 }];
+  const { diagnostics } = await plan(root, fakeLoader({ families: [families[1], families[0], families[2]] }));
+  assert.deepEqual(diagnostics.map((item) => [item.code, item.family, item.field]), [['registry-out-missing', 'widget', '$.families[1].registry.out']]);
+});
+
+test('a loaded family without configIndex falls back to its floor for ordering', async (t) => {
+  const root = await repo(t);
+  const loader = fakeLoader({ families: [family('widget', { floor: 1, generators: ['index'], registry: null }), family('gizmo', { generators: ['index'], registry: null })], manifests: [manifest('widget', 'a'), manifest('gizmo', 'a')] });
+  const { outputs } = await plan(root, loader);
+  assert.deepEqual(JSON.parse(outputs[0].expected).map((item) => item.family), ['gizmo', 'widget']);
+});

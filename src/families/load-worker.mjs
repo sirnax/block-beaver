@@ -147,11 +147,11 @@ async function execute(message) {
         if (issues.length) continue;
         definitions.set(entry.id, definition);
         const { check, ...metadata } = definition;
-        const { floor, ...familyConfig } = entry;
-        result.families.push({ ...jsonCopy(metadata), hasCheck: typeof check === 'function', config: familyConfig, floor });
+        const { floor, configIndex, ...familyConfig } = entry;
+        result.families.push({ ...jsonCopy(metadata), hasCheck: typeof check === 'function', config: familyConfig, floor, configIndex });
       } catch (error) { errorDiagnostic(error, { file: entry.contract, family: entry.id }); }
     }
-    const candidates = parsed.families.flatMap((entry) => matchManifests(manifestPaths.filter((path) => !ignored(path)), entry).map((path) => ({ entry, path }))).sort((a, b) => compare(a.path, b.path) || a.entry.floor - b.entry.floor);
+    const candidates = parsed.families.flatMap((entry) => matchManifests(manifestPaths.filter((path) => !ignored(path)), entry).map((path) => ({ entry, path }))).sort((a, b) => compare(a.path, b.path) || a.entry.configIndex - b.entry.configIndex);
     const manifestRefs = new Set();
     for (const { entry, path } of candidates) {
       const definition = definitions.get(entry.id);

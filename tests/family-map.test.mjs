@@ -132,3 +132,31 @@ test('disposed family controllers leave a single delegated handler after repeate
   container.dispatchEvent(new Event('click'));
   assert.equal(selections, 1);
 });
+
+const floorConfig = (map) => ({ families: ['alpha', 'beta', 'gamma'].map((id) => ({ id, contract: `${id}.family.ts`, manifests: `blocks/${id}/*.ts` })), ...(map ? { map } : {}) });
+
+test('map.floors orders map floors while configIndex keeps config order', async () => {
+  const { parseFamiliesConfig } = await import('../src/families/config.mjs');
+  const view = (config) => parseFamiliesConfig(config).families.map(({ id, floor, configIndex }) => [id, floor, configIndex]);
+  assert.deepEqual(view(floorConfig()), [['alpha', 0, 0], ['beta', 1, 1], ['gamma', 2, 2]]);
+  assert.deepEqual(view(floorConfig({ floors: [] })), [['alpha', 0, 0], ['beta', 1, 1], ['gamma', 2, 2]]);
+  assert.deepEqual(view(floorConfig({ floors: ['gamma', 'alpha', 'beta'] })), [['alpha', 1, 0], ['beta', 2, 1], ['gamma', 0, 2]]);
+  assert.deepEqual(view(floorConfig({ floors: ['gamma'] })), [['alpha', 1, 0], ['beta', 2, 1], ['gamma', 0, 2]], 'unlisted families follow listed ones in config order');
+  assert.deepEqual(view(floorConfig({ floors: ['beta', 'beta', 'missing', 'alpha'] })), [['alpha', 1, 0], ['beta', 0, 1], ['gamma', 2, 2]]);
+});
+
+test('graph families and the drawn map follow map floors', async () => {
+  const { attachFamilies } = await import('../src/families/graph.mjs');
+  const { parseFamiliesConfig } = await import('../src/families/config.mjs');
+  const parsed = parseFamiliesConfig(floorConfig({ floors: ['gamma', 'alpha'] })).families;
+  const families = parsed.map(({ floor, configIndex, ...config }) => ({ id: config.id, floor, configIndex, config }));
+  const manifests = families.map((family) => ({ family: family.id, id: 'one', ref: `${family.id}:one`, graphId: `block:${family.id}:one`, path: `blocks/${family.id}/one.ts`, value: { id: 'one', family: family.id, name: family.id, description: family.id } }));
+  const source = { root: '.', nodes: [], edges: [], apps: [], summary: {} };
+  const result = attachFamilies(source, { load: { families, manifests, generators: [], diagnostics: [] }, project: { resolveImport() { return null; } } });
+  assert.deepEqual(result.families.map((item) => [item.id, item.floor]), [['gamma', 0], ['alpha', 1], ['beta', 2]]);
+  assert.deepEqual(result.nodes.filter((node) => node.kind === 'block').map((node) => [node.family, node.floor]), [['alpha', 1], ['beta', 2], ['gamma', 0]]);
+  const html = renderFamilyMap(result);
+  assert.ok(html.indexOf('data-family="gamma"') < html.indexOf('data-family="alpha"') && html.indexOf('data-family="alpha"') < html.indexOf('data-family="beta"'));
+  const shuffled = { ...result, families: [...result.families].reverse() };
+  assert.equal(renderFamilyMap(shuffled), html, 'rendering orders by floor even for hand-built graphs');
+});

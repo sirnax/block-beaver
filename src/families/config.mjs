@@ -45,8 +45,9 @@ export function parseFamiliesConfig(config) {
     }
     if (entry.generators !== undefined && (!Array.isArray(entry.generators) || entry.generators.some((path) => !isFamilyPath(path)))) issue('family-path-invalid', 'generators must contain repository-relative paths', `${field}.generators`, family);
     if (entry.exclude !== undefined && (!Array.isArray(entry.exclude) || entry.exclude.some((pattern) => typeof pattern !== 'string' || pattern.startsWith('!') || !isFamilyGlob(pattern)))) issue('family-glob-invalid', 'exclude must contain repository-relative globs', `${field}.exclude`, family);
-    if (diagnostics.length === start) families.push({ ...entry, floor });
+    if (diagnostics.length === start) families.push({ ...entry, configIndex: floor, floor });
   }
+  applyMapFloors(families, config.map?.floors);
   if (config.generators !== undefined && (!Array.isArray(config.generators) || config.generators.some((path) => !isFamilyPath(path)))) issue('family-path-invalid', 'generators must contain repository-relative paths', '$.generators');
   else generators.push(...(config.generators || []));
   if (config.checks !== undefined && (!Array.isArray(config.checks) || config.checks.some((path) => !isFamilyPath(path)))) issue('family-path-invalid', 'checks must contain repository-relative paths', '$.checks');
@@ -93,3 +94,17 @@ export function parseFamiliesConfig(config) {
 function validTokens(tokens) { return object(tokens) && Object.entries(tokens).every(([key, value]) => idPattern.test(key) && typeof value === 'string'); }
 
 function hasManifestCaptureSafely(pattern) { try { return hasManifestCapture(pattern); } catch { return false; } }
+
+/**
+ * `configIndex` is the position in config.families and drives emission order. `floor` is the map floor:
+ * the position in map.floors (bottom to top), with unlisted families after the listed ones in config order.
+ * Without a usable map.floors, floor equals configIndex.
+ */
+function applyMapFloors(families, floors) {
+  if (!Array.isArray(floors)) return;
+  const known = new Map(families.map((family) => [family.id, family]));
+  const ordered = [];
+  for (const id of floors) if (typeof id === 'string' && known.has(id) && !ordered.includes(known.get(id))) ordered.push(known.get(id));
+  for (const family of families) if (!ordered.includes(family)) ordered.push(family);
+  ordered.forEach((family, floor) => { family.floor = floor; });
+}
