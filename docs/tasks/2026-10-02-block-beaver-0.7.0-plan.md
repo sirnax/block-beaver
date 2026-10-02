@@ -205,4 +205,48 @@ Issues #36–#43 came from the next adoption steps in the repository that drove 
 
 ## Evidence
 
-To be filled in during the build.
+**Candidate.** Release branch `release/0.7.0`, source commit `2a72ccb`. Later commits change only docs, which are outside the gate fingerprint.
+
+**Tests.** `npm run check` passes: 557 tests, 0 failed, kernel gzip 4738/6144 bytes. The adoption fixture (`tests/adoption.test.mjs`, 7 new tests) covers every feature: adopting imported outputs, `ctx.entries`, join links, per-family groups, a README region, a derived history label, a map-detail export under a byte budget, and the one-line hook output.
+
+**CI on `2a72ccb`.** All jobs pass: Node 22.18.0, 22, 24 and 26, macOS, Windows, CodeQL (code scanning), Analyze, Gitleaks and the dependency audit.
+
+**Reviews.** Each slice had a GPT cross-family review. An Opus review covered the whole release diff, and GPT reviewed the review fixes and the brick map.
+- Findings fixed before release:
+  - Join links: an ordinary-link graph byte change.
+  - `gen --adopt`: view adoption across passes, `bodyIdentical` hiding a deleted export, alias imports, stale cache claims.
+  - Map-detail export: a byte budget measured against a different graph.
+  - Region outputs: fenced Markdown, list and blockquote fences, and managed-marker overlap.
+  - History labels: running when nothing was written, untracked dependencies, and the derived label leaking into `ctx.label`.
+  - Quiet audit: `init`/`start` overwriting the managed hook, ownership detection with CRLF, indent or a bad hash, control characters in output.
+  - Brick map: selections surviving a hidden brick, reach lines with hidden ends, quadratic group packing.
+  - A CodeQL `js/bad-tag-filter` alert.
+- Findings recorded as known limits: see above.
+
+**Packed tarball.** Packed from the candidate (75 files) and installed into disposable repositories with the smoke harness: 48 of 49 checks pass.
+- Passing:
+  - Upgrade from the published 0.6.0 rewrites the hook and CI regions with no conflict.
+  - A passing commit through the managed hook prints one line.
+  - A failing commit prints `rule · … - fix: …` lines.
+  - A fresh install behaves the same.
+  - `gen --adopt` (conflict, dry run, adopt, clean `--check`) and `view --detail map --max-bytes` pass.
+- The one miss is the "every other managed file differs only by stamps" check. It reports the documented new paragraph in the managed `WORKFLOW.md` and the skill reference.
+
+**Map.** Checked in Chromium under the strict nonce CSP, beside TeaCake's own map: bricks with top, two shaded sides and a stud on tight plates, pill tags with counts, link-count risers, a rail of ordinary code, ghost bricks, selection lighting, zoom and Play. No console errors or warnings. A full-detail and a map-detail page show the same floors, group labels, link paths, ghost and unused bricks. The map-detail payload has no file nodes, no evidence text or column, and no `gone`.
+
+**Live editor gate.** Candidate source fingerprint `bc2156a0ef19f78d88df506a259f007235929aa9a5f7209e7ec5338d30bcd71e`, identical at the start and end of all eight cases.
+
+| Editor | Case | Result | Checks |
+| --- | --- | --- | --- |
+| Claude (claude-sonnet-5-5) | normal | pass | 16/16 |
+| Claude | bypass | pass | 11/11 |
+| Claude | failed | pass | 12/12 |
+| Claude | drift | pass | 13/13 |
+| Codex (gpt-6.1-sol), hooks not trusted | normal | pass | 16/16 |
+| Codex | bypass | pass | 11/11 |
+| Codex | failed | pass | 12/12 |
+| Codex | drift | pass | 13/13 |
+
+The Codex cases ran without native hook trust, so the model and native hook events are unverified. The trusted-hook Codex runs were not run: the interactive trust step has not worked with Codex. The Claude cases are the release-grade editor evidence.
+
+**Size.** On a synthetic graph shaped like the adopting repo (4 apps, 174 blocks, 1800 files, 9000 import edges), a full view module measured 8.95 MB and a map-detail module 388 KB before the brick map. The brick map's extra CSS and controller code add about 4-5 KB to both.
