@@ -5,6 +5,7 @@ import { cachePath, hashInputs, inputsHash, outputHash, readCache, serializeCach
 import { isFamilyPath } from './config.mjs';
 import { discoverFiles, matchGlobs } from './glob.mjs';
 import { appendHistory, historyPath, readHistory, serializeHistory } from './history.mjs';
+import { clashesOf, composeRegions, readRegion, regionBody, regionStyle, regionStyles } from './regions.mjs';
 
 const lineComment = new Set(['.ts', '.tsx', '.mts', '.cts', '.js', '.jsx', '.mjs', '.cjs']);
 const htmlComment = new Set(['.md', '.html']);
@@ -60,6 +61,7 @@ function unsafeReason(claim, protectedPaths) {
   if (protectedPaths.has(folded)) return 'would overwrite a manifest, contract, generator or config file';
   if (folded.split('/').some((part) => ['.claude', '.codex', '.agents', '.cursor'].includes(part))) return 'is inside an agent guidance location';
   if (folded.split('/').some((part) => part === '.git' || part === 'node_modules') || folded.startsWith('.blocks/cache/')) return 'is inside a reserved location';
+  if (claim.region) return regionStyle(claim.out) ? null : `has no region marker style (${regionStyles})`;
   if (headerStyle(claim.out) === null) return 'has no supported header style (.ts .js .css .md .html .json)';
   return null;
 }
@@ -94,7 +96,7 @@ export async function planGeneration({ root, config = {}, graph, paths, label = 
   if (asks('index')) claims.push({ key: 'index', kind: 'index', out: indexPath, inputs: [] });
   const customs = (loaded.generators ?? []).filter((info) => info.source === 'custom');
   const known = new Set(families.map((family) => family.id));
-  const customClaim = (info) => ({ key: info.key, kind: 'custom', out: info.out, info, familyId: info.family, inputs: info.inputs });
+  const customClaim = (info) => ({ key: info.key, kind: 'custom', out: info.out, ...(info.region ? { region: info.region } : {}), info, familyId: info.family, inputs: info.inputs });
   for (const family of families) claims.push(...customs.filter((info) => info.family === family.id).map(customClaim));
   claims.push(...customs.filter((info) => !info.family || !known.has(info.family)).map(customClaim));
   for (const extra of extraOutputs) claims.push({ key: extra.key, kind: 'extra', out: extra.out, extra, inputs: extra.inputs ?? [] });
@@ -115,19 +117,26 @@ export async function planGeneration({ root, config = {}, graph, paths, label = 
   }
   const colliding = new Set();
   for (const group of byOut.values()) {
-    if (group.length < 2) continue;
-    for (const claim of group) colliding.add(claim);
-    diagnostics.push(problem('output-collision', `${group.map((claim) => claim.key).join(' and ')} all write ${group[0].out}`, { file: group[0].out }));
+    for (const clash of clashesOf(group)) {
+      for (const claim of clash) colliding.add(claim);
+      const region = clash.every((claim) => claim.region === clash[0].region) && clash[0].region;
+      diagnostics.push(problem('output-collision', `${clash.map((claim) => claim.key).join(' and ')} all write ${clash[0].out}${region ? ` region ${region}` : ''}`, { file: clash[0].out }));
+    }
   }
   const accepted = safe.filter((claim) => !colliding.has(claim));
 
   // 3. Current bytes on disk for everything still in play.
-  const currents = new Map();
+  const currents = new Map(), regionTexts = new Map();
   const readable = [];
   for (const claim of accepted) {
     const read = await safeRead(root, claim.out);
     if (read.error) diagnostics.push(problem('output-unsafe', `Cannot read ${claim.out}: ${read.error.message}`, { file: claim.out }));
-    else { currents.set(claim.key, read.text); readable.push(claim); }
+    else if (claim.region) {
+      // A region claim's current value is its body; the whole text is kept for splicing.
+      const found = readRegion(read.text, claim);
+      if (found.problem) diagnostics.push(problem(found.problem.code, found.problem.message, { file: claim.out, ...(claim.familyId ? { family: claim.familyId } : {}) }));
+      else { currents.set(claim.key, found.body); regionTexts.set(claim.key, read.text); readable.push(claim); }
+    } else { currents.set(claim.key, read.text); readable.push(claim); }
   }
 
   // 4. Custom generators: skip those whose inputs, code and output are unchanged.
@@ -160,17 +169,22 @@ export async function planGeneration({ root, config = {}, graph, paths, label = 
 
   // 5. Render every output in claim order.
   const outputs = [];
-  const settled = new Map();
+  const settled = new Map(), regionResults = [];
   for (const claim of readable) {
     const current = currents.get(claim.key);
     let expected;
     try {
       if (claim.kind === 'custom') {
+        if (claim.region && skipped.has(claim.key)) { regionResults.push({ claim, body: current, status: 'cached' }); settled.set(claim.key, current); continue; }
         if (skipped.has(claim.key)) { outputs.push({ key: claim.key, out: claim.out, expected: current, current, status: 'cached' }); settled.set(claim.key, current); continue; }
         const result = generated.get(claim.key);
         if (!result) throw problem('generator-failed', `Generator ${claim.key} produced no output`, { file: claim.info.path });
         if (result.diagnostic) { diagnostics.push(result.diagnostic); continue; }
-        expected = finalize(claim.out, result.content, claim.inputs);
+        if (claim.region) {
+          const made = regionBody(claim, result.content);
+          if (made.problem) throw problem(made.problem.code, made.problem.message, { file: claim.info.path, ...(claim.familyId ? { family: claim.familyId } : {}) });
+          expected = made.body;
+        } else expected = finalize(claim.out, result.content, claim.inputs);
       } else if (claim.kind === 'registry') {
         expected = finalize(claim.out, renderRegistry({ family: claim.family, manifests: manifests.filter((item) => item.family === claim.family.id) }), claim.inputs);
       } else if (claim.kind === 'index') {
@@ -189,6 +203,7 @@ export async function planGeneration({ root, config = {}, graph, paths, label = 
       diagnostics.push(error?.rule ? error : problem('generator-failed', `${claim.key} failed: ${error?.message ?? error}`, { file: claim.out, ...(claim.familyId ? { family: claim.familyId } : {}) }));
       continue;
     }
+    if (claim.region) { regionResults.push({ claim, body: expected, status: current === expected ? 'fresh' : 'stale' }); settled.set(claim.key, expected); continue; }
     let status;
     if (current === null) status = 'missing';
     else if (current === expected) status = 'fresh';
@@ -199,6 +214,7 @@ export async function planGeneration({ root, config = {}, graph, paths, label = 
     outputs.push({ key: claim.key, out: claim.out, expected, current, status });
     if (claim.kind === 'custom' && status !== 'conflict') settled.set(claim.key, expected);
   }
+  outputs.push(...composeRegions(regionResults, regionTexts));
 
   // 6. Cache entries for the custom generators that produced a trustworthy output.
   let cacheUpdate = null;
@@ -229,6 +245,10 @@ export function checkGeneration(plan) {
   const drift = [];
   for (const output of plan.outputs) {
     if (output.status !== 'missing' && output.status !== 'stale') continue;
+    if (output.regions) {
+      for (const item of output.regions.filter((entry) => entry.status === 'stale')) drift.push(problem('output-stale', `${output.out} region ${item.region} is out of date; run block-beaver gen`, { file: output.out, region: item.region }));
+      continue;
+    }
     const code = output.key === 'history' ? 'history-stale' : output.status === 'missing' ? 'output-missing' : 'output-stale';
     drift.push(problem(code, `${output.out} is ${output.status === 'missing' ? 'missing' : 'out of date'}; run block-beaver gen`, { file: output.out, ...(output.key.startsWith('registry:') ? { family: output.key.slice('registry:'.length) } : {}) }));
   }

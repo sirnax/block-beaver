@@ -60,7 +60,9 @@ type ImplementationOf<F extends FamilyDefinition> = F['implementation'][number] 
   ? {kind:K} & (K extends 'module' ? {module:string} : unknown) & (F['implementationFields'] extends infer R ? K extends keyof R ? R[K] extends ObjectNode ? Infer<R[K]> : unknown : unknown : unknown) : never : never;
 export type ManifestOf<F extends FamilyDefinition> = Omit<CoreManifest,'implementation'> & {family:F['id'];implementation:ImplementationOf<F>} & Infer<F['fields']>;
 export type GeneratorContext = {config:unknown;families:readonly unknown[];manifests(familyId:string):readonly CoreManifest[];blocks():readonly CoreManifest[];graph:unknown;resolve(from:string,spec:string):unknown;label:string|null};
-export type GeneratorDefinition = {out:string;inputs:readonly string[];cache?:boolean;generate(ctx:GeneratorContext):string|Promise<string>};
+export type GeneratorDefinition = {out:string;
+  /** Kebab-case region id: the generator owns only the lines between whole-line `block-beaver:region ID` and `/block-beaver:region ID` markers in `out` (.md/.html/.htm, .js/.ts family or .css comment style), with no header. */
+  region?:string;inputs:readonly string[];cache?:boolean;generate(ctx:GeneratorContext):string|Promise<string>};
 export declare function defineFamily<const F extends FamilyDefinition>(definition:F): DeepReadonly<F>;
 export declare function defineGenerator<const G extends GeneratorDefinition>(definition:G): DeepReadonly<G>;
 export declare function isFamily(value:unknown): value is FamilyDefinition;
