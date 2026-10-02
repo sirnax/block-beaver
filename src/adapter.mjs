@@ -70,7 +70,7 @@ export async function attachProjectRegistry(graph, { config: suppliedConfig, loa
     try { config = configText === null ? null : JSON.parse(configText); } catch { return graph; }
   }
   graph.repoName = await projectName(graph.root);
-  if (config && ['families', 'generators', 'loader', 'history'].some((key) => Object.hasOwn(config, key))) {
+  if (config && ['families', 'generators', 'loader', 'history', 'checks'].some((key) => Object.hasOwn(config, key))) {
     const paths = Object.keys(graph.hashes || {});
     const project = await loadProjectModel(graph.root, { paths, writeConfig: false });
     const loadFamilies = suppliedLoader || (await import('./families/loader.mjs')).loadFamilies;
@@ -79,7 +79,15 @@ export async function attachProjectRegistry(graph, { config: suppliedConfig, loa
     const historyDiagnostics = [];
     try { history = readHistory(await readProjectFile(graph.root, '.blocks/history.json')); }
     catch (error) { historyDiagnostics.push({ rule: 'family-drift', code: 'history-invalid', severity: 'error', file: '.blocks/history.json', message: error.message }); }
-    attachFamilies(graph, { load: { ...load, diagnostics: [...(load.diagnostics || []), ...historyDiagnostics] }, project, history });
+    // map.bindings: a light text pass over scanned sources; skipped entirely when unset.
+    const bindings = Array.isArray(config.map?.bindings) ? config.map.bindings : [];
+    let sourceText = typeof graph.sourceText === 'function' ? graph.sourceText : undefined;
+    if (bindings.length && !sourceText) {
+      const texts = new Map();
+      for (const path of paths) texts.set(path, await readProjectFile(graph.root, path));
+      sourceText = (path) => texts.get(path) ?? null;
+    }
+    attachFamilies(graph, { load: { ...load, diagnostics: [...(load.diagnostics || []), ...historyDiagnostics] }, project, history, bindings, sourceText, groupBy: config.map?.groupBy });
     graph.adapter = 'families';
   }
   if (config?.map) {

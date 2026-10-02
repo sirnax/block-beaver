@@ -6,10 +6,10 @@ import { isDeepStrictEqual } from 'node:util';
 import { pathToFileURL } from 'node:url';
 import ts from 'typescript';
 import { isSchema, validateManifest } from '../kernel/index.mjs';
-import { loadProjectModel } from '../project-model.mjs';
+import { ignoreMatcher, loadProjectModel } from '../project-model.mjs';
 import { parseFamiliesConfig, isFamilyGlob, isFamilyPath } from './config.mjs';
 import { canonicalJson, manifestHash } from './canonical.mjs';
-import { captureManifestId, discoverFiles, matchGlobs } from './glob.mjs';
+import { captureManifestId, discoverFiles, matchManifests } from './glob.mjs';
 import { assertSafeSource, installFamilyHooks, runtimeSourcePath } from './hooks.mjs';
 
 const coreKeys = new Set(['id', 'family', 'version', 'name', 'description', 'rationale', 'implementation', 'files']);
@@ -72,8 +72,22 @@ function contractProblems(definition, entry, configured) {
   if (definition.id !== entry.id) issue('contract-id-mismatch', `Contract ID must equal configured family ${entry.id}`, '$.id');
   if (!isSchema(definition.fields) || definition.fields?.type !== 'object') issue('contract-invalid', 'Family fields must be an object schema', '$.fields');
   else for (const key of Object.keys(definition.fields.shape)) if (coreKeys.has(key)) issue('contract-reserved-field', `Family field ${key} is a reserved core manifest field`, `$.fields.shape.${key}`);
-  if (!Array.isArray(definition.implementation) || !definition.implementation.length || definition.implementation.some((kind) => !['module', 'none'].includes(kind)) || new Set(definition.implementation).size !== definition.implementation.length) issue('contract-invalid', 'implementation must be a nonempty list of module and/or none', '$.implementation');
+  const dataKinds = definition.dataKinds;
+  if (dataKinds !== undefined && (!Array.isArray(dataKinds) || dataKinds.some((kind) => typeof kind !== 'string' || !idPattern.test(kind) || kind === 'module' || kind === 'none') || new Set(dataKinds).size !== dataKinds.length)) issue('contract-invalid', 'dataKinds must be unique kebab-case kinds other than module and none', '$.dataKinds');
+  const kinds = ['module', 'none', ...(Array.isArray(dataKinds) ? dataKinds : [])];
+  if (!Array.isArray(definition.implementation) || !definition.implementation.length || definition.implementation.some((kind) => !kinds.includes(kind)) || new Set(definition.implementation).size !== definition.implementation.length) issue('contract-invalid', 'implementation must be a nonempty list of module, none and/or declared dataKinds', '$.implementation');
+  else if (Array.isArray(dataKinds) && dataKinds.some((kind) => !definition.implementation.includes(kind))) issue('contract-invalid', 'Every dataKinds entry must also be listed in implementation to be permitted', '$.dataKinds');
+  if (definition.implementationFields !== undefined) {
+    const fields = definition.implementationFields;
+    if (!object(fields)) issue('contract-invalid', 'implementationFields must be an object keyed by implementation kind', '$.implementationFields');
+    else for (const [kind, schema] of Object.entries(fields)) {
+      if (!kinds.includes(kind)) issue('contract-invalid', `implementationFields names unknown implementation kind ${kind}`, `$.implementationFields.${kind}`);
+      else if (!isSchema(schema) || schema.type !== 'object') issue('contract-invalid', 'implementationFields entries must be object schemas', `$.implementationFields.${kind}`);
+      else for (const key of ['kind', 'module']) if (Object.hasOwn(schema.shape, key)) issue('contract-reserved-field', `Implementation field ${key} is a reserved core key`, `$.implementationFields.${kind}.shape.${key}`);
+    }
+  }
   if (definition.check !== undefined && typeof definition.check !== 'function') issue('contract-invalid', 'check must be a function', '$.check');
+  if (definition.checkAll !== undefined && typeof definition.checkAll !== 'function') issue('contract-invalid', 'checkAll must be a function', '$.checkAll');
   if (definition.generators !== undefined && (!Array.isArray(definition.generators) || definition.generators.some((name) => !['registry', 'index', 'history'].includes(name)) || new Set(definition.generators).size !== definition.generators.length)) issue('contract-invalid', 'Contract generators may request registry, index and history once each', '$.generators');
   if (Array.isArray(definition.generators) && definition.generators.includes('registry') && !entry.registry?.out) issue('registry-out-missing', 'Family requesting registry must configure registry.out', '$.registry.out');
   if (definition.links !== undefined) {
@@ -92,11 +106,14 @@ function contractProblems(definition, entry, configured) {
     if (!object(scaffold) || !Array.isArray(scaffold.files) || !scaffold.files.length || scaffold.files.some((file) => !object(file) || !isFamilyPath(file.path) || typeof file.template !== 'string') || (scaffold.manualSteps !== undefined && (!Array.isArray(scaffold.manualSteps) || scaffold.manualSteps.some((step) => typeof step !== 'string')))) issue('contract-invalid', 'scaffold must contain safe file paths, templates and optional string manual steps', '$.scaffold');
   }
   try {
-    const { check, ...serializable } = definition;
+    const { check, checkAll, ...serializable } = definition;
     jsonCopy(serializable);
-  } catch { issue('contract-invalid', 'Contract metadata other than check must contain only JSON data', '$'); }
+  } catch { issue('contract-invalid', 'Contract metadata other than check and checkAll must contain only JSON data', '$'); }
   return issues;
 }
+
+/** Valid `checks` config paths, in order; a malformed list already has a config-valid diagnostic. */
+const checkModulePaths = (config) => Array.isArray(config?.checks) && config.checks.every(isFamilyPath) ? [...new Set(config.checks)] : [];
 
 async function execute(message) {
   const { root, config, kernelUrl, generate } = message;
@@ -107,6 +124,7 @@ async function execute(message) {
   const discovered = await discoverFiles(root);
   const paths = message.paths ?? discovered;
   const manifestPaths = [...new Set([...discovered, ...paths])].sort();
+  const ignored = ignoreMatcher(config?.ignore);
   const diagnostic = (code, message, context = {}, rule = 'manifest-valid') => {
     const item = { rule, code, severity: 'error', message, ...context };
     result.diagnostics.push(item);
@@ -145,12 +163,12 @@ async function execute(message) {
         for (const item of issues) diagnostic(item.code, item.message, { file: entry.contract, family: entry.id, field: item.field }, item.code === 'registry-out-missing' ? 'config-valid' : 'manifest-valid');
         if (issues.length) continue;
         definitions.set(entry.id, definition);
-        const { check, ...metadata } = definition;
-        const { floor, ...familyConfig } = entry;
-        result.families.push({ ...jsonCopy(metadata), hasCheck: typeof check === 'function', config: familyConfig, floor });
+        const { check, checkAll, ...metadata } = definition;
+        const { floor, configIndex, ...familyConfig } = entry;
+        result.families.push({ ...jsonCopy(metadata), hasCheck: typeof check === 'function', hasCheckAll: typeof checkAll === 'function', config: familyConfig, floor, configIndex });
       } catch (error) { errorDiagnostic(error, { file: entry.contract, family: entry.id }); }
     }
-    const candidates = parsed.families.flatMap((entry) => matchGlobs(manifestPaths, [entry.manifests]).map((path) => ({ entry, path }))).sort((a, b) => compare(a.path, b.path) || a.entry.floor - b.entry.floor);
+    const candidates = parsed.families.flatMap((entry) => matchManifests(manifestPaths.filter((path) => !ignored(path)), entry).map((path) => ({ entry, path }))).sort((a, b) => compare(a.path, b.path) || a.entry.configIndex - b.entry.configIndex);
     const manifestRefs = new Set();
     for (const { entry, path } of candidates) {
       const definition = definitions.get(entry.id);
@@ -193,6 +211,39 @@ async function execute(message) {
       }
     }
     result.manifests = result.manifests.filter((manifest) => !rejected.has(manifest.ref));
+    // Set-wide checks see the manifests that survived per-manifest checks and never remove
+    // any: every manifest here is valid on its own, so a failing rule only adds diagnostics.
+    const survivors = new Map(result.manifests.map((manifest) => [manifest.ref, manifest]));
+    const byFamily = new Map(parsed.families.map((entry) => [entry.id, []]));
+    for (const manifest of result.manifests) byFamily.get(manifest.family)?.push(readonly(manifest.value));
+    for (const list of byFamily.values()) readonly(list);
+    const allValid = Object.freeze([...byFamily.values()].flat());
+    const setContext = readonly({ families: jsonCopy(result.families), get: (ref) => values.get(ref), all: (id) => byFamily.get(id) ?? Object.freeze([]) });
+    const reportSetWide = (issues, source, owner) => {
+      if (issues !== undefined && (!Array.isArray(issues) || issues.some((issue) => !object(issue) || typeof issue.message !== 'string' || ['block', 'field', 'path', 'code'].some((key) => issue[key] !== undefined && typeof issue[key] !== 'string')))) throw new TypeError('Set-wide check must return an array of {message,block?,field?,code?} or undefined');
+      for (const issue of issues || []) {
+        // A bare block ID names a manifest of the owning family; a full family:id ref works anywhere.
+        const ref = issue.block === undefined ? undefined : survivors.has(issue.block) ? issue.block : owner && survivors.has(`${owner}:${issue.block}`) ? `${owner}:${issue.block}` : undefined;
+        const target = ref ? survivors.get(ref) : undefined, field = issue.field ?? issue.path;
+        diagnostic('family-check-all-failed', issue.block !== undefined && !target ? `${issue.message} (block ${issue.block})` : issue.message, { file: target ? target.path : source, ...(target ? { family: target.family, block: target.ref } : owner ? { family: owner } : {}), ...(field !== undefined ? { field } : {}), ...(issue.code ? { checkCode: issue.code } : {}) }, 'family-valid');
+      }
+    };
+    for (const entry of parsed.families) {
+      const checkAll = definitions.get(entry.id)?.checkAll;
+      if (!checkAll) continue;
+      try { reportSetWide(await checkAll(byFamily.get(entry.id), setContext), entry.contract, entry.id); }
+      catch (error) { diagnostic('family-check-all-failed', `Family ${entry.id} checkAll failed: ${error.message || String(error)}`, { file: entry.contract, family: entry.id }, 'family-valid'); }
+    }
+    for (const path of checkModulePaths(config)) {
+      try {
+        const exports = await importSource(path);
+        if (typeof exports.default !== 'function') { diagnostic('check-module-invalid', 'Check module must default-export a function (manifests, ctx) => issues', { file: path }, 'family-valid'); continue; }
+        reportSetWide(await exports.default(allValid, setContext), path);
+      } catch (error) {
+        if (error?.familyLoaderCode || error?.code === 'ERR_MODULE_NOT_FOUND' || error?.code === 'ERR_UNSUPPORTED_TYPESCRIPT_SYNTAX') errorDiagnostic(error, { file: path }).rule = 'family-valid';
+        else diagnostic('family-check-all-failed', `Check module ${path} failed: ${error?.message || String(error)}`, { file: path }, 'family-valid');
+      }
+    }
     const allInputs = parsed.families.map((entry) => entry.manifests);
     for (const family of result.families) {
       if (family.generators?.includes('registry')) result.generators.push({ key: `registry:${family.id}`, source: 'builtin', family: family.id, out: family.config.registry.out, inputs: [family.config.manifests], cache: true, closureHash: '' });

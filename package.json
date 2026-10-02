@@ -1,6 +1,6 @@
 {
   "name": "block-beaver",
-  "version": "0.5.1",
+  "version": "0.6.0",
   "description": "Local architecture workspace for JavaScript, TypeScript, and React repositories",
   "private": false,
   "license": "Apache-2.0",

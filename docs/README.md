@@ -19,5 +19,6 @@ Contributor policies and current release notes remain at the repository root: [c
 
 ## Task plans
 
+- [0.6.0 plan](tasks/2026-10-02-block-beaver-0.6.0-plan.md) covers adopting an existing family system (#26–#33), built on `release/0.6.0`.
 - [Keystone](tasks/keystone.md) is the plan for the next implementation task.
 - [Block Studio](tasks/block-studio.md) is the earlier product direction and build sequence.

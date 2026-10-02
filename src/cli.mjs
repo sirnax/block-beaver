@@ -20,6 +20,7 @@ import { git } from './compliance-git.mjs';
 const [command, ...args] = process.argv.slice(2);
 const flags = new Set(['write', 'strict', 'dry-run', 'force', 'fix-ignores', 'fix-excludes', 'staged', 'remove-data', 'yes']);
 if (command === 'gen') flags.add('check');
+if (command === 'baseline') flags.add('lower');
 const options = new Map();
 const positional = [];
 for (let index = 0; index < args.length; index++) {
@@ -42,7 +43,7 @@ const exit = (code) => new Promise(() => { process.exitCode = code; process.stdo
 try {
   if (option('parseError')) throw new Error(option('parseError'));
   if (!command || command === 'help') {
-    process.stdout.write('Project integration\n  start [--root PATH] [--editor all|agents|claude|cursor|copilot] [--port 4175]\n  init [--root PATH] [--editor all|agents|claude|cursor|copilot]\n  update [--root PATH]\n  detect [--root PATH] [--write]\n  view --format module --out PATH [--root PATH]\n  install [--agents claude,codex,cursor,copilot] [--dry-run]\n  upgrade [--dry-run] [--force]\n  uninstall [--dry-run] [--remove-data --yes]\n  audit [--staged | --base SHA] [--strict]\n  integrate ROADMAP BLOCK\n  exception ID --reason TEXT --paths PATHS --check COMMAND\n\n');
+    process.stdout.write('Project integration\n  start [--root PATH] [--editor all|agents|claude|cursor|copilot] [--port 4175]\n  init [--root PATH] [--editor all|agents|claude|cursor|copilot]\n  update [--root PATH]\n  detect [--root PATH] [--write]\n  view --format module --out PATH [--root PATH]\n  install [--agents claude,codex,cursor,copilot] [--dry-run]\n  upgrade [--dry-run] [--force]\n  baseline --lower [--root PATH] [--dry-run]\n  uninstall [--dry-run] [--remove-data --yes]\n  audit [--staged | --base SHA] [--strict]\n  integrate ROADMAP BLOCK\n  exception ID --reason TEXT --paths PATHS --check COMMAND\n\n');
     process.stdout.write('Block Beaver\n  scan [--root PATH] [--full true]\n  inspect ID [--root PATH]\n  search QUERY [--root PATH] [--kind KIND]\n  kit list|describe|validate|compose|create [ARGS] [--json JSON] [--dry-run] [--root PATH]\n  gen [--check] [--label TEXT]\n  history import FILE --map MAPPING.json\n  agent --exec PATH [--scope file1,file2] [--create new1,new2] [--root PATH]\n  plan ROADMAP_ID [--scope file1,file2] [--create new1,new2] [--root PATH] [--title TITLE]\n  propose ROADMAP_ID PROPOSAL.json [--root PATH]\n  repair ROADMAP_ID SLICE_ID PROPOSAL.json [--root PATH]\n  check ROADMAP_ID SLICE_ID [--root PATH]\n  review ROADMAP_ID SLICE_ID [--root PATH]\n  approve ROADMAP_ID SLICE_ID [--root PATH]\n  reject ROADMAP_ID SLICE_ID --reason TEXT [--root PATH]\n  resume ROADMAP_ID [--root PATH]\n');
     await exit(0);
   }
@@ -54,6 +55,12 @@ try {
     const result = await action(root, { agents: option('agents')?.split(',').filter(Boolean), dryRun: option('dry-run', false), force: option('force', false), fixIgnores: option('fix-ignores', false), fixExcludes: option('fix-excludes', false), removeData: option('remove-data', false) });
     print(result);
     await exit(result.conflicts?.length || (!result.dryRun && !result.complete) ? 2 : 0);
+  }
+  if (command === 'baseline') {
+    if (!option('lower')) throw new Error('Use baseline --lower [--dry-run]; the baseline can only be lowered.');
+    const { lowerBaseline } = await import('./baseline.mjs');
+    print(await lowerBaseline(root, { dryRun: option('dry-run', false) }));
+    await exit(0);
   }
   if (command === 'audit') {
     if (option('staged') && option('base')) throw new Error('Choose either --staged or --base.');

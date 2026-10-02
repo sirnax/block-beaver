@@ -225,3 +225,27 @@ test('editing the 0.4.0 workflow body is still refused without force', async (t)
   assert.ok(upgraded.conflicts.some((conflict) => conflict.path === '.blocks/WORKFLOW.md'));
   assert.equal(upgraded.complete, false);
 });
+
+test('upgrade lowers the baseline after an ignore entry, reports it in the plan and never raises it', async (t) => {
+  const root = await installationFixture(t), runner = packageRunner(root);
+  await mkdir(join(root, 'src/legacy'), { recursive: true });
+  await writeFile(join(root, 'src/legacy/one.ts'), 'export const one = 1;\n');
+  await writeFile(join(root, 'src/legacy/two.ts'), 'export const two = 2;\n');
+  await installProject(root, { agents: [], version: '0.3.0', runner });
+  const initial = JSON.parse(await readFile(join(root, '.blocks/baseline.json'), 'utf8'));
+  const configPath = join(root, '.blocks/config.json');
+  await writeFile(configPath, JSON.stringify({ ...JSON.parse(await readFile(configPath, 'utf8')), ignore: ['src/legacy/**'] }, null, 2) + '\n');
+  const before = await snapshot(root);
+  const preview = await upgradeProject(root, { version: '0.4.0', dryRun: true, runner });
+  assert.deepEqual(preview.baseline.lowered, { coverage: { from: initial.coverage, to: initial.coverage - 2 } });
+  assert.ok(preview.diff.some((file) => file.path === '.blocks/baseline.json'));
+  assert.deepEqual(await snapshot(root), before, 'Dry run writes nothing.');
+  const upgraded = await upgradeProject(root, { version: '0.4.0', runner });
+  assert.ok(upgraded.changed.includes('.blocks/baseline.json'));
+  assert.deepEqual(JSON.parse(await readFile(join(root, '.blocks/baseline.json'), 'utf8')), { ...initial, coverage: initial.coverage - 2 });
+  await writeFile(configPath, JSON.stringify({ ...JSON.parse(await readFile(configPath, 'utf8')), ignore: [] }, null, 2) + '\n');
+  const restored = await upgradeProject(root, { version: '0.4.0', runner });
+  assert.deepEqual(restored.baseline.lowered, {});
+  assert.equal(restored.changed.includes('.blocks/baseline.json'), false);
+  assert.equal(JSON.parse(await readFile(join(root, '.blocks/baseline.json'), 'utf8')).coverage, initial.coverage - 2, 'Removing the ignore entry never raises the baseline.');
+});

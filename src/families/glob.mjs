@@ -68,6 +68,12 @@ export function matchGlobs(paths, patterns) {
   return [...new Set(paths)].filter((path) => (positives.length === 0 || positives.some(({ regex }) => regex.test(path))) && !negatives.some(({ regex }) => regex.test(path))).sort();
 }
 
+/** Match one family's manifest glob, honouring its optional `exclude` globs. */
+export function matchManifests(paths, entry) {
+  const exclude = Array.isArray(entry.exclude) ? entry.exclude.filter((pattern) => typeof pattern === 'string' && pattern) : [];
+  return matchGlobs(paths, [entry.manifests, ...exclude.map((pattern) => `!${pattern}`)]);
+}
+
 /** The last single star matched by this alternative supplies the manifest ID. */
 export function captureManifestId(path, pattern) {
   const { regex, negative } = compile(pattern);

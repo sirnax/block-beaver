@@ -54,6 +54,7 @@ export async function scanRepository(inputRoot, options = {}) {
   const changed = new Set();
   const fileSet = new Set(paths);
   const files = new Map();
+  const texts = new Map();
   const nodes = [];
   const edges = [];
   const edgeKeys = new Set();
@@ -66,6 +67,7 @@ export async function scanRepository(inputRoot, options = {}) {
     const plugin = plugins.find((candidate) => candidate.accepts(path));
     const text = await readFile(join(root, path), 'utf8');
     const hash = fileHash(text);
+    texts.set(path, text);
     const cached = previous?.files.get(path);
     const same = cached?.hash === hash && cached.plugin === plugin;
     if (!same) changed.add(path);
@@ -158,5 +160,9 @@ export async function scanRepository(inputRoot, options = {}) {
   }
   const hashes = Object.fromEntries([...files].map(([path, value]) => [path, value.hash]));
   const fingerprint = fileHash(JSON.stringify(hashes));
-  return { schemaVersion: 2, root, apps, resolutionReport, diagnostics: project.diagnostics, unreachableFiles, scannedAt: new Date().toISOString(), fingerprint, summary: { files: paths.length, pieces: nodes.length - paths.length, relationships: resolvedEdges.length, unresolvedImports: resolutionReport.length, missingAssets: resolutionReport.filter((report) => report.category === 'asset').length, unreachableFiles: unreachableFiles.length, tsconfigErrors: project.diagnostics.length }, nodes, edges: resolvedEdges, hashes };
+  const graph = { schemaVersion: 2, root, apps, resolutionReport, diagnostics: project.diagnostics, unreachableFiles, scannedAt: new Date().toISOString(), fingerprint, summary: { files: paths.length, pieces: nodes.length - paths.length, relationships: resolvedEdges.length, unresolvedImports: resolutionReport.length, missingAssets: resolutionReport.filter((report) => report.category === 'asset').length, unreachableFiles: unreachableFiles.length, tsconfigErrors: project.diagnostics.length }, nodes, edges: resolvedEdges, hashes };
+  // Source text for later light passes (map.bindings). Non-enumerable: never serialized and
+  // outside graphRevision, so graph.json bytes are unchanged.
+  Object.defineProperty(graph, 'sourceText', { value: (path) => texts.get(path) ?? null, enumerable: false });
+  return graph;
 }

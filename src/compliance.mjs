@@ -175,14 +175,42 @@ async function auditSnapshot(root, mode) {
     }
     await snapshotGitState(root, target, { copyBare: mode !== 'range' });
     await snapshotDependencies(root, target);
-    const derived = [];
-    for (const path of ['.blocks/view/graph.json', '.blocks/view/index.html']) {
-      const content = await readProjectFile(root, path);
-      if (content !== null) derived.push({ path, before: await readProjectFile(target, path), content });
-    }
-    await writeProjectFiles(target, derived);
-    return { root: target, dispose: () => rm(temporary, { recursive: true, force: true }) };
+    const { derived, copied } = await snapshotViewArtifacts(root, target);
+    await writeProjectFiles(target, copied);
+    return { root: target, derivedView: derived, dispose: () => rm(temporary, { recursive: true, force: true }) };
   } catch (error) { await rm(temporary, { recursive: true, force: true }); throw error; }
+}
+
+const VIEW_ARTIFACTS = ['.blocks/view/graph.json', '.blocks/view/index.html'];
+
+/**
+ * Decides where each generated view artifact comes from in a staged or range snapshot (#26).
+ * - Committed (present in the selected version): kept as selected and compared byte for byte.
+ * - Absent and ignored by the selected .gitignore: derived. It can never be part of a commit, so
+ *   view-fresh regenerates it from the snapshot graph instead of reading the working copy, and the
+ *   pre-commit hook matches CI (which runs update first) without a manual update.
+ * - Absent and not ignored: the working copy is copied in and compared, as before 0.6.0.
+ * Registered view-export modules follow the same rule; they were never copied from the working tree.
+ */
+async function snapshotViewArtifacts(root, target) {
+  let modules = [];
+  try { modules = (await registeredViewOutputs(target, {})).map((output) => output.out); } catch { /* reported by structural rules */ }
+  const absent = [];
+  for (const path of [...VIEW_ARTIFACTS, ...modules]) {
+    if (!validPath(path)) continue;
+    const present = await readProjectFile(target, path).then((content) => content !== null, () => true);
+    if (!present && !absent.includes(path)) absent.push(path);
+  }
+  const { ignoredPaths } = await import('./install-host.mjs');
+  const ignored = await ignoredPaths(target, absent, { isolated: true }) ?? new Set();
+  const derived = new Set(absent.filter((path) => ignored.has(path)));
+  const copied = [];
+  for (const path of VIEW_ARTIFACTS) {
+    if (!absent.includes(path) || derived.has(path)) continue;
+    const content = await readProjectFile(root, path);
+    if (content !== null) copied.push({ path, before: null, content });
+  }
+  return { derived, copied };
 }
 
 async function safeHookBytes(path) {
@@ -277,7 +305,7 @@ function routeManaged(finding, local, findings, advisories) {
     remediation: 'Run block-beaver install --fix-ignores to un-ignore only the managed paths so they can be committed and checked.' });
 }
 
-async function structuralRules(root, { strict, familyDrift, mode, priorBaseline, removed }) {
+async function structuralRules(root, { strict, familyDrift, mode, priorBaseline, removed, derivedView = new Set() }) {
   const configDocument = await readJson(root, '.blocks/config.json');
   const installDocument = await readJson(root, '.blocks/install.json');
   const baselineDocument = await readJson(root, '.blocks/baseline.json');
@@ -346,6 +374,14 @@ async function structuralRules(root, { strict, familyDrift, mode, priorBaseline,
     } catch (error) { managedFindings.push({ message: `Cannot validate managed host content: ${error.message}`, remediation: 'block-beaver upgrade' }); }
 
   }
+  // Derived (ignored, uncommitted) view artifacts are regenerated inside the snapshot from its own
+  // graph, so they are fresh by construction and family drift sees the same bytes update would write.
+  if (derivedView.size) {
+    const modules = new Set((await registeredViewOutputs(root, graph)).map((output) => output.out));
+    const rendered = (path) => path === '.blocks/view/graph.json' ? JSON.stringify(graph, null, 2) + '\n'
+      : path === '.blocks/view/index.html' ? renderBlockMap(graph) : modules.has(path) ? renderViewModule(graph) : null;
+    await writeProjectFiles(root, [...derivedView].map((path) => ({ path, before: null, content: rendered(path) })).filter((file) => file.content !== null));
+  }
   const viewFindings = [];
   if (installed) {
     const stored = await readJson(root, '.blocks/view/graph.json');
@@ -364,7 +400,7 @@ async function structuralRules(root, { strict, familyDrift, mode, priorBaseline,
   let extraOutputs;
   try { extraOutputs = await registeredViewOutputs(root, graph); }
   catch (error) { return scanFailure(error, exportRegistryPath); }
-  const familyEnabled = extraOutputs.length > 0 || !!(configDocument.value && ['families', 'generators', 'history'].some((key) => Object.hasOwn(configDocument.value, key)));
+  const familyEnabled = extraOutputs.length > 0 || !!(configDocument.value && ['families', 'generators', 'history', 'checks'].some((key) => Object.hasOwn(configDocument.value, key)));
   if (familyDrift) familyFindings = await familyDrift({ root, graph, config: configDocument.value });
   else if (familyEnabled) {
     try {
@@ -419,7 +455,7 @@ export async function auditProject(inputRoot, { mode = 'working', base = null, s
   let rules, treeConfig;
   try {
     treeConfig = await readJson(snapshot.root, '.blocks/config.json');
-    rules = await structuralRules(snapshot.root, { strict, familyDrift, mode, priorBaseline, removed: new Set(changed.filter((item) => item.status === 'D').map((item) => item.path)) });
+    rules = await structuralRules(snapshot.root, { strict, familyDrift, mode, priorBaseline, derivedView: snapshot.derivedView, removed: new Set(changed.filter((item) => item.status === 'D').map((item) => item.path)) });
   }
   finally { await snapshot.dispose(); }
   const treeValue = treeConfig.present ? (treeConfig.value ?? {}) : null;

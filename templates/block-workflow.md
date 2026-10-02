@@ -31,6 +31,8 @@ Repair a failed proposal with `block-beaver repair ROADMAP BLOCK revised.json --
 
 Run `block-beaver update --root .` after source or registry changes and after integration. This regenerates `.blocks/view/graph.json` and `.blocks/view/index.html` from source and manifests. Never hand-edit the generated HTML or graph. It is a view of the current checkout, not a record of approval and not a manifest editor. An approved block appears in the target checkout only after its manifest and implementation have been integrated there.
 
+The view is gitignored by default, so the pre-commit audit regenerates it from the staged snapshot and a commit does not need a manual `update`; a committed view is still compared byte for byte. After adding `ignore` entries or covering legacy files, run `block-beaver baseline --lower --root .` (or `upgrade`) to record the lower ratchet counts; the baseline never rises.
+
 `block-beaver start --root .` installs the project integration if needed, serves the map locally, and refreshes it while the process runs. Keep that session running during development for automatic view updates. The HTML file can also be opened offline; reopen or reload it after an update. Report the affected block, verification results, and regenerated view when finishing a task.
 
 Use the app filter and health reports to inspect cross-app links and files shared by

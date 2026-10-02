@@ -83,15 +83,25 @@ export function appendHistory(doc, current, { label = null, now } = {}) {
   return { doc: { schemaVersion: 1, entries: [...doc.entries, entry] }, changed: true, entry };
 }
 
-/** The set of graph block IDs standing after each entry; feeds the map's history slider. */
+/**
+ * The graph block IDs standing after each entry; feeds the map's history slider.
+ * Each snapshot is `{ date, label, blocks, gone }`. `gone` (0.6.0, additive) lists every
+ * block that stood after some earlier-or-equal entry but no longer stands at this one, as
+ * `{ id: 'block:<family>:<id>', family, name }` sorted by id. History stores only block
+ * references, so `name` is the reference's id part; the manifest left with the block.
+ */
 export function historySnapshots(doc) {
-  const state = new Set();
+  const state = new Set(), seen = new Set();
   return doc.entries.map((entry) => {
     for (const change of entry.changes) {
-      if (change.op === 'upsert') state.add(change.block);
+      if (change.op === 'upsert') { state.add(change.block); seen.add(change.block); }
       else state.delete(change.block);
     }
-    return { date: entry.date, label: entry.label, blocks: [...state].sort(compare).map((block) => `block:${block}`) };
+    const gone = [...seen].filter((block) => !state.has(block)).sort(compare).map((block) => {
+      const split = block.indexOf(':');
+      return { id: `block:${block}`, family: block.slice(0, split), name: block.slice(split + 1) };
+    });
+    return { date: entry.date, label: entry.label, blocks: [...state].sort(compare).map((block) => `block:${block}`), gone };
   });
 }
 

@@ -6,6 +6,7 @@ import { dirname, join } from 'node:path';
 import { execFileSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { evaluateAuditRules, auditCounts } from '../src/audit-rules.mjs';
+import { parseFamiliesConfig } from '../src/families/config.mjs';
 import { auditProject, recordException } from '../src/compliance.mjs';
 import { installCompliance } from '../src/compliance-setup.mjs';
 
@@ -24,6 +25,7 @@ test('stable audit rules accept valid context and each independent violation fai
     'managed-current': (ctx) => { ctx.managedFindings = [{ message: 'Old installed version.' }]; },
     'config-valid': (ctx) => { ctx.config.schemaVersion = 99; },
     'manifest-valid': (ctx) => { ctx.manifests[0].value.files.push('missing.ts'); },
+    'family-valid': (ctx) => { ctx.graph.familyDiagnostics = [{ rule: 'family-valid', severity: 'error', message: 'Set-wide family rule failed.', file: 'meta/unit.family.ts' }]; },
     'view-fresh': (ctx) => { ctx.viewFindings = [{ path: '.blocks/view/index.html', message: 'Stale map.' }]; },
     'undeclared-link': (ctx) => { ctx.graph.nodes.find((node) => node.id === 'block:local:left').manifest.dependencies = []; },
     'coverage-ratchet': (ctx) => { ctx.graph.nodes.push({ id: 'file:src/new.ts', kind: 'file', path: 'src/new.ts' }); },
@@ -376,4 +378,58 @@ test('structural gates are independent of the receipt level and still fail when 
   const ctx = context();
   ctx.config.enforcement = { receipts: 'off' };
   assert.ok(evaluateAuditRules(ctx).every((rule) => rule.pass));
+});
+
+test('family-valid is its own rule that carries set-wide findings with file paths', () => {
+  const ctx = context();
+  ctx.graph.familyDiagnostics = [{ rule: 'family-valid', code: 'family-check-all-failed', severity: 'error', message: 'Need at least one widget', file: 'meta/unit.family.ts' }, { rule: 'family-valid', severity: 'warning', message: 'ignored warning', file: 'x.ts' }];
+  const rules = evaluateAuditRules(ctx);
+  assert.deepEqual(rules.find((entry) => entry.id === 'family-valid').findings, [{ path: 'meta/unit.family.ts', message: 'Need at least one widget', code: 'family-check-all-failed' }]);
+  assert.equal(rules.find((entry) => entry.id === 'manifest-valid').pass, true);
+  assert.equal(result(context(), 'family-valid').pass, true);
+});
+
+test('public audit and gen --check both report set-wide checks under family-valid', async (t) => {
+  const { root, put } = await fixture(t);
+  const { generateProject } = await import('../src/families/commands.mjs');
+  const unit = (id, tag) => `export default { id: '${id}', family: 'unit', version: 1, name: '${id}', description: 'Unit ${id}', rationale: 'One unit', implementation: { kind: 'none' }, tag: '${tag}' };`;
+  const config = { schemaVersion: 1, apps: [{ id: 'app', root: '.', entries: ['src/main.ts'] }], families: [{ id: 'unit', contract: 'meta/unit.family.ts', manifests: 'meta/units/*.ts' }, { id: 'part', contract: 'meta/part.family.ts', manifests: 'meta/parts/*.ts' }], checks: ['meta/coverage.check.ts'] };
+  await put('.blocks/config.json', config);
+  await put('meta/unit.family.ts', `import { defineFamily, s } from 'block-beaver/kernel';
+export default defineFamily({ id: 'unit', fields: s.object({ tag: s.string() }), implementation: ['none'], checkAll: (units) => { const seen = new Set(), issues = []; for (const unit of units) { if (seen.has(unit.tag)) issues.push({ block: unit.id, field: '$.tag', message: 'Duplicate tag ' + unit.tag, code: 'tag-unique' }); seen.add(unit.tag); } return issues; } });`);
+  await put('meta/part.family.ts', `import { defineFamily, s } from 'block-beaver/kernel';
+export default defineFamily({ id: 'part', fields: s.object({}), implementation: ['none'], checkAll: (parts) => parts.length ? [] : [{ message: 'At least one part is required', code: 'part-required' }] });`);
+  await put('meta/coverage.check.ts', `export default (manifests, ctx) => ctx.all('unit').filter((unit) => !ctx.get('part:' + unit.id)).map((unit) => ({ block: 'unit:' + unit.id, message: 'Unit ' + unit.id + ' has no part', code: 'part-coverage' }));`);
+  await put('meta/units/one.ts', unit('one', 'same'));
+  await put('meta/units/two.ts', unit('two', 'same'));
+  const audit = await auditProject(root);
+  const valid = audit.rules.find((rule) => rule.id === 'family-valid');
+  assert.equal(valid.pass, false, JSON.stringify(audit.rules));
+  assert.deepEqual(valid.findings.map((finding) => [finding.path, finding.message]).sort(), [
+    ['meta/part.family.ts', 'At least one part is required'], ['meta/units/one.ts', 'Unit one has no part'],
+    ['meta/units/two.ts', 'Duplicate tag same'], ['meta/units/two.ts', 'Unit two has no part'],
+  ]);
+  assert.equal(audit.rules.find((rule) => rule.id === 'manifest-valid').pass, true, 'Set-wide findings have their own rule.');
+  const gen = await generateProject(root, { check: true });
+  assert.equal(gen.ok, false);
+  assert.deepEqual(gen.diagnostics.filter((item) => item.rule === 'family-valid').map((item) => [item.code, item.checkCode, item.file]).sort(), [
+    ['family-check-all-failed', 'part-coverage', 'meta/units/one.ts'], ['family-check-all-failed', 'part-coverage', 'meta/units/two.ts'],
+    ['family-check-all-failed', 'part-required', 'meta/part.family.ts'], ['family-check-all-failed', 'tag-unique', 'meta/units/two.ts'],
+  ]);
+  await put('meta/units/two.ts', unit('two', 'other'));
+  await put('meta/parts/one.ts', `export default { id: 'one', family: 'part', version: 1, name: 'one', description: 'Part one', rationale: 'One part', implementation: { kind: 'none' } };`);
+  await put('meta/parts/two.ts', `export default { id: 'two', family: 'part', version: 1, name: 'two', description: 'Part two', rationale: 'One part', implementation: { kind: 'none' } };`);
+  const fixed = await auditProject(root);
+  assert.equal(fixed.rules.find((rule) => rule.id === 'family-valid').pass, true, JSON.stringify(fixed.rules.find((rule) => rule.id === 'family-valid')));
+  assert.equal((await generateProject(root, { check: true })).diagnostics.some((item) => item.rule === 'family-valid'), false);
+});
+
+test('config-valid findings keep the diagnostic code and field path', () => {
+  const graph = { nodes: [], edges: [], diagnostics: [] };
+  const config = { schemaVersion: 1, apps: [], families: [{ id: 'unit', contract: 'u.ts', manifests: 'u/*.unit.ts' }], map: { bindings: [{ family: 'unit', call: true, registry: 'units' }] } };
+  const rules = evaluateAuditRules({ graph: { ...graph, familyDiagnostics: parseFamiliesConfig(config).diagnostics }, config });
+  const findings = rules.find((item) => item.id === 'config-valid').findings;
+  assert.equal(findings.length, 1);
+  assert.equal(findings[0].field, '$.map.bindings[0]');
+  assert.equal(findings[0].code, 'family-path-invalid');
 });

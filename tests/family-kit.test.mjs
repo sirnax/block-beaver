@@ -189,3 +189,18 @@ test('shape-invalid history becomes a named diagnostic during dry-run without ta
   assert.equal(await readFile(join(root,'.blocks/history.json'),'utf8'),text);
   await assert.rejects(readFile(join(root,'units/new.entry.ts')),{code:'ENOENT'});
 });
+
+test('kit describe and validate carry implementation arms and data kinds', async (t) => {
+  const root = await fixture(t);
+  const arms = { ...family, implementation: ['none','module','plan'], dataKinds: ['plan'], implementationFields: { module: s.object({ loading: s.optional(s.enum(['eager','lazy'])) }), plan: s.object({ steps: s.integer() }) } };
+  const withArms = options({ loadFamilies: async () => structuredClone({ ...load, families: [arms] }) });
+  const described = await runKit(root,'describe',['sample'],withArms);
+  assert.deepEqual(described.result.dataKinds,['plan']);
+  assert.equal(described.result.implementationFields.plan.shape.steps.type,'number');
+  const plain = await runKit(root,'describe',['sample'],options());
+  assert.deepEqual([plain.result.dataKinds,plain.result.implementationFields],[[],{}]);
+  const valid = await runKit(root,'validate',[],{ ...withArms, input: { manifest: value('new',{implementation:{kind:'plan',steps:1}}), mode: 'runtime' } });
+  assert.equal(valid.result.valid,true);
+  const bad = await runKit(root,'validate',[],{ ...withArms, input: { manifest: value('new',{implementation:{kind:'module',module:'./a',loading:'soon'}}) } });
+  assert.deepEqual(bad.result.errors.map((issue) => issue.path),['$.implementation.loading']);
+});

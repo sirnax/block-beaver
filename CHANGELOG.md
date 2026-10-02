@@ -6,6 +6,35 @@ All notable user visible changes are recorded here. Releases follow semantic ver
 
 - No additional changes recorded.
 
+## 0.6.0 — 2026-10-02
+
+0.6.0 lets a project with its own hand-built typed block system move onto Block Beaver families. Manifest data stays unchanged, JSON outputs stay byte-identical, and no map features are lost. Upgrading from 0.5.x is `block-beaver upgrade`. See the [0.6.0 plan](docs/tasks/2026-10-02-block-beaver-0.6.0-plan.md).
+
+**Compatibility notes**
+
+- **New config keys are optional.** The new keys are `checks`, per-family `exclude`, `map.floors`, `map.groupBy`, `map.skins` and `map.bindings`. Leaving them out keeps 0.5.1 behaviour, and `upgrade` adds none of them.
+- **Graph additions.** `graph.json` stays at schema 2. Family projects gain three additive fields: `codeReach`, `unused`, and `gone` on each history snapshot. Graphs of projects without families are unchanged.
+- **New rule and code.**
+  - The `family-valid` rule reports set-wide checks.
+  - `gen` can now report `generator-unstable` under `family-drift`.
+  - `family-unclaimed` strays under `fixtures`, `__fixtures__`, `test` or `tests` folders are now warnings, not errors.
+- **Staged view checks.** Staged and range audits regenerate a gitignored, uncommitted view inside the snapshot instead of comparing the working copy. A committed view, and a working-tree `audit`, are still compared against the files on disk. Hook and CI bytes are unchanged.
+- **`upgrade` changes.**
+  - It may lower counts in `.blocks/baseline.json`; it never raises them.
+  - The managed `WORKFLOW.md` and agent skill reference gain a paragraph on the staged view and on lowering the baseline, so `upgrade` rewrites those managed files.
+- **Floor order direction.** `map.floors` lists floors top first, the order the map already draws `families`. This deliberately differs from the "bottom to top" wording in #29, to keep existing maps unchanged.
+- **Kernel types.** `FamilyDefinition.implementation` is now `readonly string[]`, and `ManifestOf` derives implementation arms from the family. `check`, `checkAll` and generator callbacks keep their 0.5.1 parameter types. A family with `dataKinds` can annotate a callback parameter with the new `LoadedManifest` type to compare its data kinds.
+
+**Changes**
+
+- Families can add fields to implementation arms (`implementationFields`) and declare data-only kinds (`dataKinds`) that runtime mode accepts. Errors name the selected arm's field. (#27)
+- `checkAll` on a family contract and config-level `checks` modules express whole-set and cross-family rules, reported under `family-valid` in `audit` and `gen --check`. (#28)
+- `map.floors` sets the map floor order independently of the index, registry and `ctx.blocks()` order. (#29)
+- The map shows which ordinary code reaches each block, through imports or `map.bindings` registry calls. It also marks unused blocks, keeps removed blocks as "gone" bricks in the history slider, groups blocks within a floor by `map.groupBy`, and offers several skins (`map.skins`) with a remembered toggle. (#30)
+- `family-unclaimed` honours the config `ignore` list and per-family `exclude`, and `ignore` also keeps files from loading as manifests. (#31)
+- `gen` repeats until outputs stop changing (at most three passes), so manifests that import generated outputs settle in one run. (#32)
+- The managed pre-commit passes after a source edit without a manual `update`. The new `block-beaver baseline --lower` command, which `upgrade` also runs, records lower ratchet counts. (#26)
+
 ## 0.5.1 — 2026-10-01
 
 Fixes from use of 0.5.0 (#21–#24). Upgrading from 0.5.0 is `block-beaver upgrade`. #21 can damage the host repository, so every 0.5.0 user who works in linked Git worktrees should upgrade.

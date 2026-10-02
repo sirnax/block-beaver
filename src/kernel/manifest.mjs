@@ -12,17 +12,26 @@ export const coreManifestSchema = /* @__PURE__ */ deepFreeze({
   }
 });
 
+// The arm is chosen by `kind`, so errors name the selected arm's field. Core keys win over family extras.
+function implementationSchema(manifest, family) {
+  const kinds = ['module','none',...(family?.dataKinds ?? [])];
+  let kind;
+  try { kind = manifest?.implementation?.kind; } catch {} // Non-JSON input is reported by validate().
+  if (!kinds.includes(kind)) return {type:'object',shape:{kind:{type:'enum',values:kinds}},unknown:'allow'};
+  return {type:'object',shape:{...family?.implementationFields?.[kind]?.shape,kind:{type:'literal',value:kind},...(kind === 'module' && {module:{type:'string',min:1}})}};
+}
+
 export function validateManifest(manifest, {mode = 'build', family} = {}) {
   if (!['build','runtime'].includes(mode)) throw new TypeError('Manifest mode must be build or runtime');
-  const schema = family ? {type:'object',shape:{...family.fields.shape,...coreManifestSchema.shape},unknown:family.fields.unknown} : coreManifestSchema;
+  const schema = {type:'object',shape:{...family?.fields.shape,...coreManifestSchema.shape,implementation:implementationSchema(manifest,family)}};
   // Leave unknown unset instead of adding undefined to the JSON schema.
-  if (schema.unknown === undefined) delete schema.unknown;
+  if (family?.fields.unknown !== undefined) schema.unknown = family.fields.unknown;
   const result = validate(schema,manifest);
   if (result.errors.some(error => error.code === 'not-json')) return result;
   const errors = [...result.errors];
   if (manifest && typeof manifest === 'object') {
     if (family && manifest.family !== family.id) errors.push({path:'$.family',code:'literal',message:`Expected family ${family.id}`});
-    if (family && manifest.implementation && !family.implementation.includes(manifest.implementation.kind)) errors.push({path:'$.implementation.kind',code:'enum',message:'Implementation kind is not allowed by this family'});
+    if (family && manifest.implementation && !family.implementation.includes(manifest.implementation.kind) && !errors.some(error => error.path === '$.implementation.kind')) errors.push({path:'$.implementation.kind',code:'enum',message:'Implementation kind is not allowed by this family'});
     if (mode === 'runtime' && manifest.implementation?.kind === 'module') errors.push({path:'$.implementation',code:'runtime-module',message:'Runtime manifests cannot name modules'});
     if (mode === 'runtime' && Object.hasOwn(manifest,'files')) errors.push({path:'$.files',code:'runtime-files',message:'Runtime manifests cannot name files'});
   }

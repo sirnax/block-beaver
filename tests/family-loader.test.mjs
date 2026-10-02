@@ -53,6 +53,26 @@ test('family config is optional, validates paths and IDs, and permits repo-chose
   assert.equal(parseFamiliesConfig({ families: [{ id: 'widget', contract: '.blocks/author/widget.ts', manifests: '.blocks/author/*.item.ts' }] }).diagnostics.length, 0);
 });
 
+test('0.6.0 optional config keys validate with field paths and stay absent by default', () => {
+  const other = { id: 'gadget', contract: 'definitions/gadget.family.ts', manifests: 'catalog/gadgets/*.item.ts' };
+  const valid = parseFamiliesConfig({
+    families: [{ ...family, exclude: ['catalog/widgets/fixtures/**'] }, other],
+    checks: ['checks/set.ts'],
+    map: { floors: ['gadget', 'widget'], groupBy: 'surface', skins: [{ id: 'paper', path: 'skins/paper.css' }, { id: 'night', tokens: { ink: '#fff' } }], bindings: [{ family: 'widget', call: 'withWidget', registry: 'WIDGETS_BY_ID' }] },
+  });
+  assert.deepEqual(valid.diagnostics, []);
+  assert.deepEqual(valid.families[0].exclude, ['catalog/widgets/fixtures/**']);
+  const invalid = parseFamiliesConfig({
+    families: [{ ...family, exclude: ['../x/**', '!negated/**'] }],
+    checks: ['/abs.ts'],
+    map: { floors: ['widget', 'missing'], groupBy: 'not a field', skins: [{ id: 'a' }, { id: 'a' }, { id: 'b', path: '../x.css', tokens: { Bad: 1 } }], bindings: [{ family: 'missing', call: 'x', registry: 'y' }] },
+  });
+  const fields = invalid.diagnostics.map((item) => item.field);
+  for (const field of ['$.families[0].exclude', '$.checks', '$.map.floors[1]', '$.map.groupBy', '$.map.skins[1].id', '$.map.skins[2].path', '$.map.skins[2].tokens', '$.map.bindings[0]']) assert.ok(fields.includes(field), field);
+  assert.ok(invalid.diagnostics.every((item) => item.rule === 'config-valid'));
+  assert.equal(parseFamiliesConfig({ families: [family], map: { floors: ['widget', 'widget'] } }).diagnostics[0].field, '$.map.floors');
+});
+
 test('input globs include recursive, question, classes, brace alternatives and exclusions', () => {
   const paths = ['catalog/alpha.item.ts', 'catalog/nested/bravo.item.ts', 'catalog/nested/c1.item.ts', 'catalog/nested/delta.item.js'];
   assert.deepEqual(matchGlobs(paths, ['catalog/**/*.item.{ts,js}', '!**/c?.item.ts']), [paths[0], paths[1], paths[3]]);
@@ -421,4 +441,150 @@ test('the discovery limit returns a located diagnostic through loadFamilies', as
   assert.equal(result.diagnostics[0].code, 'loader-file-limit');
   assert.equal(result.diagnostics[0].file, '.');
   assert.equal(result.manifests.length, 0);
+});
+
+test('family exclude and config ignore keep files from loading as manifests', async (t) => {
+  const widget = { ...family, manifests: 'catalog/**/*.item.ts' };
+  const files = { 'catalog/fixtures/beta.item.ts': manifest('beta'), 'catalog/skipped/gamma.item.ts': manifest('gamma'), 'catalog/tests/delta.item.ts': manifest('delta') };
+  const ids = (result) => result.manifests.map((item) => item.id).sort();
+  // Without exclude or ignore every matching file loads.
+  const plain = await fixture(t, files, configFor({ families: [widget] }));
+  assert.deepEqual(ids(await loadFamilies(plain)), ['alpha', 'beta', 'delta', 'gamma']);
+  // A per-family exclude removes fixtures from the manifest set.
+  const excluded = await fixture(t, files, configFor({ families: [{ ...widget, exclude: ['catalog/fixtures/**', 'catalog/tests/**'] }] }));
+  const excludedResult = await loadFamilies(excluded);
+  assert.deepEqual(ids(excludedResult), ['alpha', 'gamma']);
+  assert.deepEqual(excludedResult.diagnostics, []);
+  // Config ignore keeps ignored files from loading, even when the scanner would have listed them.
+  const ignored = await fixture(t, files, configFor({ families: [widget], ignore: ['catalog/skipped/**'] }));
+  const ignoredResult = await loadFamilies(ignored);
+  assert.deepEqual(ids(ignoredResult), ['alpha', 'beta', 'delta']);
+  assert.equal(ignoredResult.discoveredFiles.includes('catalog/skipped/gamma.item.ts'), true);
+});
+
+test('excluded and ignored fixture folders are not family-unclaimed after attachment', async (t) => {
+  const task = { id: 'widget', contract: 'definitions/widget.family.ts', manifests: 'catalog/widgets/manifests/*.item.ts', exclude: ['catalog/widgets/fixtures/*.item.ts'] };
+  const files = { 'catalog/widgets/manifests/alpha.item.ts': manifest(), 'catalog/widgets/fixtures/sample.item.ts': manifest('sample'), 'catalog/widgets/ignored/skip.item.ts': manifest('skip'), 'catalog/widgets/stray/other.item.ts': manifest('other'), 'catalog/widgets/tests/t.item.ts': manifest('t') };
+  const data = await fixture(t, files, configFor({ families: [task], ignore: ['catalog/widgets/ignored/**'] }));
+  const load = await loadFamilies({ ...data, paths: undefined });
+  const graph = { schemaVersion: 2, root: '.', fingerprint: 'x', apps: [], summary: {}, nodes: [], edges: [] };
+  const project = { isIgnored: (path) => path.startsWith('catalog/widgets/ignored/'), resolveImport() { throw new Error('unexpected'); } };
+  attachFamilies(graph, { load, project });
+  assert.deepEqual(load.manifests.map((item) => item.id), ['alpha']);
+  assert.deepEqual(graph.familyDiagnostics.map((item) => [item.code, item.file, item.severity]), [['family-unclaimed', 'catalog/widgets/stray', 'error'], ['family-unclaimed', 'catalog/widgets/tests', 'warning']]);
+});
+
+test('implementation arms: declared fields and data kinds load, bad declarations are contract problems', async (t) => {
+  const arms = "implementation:['module','none','plan'],dataKinds:['plan'],implementationFields:{module:s.object({export:s.optional(s.string()),loading:s.optional(s.enum(['eager','lazy']))}),plan:s.object({steps:s.integer()})},";
+  const data = await fixture(t, {
+    [family.contract]: contract(arms),
+    'catalog/widgets/alpha.item.ts': manifest('alpha', { implementation: { kind: 'module', module: '../../main', export: 'X', loading: 'lazy' } }),
+    'catalog/widgets/bravo.item.ts': manifest('bravo', { implementation: { kind: 'plan', steps: 2 } }),
+    'catalog/widgets/charlie.item.ts': manifest('charlie', { implementation: { kind: 'module', module: '../../main', loading: 'never' } }),
+    'catalog/widgets/delta.item.ts': manifest('delta', { implementation: { kind: 'module', module: '../../main', stray: 1 } }),
+    'catalog/widgets/echo.item.ts': manifest('echo', { implementation: { kind: 'module', export: 'X' } }),
+  });
+  const result = await loadFamilies(data);
+  assert.deepEqual(result.manifests.map((item) => item.id), ['alpha', 'bravo']);
+  assert.deepEqual(result.families[0].dataKinds, ['plan']);
+  assert.equal(result.families[0].implementationFields.plan.shape.steps.type, 'number');
+  const fields = result.diagnostics.filter((item) => item.code === 'manifest-schema').map((item) => item.field).sort();
+  assert.deepEqual(fields, ['$.implementation.loading', '$.implementation.module', '$.implementation.stray']);
+  const bad = [
+    ["dataKinds:['module'],", '$.dataKinds'],
+    ["dataKinds:['Not Kebab'],", '$.dataKinds'],
+    ["dataKinds:['plan','plan'],implementation:['none','plan'],", '$.dataKinds'],
+    ["dataKinds:['plan'],", '$.dataKinds'],
+    ["implementation:['plan'],", '$.implementation'],
+    ["implementationFields:[],", '$.implementationFields'],
+    ["implementationFields:{plan:s.object({})},", '$.implementationFields.plan'],
+    ["implementationFields:{none:s.string()},", '$.implementationFields.none'],
+    ["implementationFields:{none:{type:'object'}},", '$.implementationFields.none'],
+    ["implementationFields:{none:s.object({kind:s.string()})},", '$.implementationFields.none.shape.kind'],
+    ["implementationFields:{none:s.object({module:s.string()})},", '$.implementationFields.none.shape.module'],
+  ];
+  for (const [extra, field] of bad) {
+    const loaded = await loadFamilies(await fixture(t, { [family.contract]: contract(extra) }));
+    assert.ok(loaded.diagnostics.some((item) => item.field === field && item.code.startsWith('contract-')), extra + JSON.stringify(loaded.diagnostics));
+    assert.equal(loaded.manifests.length, 0);
+  }
+});
+
+const gadget = { id: 'gadget', contract: 'definitions/gadget.family.ts', manifests: 'catalog/gadgets/*.item.ts' };
+const gadgetContract = `import { defineFamily, s } from 'block-beaver/kernel';
+export default defineFamily({id:'gadget',fields:s.object({tag:s.string()}),implementation:['none']});\n`;
+const gadgetValue = (id) => ({ ...value(id), family: 'gadget' });
+const setWide = (diagnostics) => diagnostics.filter((item) => item.rule === 'family-valid');
+
+test('family checkAll runs once per family over its valid manifests and reports under family-valid', async (t) => {
+  const source = contract(`checkAll: (manifests, ctx) => { if (!Object.isFrozen(manifests) || (manifests.length && !Object.isFrozen(manifests[0])) || !Object.isFrozen(ctx) || !Object.isFrozen(ctx.families)) throw Error('not frozen'); if (ctx.families.map((f) => f.id).join() !== 'widget') throw Error('families'); if (ctx.all('widget').length !== manifests.length || ctx.all('missing').length !== 0) throw Error('all'); if (manifests.length && !ctx.get('widget:' + manifests[0].id)) throw Error('get'); return manifests.length ? [] : [{ message: 'Need at least one widget', code: 'widgets-required' }]; },`);
+  const none = await loadFamilies(await fixture(t, { [family.contract]: source }, configFor({ families: [{ ...family, manifests: 'catalog/nothing/*.item.ts' }] })));
+  assert.deepEqual(setWide(none.diagnostics).map((item) => [item.code, item.checkCode, item.file, item.family, item.block]), [['family-check-all-failed', 'widgets-required', family.contract, 'widget', undefined]], JSON.stringify(none.diagnostics));
+  assert.equal(none.families[0].hasCheckAll, true);
+  assert.equal(none.families[0].checkAll, undefined);
+  const ok = await loadFamilies(await fixture(t, { [family.contract]: source }));
+  assert.deepEqual(setWide(ok.diagnostics), [], JSON.stringify(ok.diagnostics));
+  assert.deepEqual(ok.manifests.map((item) => item.id), ['alpha']);
+});
+
+test('family checkAll uniqueness names each offending manifest file and keeps the manifests', async (t) => {
+  const source = contract(`checkAll: (manifests) => { const seen = new Map(); const issues = []; for (const m of manifests) { if (seen.has(m.tag)) issues.push({ block: m.id, field: '$.tag', message: 'tag ' + m.tag + ' already used by ' + seen.get(m.tag), code: 'tag-unique' }); else seen.set(m.tag, m.id); } return issues; },`);
+  const data = await fixture(t, { [family.contract]: source, 'catalog/widgets/bravo.item.ts': manifest('bravo'), 'catalog/widgets/charlie.item.ts': manifest('charlie', { tag: 'red' }) });
+  const result = await loadFamilies(data);
+  assert.deepEqual(setWide(result.diagnostics).map((item) => [item.code, item.checkCode, item.file, item.block, item.field]), [['family-check-all-failed', 'tag-unique', 'catalog/widgets/bravo.item.ts', 'widget:bravo', '$.tag']]);
+  assert.deepEqual(result.manifests.map((item) => item.id), ['alpha', 'bravo', 'charlie'], 'Set-wide failures do not remove individually valid manifests.');
+});
+
+test('config checks modules see every family, and changing one invalidates the loader cache', async (t) => {
+  const checks = (body) => `export default (manifests, ctx) => { ${body} };\n`;
+  const coverage = checks(`if (!Object.isFrozen(ctx)) throw Error('mutable'); const have = new Set(ctx.all('gadget').map((m) => m.id)); return ctx.all('widget').filter((m) => !have.has(m.id)).map((m) => ({ block: 'widget:' + m.id, message: 'Widget ' + m.id + ' has no gadget', code: 'gadget-coverage' }));`);
+  const data = await fixture(t, { [gadget.contract]: gadgetContract, 'checks/coverage.ts': coverage }, configFor({ families: [family, gadget], checks: ['checks/coverage.ts'] }));
+  const first = await loadFamilies(data);
+  assert.deepEqual(setWide(first.diagnostics).map((item) => [item.code, item.checkCode, item.file, item.block]), [['family-check-all-failed', 'gadget-coverage', 'catalog/widgets/alpha.item.ts', 'widget:alpha']]);
+  assert.deepEqual(first.manifests.map((item) => item.ref), ['widget:alpha']);
+  assert.ok(first.loadedFiles.includes('checks/coverage.ts'));
+  assert.equal((await loadFamilies(data)).key, first.key, 'Unchanged inputs reuse the cache.');
+  await writeFile(join(data.root, 'checks/coverage.ts'), checks('return [];'));
+  const changed = await loadFamilies(data);
+  assert.notEqual(changed.key, first.key);
+  assert.deepEqual(setWide(changed.diagnostics), []);
+  await mkdir(join(data.root, 'catalog/gadgets'), { recursive: true });
+  await writeFile(join(data.root, 'catalog/gadgets/alpha.item.ts'), `export default ${JSON.stringify(gadgetValue('alpha'))};\n`);
+  await writeFile(join(data.root, 'checks/coverage.ts'), coverage);
+  assert.deepEqual(setWide((await loadFamilies({ ...data, paths: await discoverFiles(data.root) })).diagnostics), [], 'Coverage passes once the gadget exists.');
+});
+
+test('failing, malformed and unloadable set-wide checks name their module under family-valid', async (t) => {
+  const data = await fixture(t, {
+    [family.contract]: contract(`checkAll: () => { throw new Error('contract boom'); },`),
+    'checks/throws.ts': "export default () => { throw new Error('module boom'); };\n",
+    'checks/shape.ts': "export default () => [{ code: 'no-message' }];\n",
+    'checks/notfn.ts': 'export default 1;\n',
+    'checks/broken.ts': "import './missing-dependency';\nexport default () => [];\n",
+  }, configFor({ checks: ['checks/throws.ts', 'checks/shape.ts', 'checks/notfn.ts', 'checks/broken.ts'] }));
+  const result = await loadFamilies(data);
+  const found = setWide(result.diagnostics).map((item) => [item.code, item.file]);
+  assert.deepEqual(found, [['family-check-all-failed', family.contract], ['family-check-all-failed', 'checks/throws.ts'], ['family-check-all-failed', 'checks/shape.ts'], ['check-module-invalid', 'checks/notfn.ts'], ['unresolved-import', 'checks/broken.ts']], JSON.stringify(result.diagnostics));
+  assert.match(setWide(result.diagnostics)[0].message, /contract boom/);
+  assert.match(setWide(result.diagnostics)[1].message, /checks\/throws\.ts.*module boom/);
+  assert.deepEqual(result.manifests.map((item) => item.id), ['alpha']);
+});
+
+test('contracts reject a non-function checkAll and configs without set-wide checks behave as before', async (t) => {
+  const bad = await loadFamilies(await fixture(t, { [family.contract]: contract(`checkAll: 'nope',`) }));
+  assert.ok(bad.diagnostics.some((item) => item.code === 'contract-invalid' && item.field === '$.checkAll'), JSON.stringify(bad.diagnostics));
+  const plain = await loadFamilies(await fixture(t));
+  assert.deepEqual(plain.diagnostics, []);
+  assert.equal(plain.families[0].hasCheckAll, false);
+});
+
+test('a checks-only config still loads its check modules, so a missing module is reported', async (t) => {
+  const config = configFor({ families: [], checks: ['checks/missing.ts'] });
+  const loaded = await loadFamilies(await fixture(t, {}, config));
+  assert.ok(loaded.diagnostics.some((item) => item.rule === 'family-valid' && item.file === 'checks/missing.ts'), JSON.stringify(loaded.diagnostics));
+});
+
+test('map.bindings names must be strings', () => {
+  const parsed = parseFamiliesConfig({ families: [family], map: { bindings: [{ family: 'widget', call: true, registry: 'units' }, { family: 'widget', call: 'render', registry: ['units'] }] } });
+  assert.deepEqual(parsed.diagnostics.map((item) => item.field), ['$.map.bindings[0]', '$.map.bindings[1]']);
 });

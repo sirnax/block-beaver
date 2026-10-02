@@ -10,3 +10,4 @@
 
 /* Family SVG presentation and history controls are rendered from the shared map module. */
 .family-map .family-history input{accent-color:#357b78}.family-map svg [hidden]{display:none}.family-map .family-evidence{font-size:12px}
+.block-chip{display:inline-block;margin:5px 6px 0 0;padding:3px 6px;border-radius:4px;background:#eef1ec;color:#46605a;font-size:9px}.block-chip.unused{background:#f7e8eb;color:#8a3d4c;border:1px dashed #a65969}.block-chip.reach{background:#fbeee3;color:#8a4a1c}.family-map .family-skins select{font-size:12px}

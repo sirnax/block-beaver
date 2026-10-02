@@ -510,3 +510,156 @@ test('protected and reserved outputs remain protected on case-insensitive filesy
   assert.deepEqual(result.outputs, []);
   assert.equal(generateCalls(loader).length, 0);
 });
+
+// ---- stable generation: gen converges when outputs feed later outputs (#32) ----
+
+async function realProject(t, generators) {
+  const { symlink } = await import('node:fs/promises');
+  const { fileURLToPath } = await import('node:url');
+  const packageRoot = fileURLToPath(new URL('../', import.meta.url));
+  const files = {
+    'package.json': '{"name":"stable-gen","type":"module"}\n',
+    '.blocks/config.json': JSON.stringify({ schemaVersion: 1, apps: [{ id: 'site', root: '.', entries: ['source/main.ts'] }],
+      families: [{ id: 'unit', contract: 'definitions/unit.ts', manifests: 'catalog/*.entry.ts', registry: { out: 'generated/units.ts', exportName: 'units', importExtension: '.ts' } }],
+      generators: Object.keys(generators) }),
+    'definitions/unit.ts': `import { defineFamily, s } from 'block-beaver/kernel'; export default defineFamily({id:'unit',fields:s.object({}),implementation:['module'],generators:['registry']});\n`,
+    'catalog/alpha.entry.ts': `export const alpha = {id:'alpha',family:'unit',version:1,name:'Alpha',description:'a',rationale:'r',implementation:{kind:'module',module:'../source/main.ts'}} as const;\n`,
+    'source/main.ts': 'export const main = true;\n',
+    ...generators,
+  };
+  const root = await repo(t, files);
+  await mkdir(join(root, 'node_modules'), { recursive: true });
+  await symlink(packageRoot, join(root, 'node_modules/block-beaver'), 'dir');
+  return root;
+}
+
+test('a generator that imports the generated registry settles in one gen and gen --check is clean', async (t) => {
+  const { generateProject } = await import('../src/families/commands.mjs');
+  const root = await realProject(t, {
+    'generators/count.ts': `import { defineGenerator } from 'block-beaver/kernel';
+let count = -1;
+try { count = (await import('../generated/units.ts')).units.all.length; } catch {}
+export default defineGenerator({ out: 'generated/count.json', inputs: ['catalog/*.entry.ts'], generate() { return JSON.stringify({ count }); } });\n`,
+  });
+  const result = await generateProject(root, { now: NOW });
+  assert.equal(result.ok, true, JSON.stringify(result));
+  assert.ok(result.passes >= 2 && result.passes <= 3, `passes ${result.passes}`);
+  assert.deepEqual(JSON.parse(await readFile(join(root, 'generated/count.json'), 'utf8')), { count: 1 });
+  assert.ok(result.written.includes('generated/units.ts') && result.written.includes('generated/count.json'));
+  const checked = await generateProject(root, { check: true, now: NOW });
+  assert.equal(checked.ok, true, JSON.stringify(checked));
+  assert.deepEqual(checked.pending, []);
+  const again = await generateProject(root, { now: NOW });
+  assert.deepEqual(again.written, []);
+  assert.equal(again.passes, 1);
+});
+
+test('a generator that throws during the verification plan fails gen instead of reporting convergence', async (t) => {
+  const { generateProject } = await import('../src/families/commands.mjs');
+  const root = await realProject(t, {
+    'generators/late.ts': `import { defineGenerator } from 'block-beaver/kernel';
+import { readFileSync } from 'node:fs';
+const file = new URL('../generated/late.json', import.meta.url);
+let n = 0;
+try { n = JSON.parse(readFileSync(file, 'utf8')).n; } catch {}
+export default defineGenerator({ out: 'generated/late.json', inputs: ['catalog/*.entry.ts'], cache: false, generate() { if (n >= 3) throw new Error('late failure'); return JSON.stringify({ n: n + 1 }); } });\n`,
+  });
+  const result = await generateProject(root, { now: NOW });
+  assert.equal(result.ok, false);
+  assert.ok(result.diagnostics.some((item) => item.severity === 'error' && /late failure/.test(item.message)), JSON.stringify(result.diagnostics));
+});
+
+test('a generator that settles on the third write is stable, and gen --check agrees', async (t) => {
+  const { generateProject } = await import('../src/families/commands.mjs');
+  const root = await realProject(t, {
+    'generators/settle.ts': `import { defineGenerator } from 'block-beaver/kernel';
+import { readFileSync } from 'node:fs';
+const file = new URL('../generated/settle.json', import.meta.url);
+let n = 0;
+try { n = JSON.parse(readFileSync(file, 'utf8')).n; } catch {}
+export default defineGenerator({ out: 'generated/settle.json', inputs: ['catalog/*.entry.ts'], cache: false, generate() { return JSON.stringify({ n: Math.min(n + 1, 3) }); } });\n`,
+  });
+  const result = await generateProject(root, { now: NOW });
+  assert.equal(result.ok, true, JSON.stringify(result.diagnostics));
+  assert.equal(result.passes, 4);
+  assert.equal(result.diagnostics.some((item) => item.code === 'generator-unstable'), false);
+  assert.equal((await generateProject(root, { check: true, now: NOW })).ok, true);
+});
+
+test('a generator that depends on its own previous output is reported as generator-unstable after three passes', async (t) => {
+  const { generateProject } = await import('../src/families/commands.mjs');
+  const root = await realProject(t, {
+    'generators/osc.ts': `import { defineGenerator } from 'block-beaver/kernel';
+import { readFileSync } from 'node:fs';
+const file = new URL('../generated/osc.json', import.meta.url);
+let n = 0;
+try { n = JSON.parse(readFileSync(file, 'utf8')).n; } catch {}
+export default defineGenerator({ out: 'generated/osc.json', inputs: ['catalog/*.entry.ts'], cache: false, generate() { return JSON.stringify({ n: n + 1 }); } });\n`,
+  });
+  const result = await generateProject(root, { now: NOW });
+  assert.equal(result.ok, false);
+  assert.equal(result.passes, 4, 'Three writing passes plus one read-only verification plan.');
+  const unstable = result.diagnostics.find((item) => item.code === 'generator-unstable');
+  assert.ok(unstable, JSON.stringify(result.diagnostics));
+  assert.equal(unstable.rule, 'family-drift');
+  assert.equal(unstable.severity, 'error');
+  assert.deepEqual(unstable.files, ['generated/osc.json']);
+  assert.match(unstable.message, /generated\/osc\.json/);
+  assert.equal(JSON.parse(await readFile(join(root, 'generated/osc.json'), 'utf8')).n, 3);
+  assert.ok(result.written.includes('generated/osc.json'));
+});
+
+test('gen --check and --dry-run stay single-plan and read-only', async (t) => {
+  const { generateProject } = await import('../src/families/commands.mjs');
+  const root = await realProject(t, {});
+  for (const mode of [{ check: true }, { dryRun: true }]) {
+    const result = await generateProject(root, { ...mode, now: NOW });
+    assert.deepEqual(result.written, []);
+    assert.equal(result.passes, undefined);
+  }
+  assert.equal((await readdir(root)).includes('generated'), false);
+});
+
+const withIndexes = (floors) => ['gizmo', 'widget', 'sprocket'].map((id, configIndex) => ({ ...family(id, { generators: ['index', 'registry'], floor: floors[configIndex] }), configIndex }));
+const indexBlocks = [manifest('sprocket', 'a'), manifest('widget', 'b'), manifest('gizmo', 'c'), manifest('widget', 'a')];
+
+test('map floors never change index bytes, registry order or claim order', async (t) => {
+  const root = await repo(t);
+  const plain = await plan(root, fakeLoader({ families: withIndexes([0, 1, 2]), manifests: indexBlocks }));
+  const reordered = await plan(root, fakeLoader({ families: withIndexes([2, 0, 1]), manifests: indexBlocks }));
+  const keys = (result) => result.outputs.map((output) => output.key);
+  assert.deepEqual(keys(plain), ['registry:gizmo', 'registry:widget', 'registry:sprocket', 'index']);
+  assert.deepEqual(keys(reordered), keys(plain));
+  const indexOf = (result) => result.outputs.find((output) => output.key === 'index').expected;
+  assert.equal(indexOf(reordered), indexOf(plain));
+  assert.deepEqual(JSON.parse(indexOf(plain)).map((item) => `${item.family}:${item.id}`), ['gizmo:c', 'widget:a', 'widget:b', 'sprocket:a']);
+  assert.deepEqual(reordered.outputs.map((output) => output.expected), plain.outputs.map((output) => output.expected));
+});
+
+test('diagnostic field paths point at the config index, not the map floor', async (t) => {
+  const root = await repo(t);
+  const families = [{ ...family('gizmo', { floor: 2 }), configIndex: 0 }, { ...family('widget', { registry: null, floor: 0 }), configIndex: 1 }, { ...family('sprocket', { floor: 1 }), configIndex: 2 }];
+  const { diagnostics } = await plan(root, fakeLoader({ families: [families[1], families[0], families[2]] }));
+  assert.deepEqual(diagnostics.map((item) => [item.code, item.family, item.field]), [['registry-out-missing', 'widget', '$.families[1].registry.out']]);
+});
+
+test('a loaded family without configIndex falls back to its floor for ordering', async (t) => {
+  const root = await repo(t);
+  const loader = fakeLoader({ families: [family('widget', { floor: 1, generators: ['index'], registry: null }), family('gizmo', { generators: ['index'], registry: null })], manifests: [manifest('widget', 'a'), manifest('gizmo', 'a')] });
+  const { outputs } = await plan(root, loader);
+  assert.deepEqual(JSON.parse(outputs[0].expected).map((item) => item.family), ['gizmo', 'widget']);
+});
+
+test('set-wide family-valid findings from the loader fail check and block writes, and checks modules are protected outputs', async (t) => {
+  const root = await repo(t);
+  const finding = { rule: 'family-valid', code: 'family-check-all-failed', severity: 'error', message: 'Need at least one gizmo', file: 'blocks/gizmo.family.ts', family: 'gizmo' };
+  const loader = fakeLoader({ families: [family('gizmo')], diagnostics: [finding] });
+  const planned = await plan(root, loader);
+  assert.deepEqual(planned.diagnostics, [finding]);
+  assert.deepEqual(checkGeneration(planned).filter((item) => item.rule === 'family-valid'), [finding]);
+  assert.deepEqual((await applyGeneration(root, planned)).written, [], 'Errors from set-wide checks prevent every write.');
+  const hostile = await plan(root, fakeLoader({ families: [family('gizmo')], generators: [custom('gen/x.ts', { out: 'CHECKS/Gizmo.check.ts' })] }), { config: { checks: ['checks/gizmo.check.ts', 'CHECKS/Gizmo.check.ts', 42] } });
+  assert.deepEqual(hostile.diagnostics.map((item) => [item.code, item.file]), [['output-unsafe', 'CHECKS/Gizmo.check.ts']]);
+  const unrelated = await plan(root, fakeLoader({ families: [family('gizmo')], generators: [custom('gen/x.ts', { out: 'gen/out.md' })], outputs: { 'custom:gen/x.ts': 'ok' } }), { config: { checks: ['checks/gizmo.check.ts'] } });
+  assert.deepEqual(unrelated.diagnostics, []);
+});

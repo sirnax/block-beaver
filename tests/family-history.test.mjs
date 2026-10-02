@@ -70,8 +70,8 @@ test('an unknown imported hash differs from the real one, so the next gen record
 test('snapshots list the graph IDs standing after each entry', () => {
   const history = doc(entry('2026-01-01', [up('b:two', 'sha256:2'), up('a:one', 'sha256:1')], { label: 'start' }), entry('2026-01-02', [del('b:two'), up('a:three', 'sha256:3')]));
   assert.deepEqual(historySnapshots(history), [
-    { date: '2026-01-01', label: 'start', blocks: ['block:a:one', 'block:b:two'] },
-    { date: '2026-01-02', label: null, blocks: ['block:a:one', 'block:a:three'] },
+    { date: '2026-01-01', label: 'start', blocks: ['block:a:one', 'block:b:two'], gone: [] },
+    { date: '2026-01-02', label: null, blocks: ['block:a:one', 'block:a:three'], gone: [{ id: 'block:b:two', family: 'b', name: 'two' }] },
   ]);
   assert.deepEqual(historySnapshots(doc()), []);
 });
@@ -249,4 +249,13 @@ test('importProjectHistory refuses a mismatched replay, bad files and loader err
   const damaged = await importProjectHistory(root, file, map, { graph, loadFamilies: loaderFor(block('a', 'sha256:a'), block('b', 'sha256:b')) });
   assert.deepEqual([damaged.ok, codes(damaged)], [false, ['import-history-exists']]);
   assert.equal(await readFile(join(root, '.blocks/history.json'), 'utf8'), '{broken');
+});
+
+test('snapshots keep removed blocks as gone until they return', () => {
+  const history = doc(entry('2026-01-01', [up('a:one', 'sha256:1'), up('b:two', 'sha256:2')]), entry('2026-01-02', [del('a:one'), del('b:two')]), entry('2026-01-03', [up('a:one', 'sha256:3')]));
+  assert.deepEqual(historySnapshots(history).map((snapshot) => snapshot.gone), [
+    [],
+    [{ id: 'block:a:one', family: 'a', name: 'one' }, { id: 'block:b:two', family: 'b', name: 'two' }],
+    [{ id: 'block:b:two', family: 'b', name: 'two' }],
+  ]);
 });

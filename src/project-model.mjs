@@ -80,6 +80,11 @@ function matches(path, patterns = []) {
   for (const pattern of patterns) { if (typeof pattern !== 'string') continue; const negative = pattern.startsWith('!'); if (patternRegex(negative ? pattern.slice(1) : pattern).test(path)) matched = !negative; }
   return matched;
 }
+/** Build the config `ignore` matcher so every consumer shares the project-model semantics. */
+export function ignoreMatcher(patterns) {
+  const list = Array.isArray(patterns) ? patterns : [];
+  return (path) => matches(path, list);
+}
 async function json(path, fallback = null) { try { return JSON.parse(await readFile(path, 'utf8')); } catch (error) { if (error.code === 'ENOENT') return fallback; throw error; } }
 async function inventory(root) {
   const configs = [], packages = [];
@@ -305,5 +310,5 @@ export async function loadProjectModel(inputRoot, { paths = [], writeConfig = tr
   }
   if (strict && diagnostics.length) throw new Error(diagnostics.map((item) => `${item.app || 'config'} ${item.field}: ${item.message}`).join('\n'));
   const resolutionSignature = createHash('sha256').update(JSON.stringify({ config, metadata: result.metadata, apps: apps.map((app) => ({ id: app.id, root: app.root, compilerOptions: app.compilerOptions })), paths })).digest('hex');
-  return { resolutionSignature, config, apps, ownerByFile, diagnostics, resolveImport, isIgnored: (path) => matches(path, Array.isArray(config.ignore) ? config.ignore : []) };
+  return { resolutionSignature, config, apps, ownerByFile, diagnostics, resolveImport, isIgnored: ignoreMatcher(config.ignore) };
 }

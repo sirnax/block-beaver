@@ -2,10 +2,11 @@ import { readFile, realpath } from 'node:fs/promises';
 import { resolve } from 'node:path';
 import { readProjectFile, writeProjectFiles } from '../project-files.mjs';
 import { registeredViewOutputs } from '../view-exports.mjs';
-import { applyGeneration, checkGeneration, planGeneration } from './generate.mjs';
+import { applyGeneration, changedOutputs, checkGeneration, generatorUnstable, planGeneration } from './generate.mjs';
 import { HistoryError, historyPath, importHistory, readHistory, serializeHistory } from './history.mjs';
 
 const configProblem = (message) => ({ rule: 'config-valid', code: 'family-path-invalid', severity: 'error', message, file: '.blocks/config.json', field: '$' });
+const maxGenerationPasses = 3;
 const hasError = (diagnostics) => diagnostics.some((item) => item.severity === 'error');
 
 async function readConfig(root) {
@@ -58,6 +59,30 @@ export async function generateProject(inputRoot, { check = false, label, dryRun 
   }
   if (dryRun) return { ok: !hasError(plan.diagnostics), mode, outputs, written: [], pending, diagnostics: plan.diagnostics };
   const applied = await applyGeneration(root, plan);
+  // A manifest or generator can import something an earlier pass generated, so keep
+  // planning until a pass has nothing left to change (at most maxGenerationPasses plans).
+  let passes = 1;
+  let latest = plan;
+  while (!hasError(applied.diagnostics) && changedOutputs(latest).length && passes < maxGenerationPasses) {
+    // Without a caller-supplied graph, re-scan so generated files that did not exist yet are visible.
+    const nextGraph = graph ? ready.graph : await projectGraph(root);
+    latest = await planGeneration({ root, config: ready.config, graph: nextGraph, paths: graph || paths ? ready.paths : graphPaths(nextGraph), label: label ?? null, now,
+      extraOutputs: extraOutputs ?? [], loadFamilies });
+    passes += 1;
+    const next = await applyGeneration(root, latest);
+    applied.written = [...new Set([...applied.written, ...next.written])];
+    applied.diagnostics = [...applied.diagnostics, ...next.diagnostics.filter((item) => !applied.diagnostics.some((seen) => JSON.stringify(seen) === JSON.stringify(item)))];
+  }
+  if (!hasError(applied.diagnostics) && changedOutputs(latest).length) {
+    // The cap was reached with writes still happening; one read-only plan decides whether they settled.
+    const verifyGraph = graph ? ready.graph : await projectGraph(root);
+    const verify = await planGeneration({ root, config: ready.config, graph: verifyGraph, paths: graph || paths ? ready.paths : graphPaths(verifyGraph), label: label ?? null, now,
+      extraOutputs: extraOutputs ?? [], loadFamilies });
+    passes += 1;
+    // A verification plan that errors (for example a generator throwing on the third write) is not convergence.
+    if (hasError(verify.diagnostics)) applied.diagnostics = [...applied.diagnostics, ...verify.diagnostics];
+    else if (changedOutputs(verify).length) applied.diagnostics = [...applied.diagnostics, generatorUnstable(changedOutputs(verify), passes)];
+  }
   if (!hasError(applied.diagnostics) && extraOutputs === undefined && viewOutputs.length) {
     // Registries add source files and history changes the view. Render exports
     // from the completed generation rather than its pre-generation snapshot.
@@ -72,7 +97,7 @@ export async function generateProject(inputRoot, { check = false, label, dryRun 
     applied.written = [...new Set([...applied.written, ...refreshed.changed, ...final.written])];
     applied.diagnostics = [...applied.diagnostics, ...final.diagnostics];
   }
-  return { ok: !hasError(applied.diagnostics), mode, outputs, written: applied.written, pending: [], diagnostics: applied.diagnostics };
+  return { ok: !hasError(applied.diagnostics), mode, outputs, written: applied.written, pending: [], passes, diagnostics: applied.diagnostics };
 }
 
 const importProblem = (message) => ({ rule: 'family-drift', code: 'import-invalid', severity: 'error', message });
