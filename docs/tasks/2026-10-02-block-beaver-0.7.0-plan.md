@@ -250,3 +250,14 @@ Issues #36–#43 came from the next adoption steps in the repository that drove 
 The Codex cases ran without native hook trust, so the model and native hook events are unverified. The trusted-hook Codex runs were not run: the interactive trust step has not worked with Codex. The Claude cases are the release-grade editor evidence.
 
 **Size.** On a synthetic graph shaped like the adopting repo (4 apps, 174 blocks, 1800 files, 9000 import edges), a full view module measured 8.95 MB and a map-detail module 388 KB before the brick map. The brick map's extra CSS and controller code add about 4-5 KB to both.
+
+## Publication
+
+- **Merge:** PR #45 merged to `main` as `afb1d9f` on 2026-10-02. It closed #36–#44.
+- **Owner correction before release.** The first candidate was rejected because the family map drew flat tiles instead of the original design's Lego bricks. The map was redrawn (block B), then CI, the live gate and the tarball smoke run were all repeated on the final commit.
+- **npm:** `block-beaver@0.7.0` has shasum `3fb8a51e9f795247d43d0d4c6173d053a4edd215` and 75 files. The owner published the tarball packed from the merged `main`. Its shasum matches the tarball that passed the gate and the smoke run, and the registry reports the same shasum and file count. `latest` is 0.7.0.
+- **Tag and release:** the annotated tag `v0.7.0` points at `afb1d9f`. The tag workflow reran the checks and created the GitHub release [v0.7.0](https://github.com/sirnax/block-beaver/releases/tag/v0.7.0).
+- **Registry install:** in a disposable repository, `npm install block-beaver@0.7.0` installed 0.7.0, `block-beaver/kernel` exports load, and the CLI help lists `audit --format`, `gen --adopt` and `view --detail`.
+- **Not run:** the trusted-hook Codex cases of the live gate, as recorded in Evidence.
+- **Next:** re-adoption in the motivating repository, pinning 0.7.0 and reviewing `install --dry-run`.
+

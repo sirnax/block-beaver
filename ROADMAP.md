@@ -6,7 +6,7 @@ Implementation branch: `codex/block-beaver-v0.4-design` (merged). Development ch
 
 ## Status
 
-**0.7.0, adopting an existing family system, part 2 (#36–#44), is in progress** on `release/0.7.0`. See [the 0.7.0 plan](docs/tasks/2026-10-02-block-beaver-0.7.0-plan.md).
+**0.7.0, adopting an existing family system, part 2 (#36–#44), is published** to npm and GitHub. See [the 0.7.0 plan, evidence and publication record](docs/tasks/2026-10-02-block-beaver-0.7.0-plan.md).
 
 **0.6.0, adopting an existing family system (#26–#33), is published** to npm and GitHub. See [the 0.6.0 plan, evidence and publication record](docs/tasks/2026-10-02-block-beaver-0.6.0-plan.md).
 
