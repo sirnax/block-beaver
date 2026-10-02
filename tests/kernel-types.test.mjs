@@ -50,7 +50,16 @@ test('kernel declarations infer family schemas and registry literal ids', () => 
     const badId: Id = 'c';
     // @ts-expect-error registry values are deeply readonly
     registry.all[0].implementation.kind = 'none';
-    import {s, type Infer, type ManifestOf, type LoadedManifest, type GeneratorDefinition, defineFamily, defineGenerator, type GeneratorEntry, createRegistry, compose, validate} from 'block-beaver/kernel';
+    defineGenerator({out:'gen/imports.ts',inputs:['catalog/*.ts'],generate:(ctx) => ctx.entries('unit').map((entry: GeneratorEntry) => "import { " + entry.exportName + " } from './" + entry.path + "'; // " + entry.ref + entry.family + entry.id + entry.hash + entry.value.id).join('\\n') + ctx.entries().length});
+    // @ts-expect-error generator entries are read-only
+    defineGenerator({out:'gen/x.ts',inputs:['catalog/*.ts'],generate:(ctx) => { ctx.entries()[0].path = 'moved.ts'; return ''; }});
+    // @ts-expect-error an entry's family filter is a family id string
+    defineGenerator({out:'gen/y.ts',inputs:['catalog/*.ts'],generate:(ctx) => String(ctx.entries(1))});
+    const badge = defineGenerator({out:'README.md',region:'roadmap-badge',inputs:['docs/*.md'],generate:() => 'badge'});
+    const owned: string | undefined = badge.region;
+    const regionId: Required<GeneratorDefinition>['region'] = 'roadmap-badge';
+    // @ts-expect-error a region is a kebab-case string id
+    const numbered: Required<GeneratorDefinition>['region'] = 1;
     const result = validate(schema,{});
     if (result.valid) { const state: 'open'|'closed' = result.value.state; }
   `;
