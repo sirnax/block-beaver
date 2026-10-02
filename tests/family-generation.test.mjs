@@ -510,3 +510,80 @@ test('protected and reserved outputs remain protected on case-insensitive filesy
   assert.deepEqual(result.outputs, []);
   assert.equal(generateCalls(loader).length, 0);
 });
+
+// ---- stable generation: gen converges when outputs feed later outputs (#32) ----
+
+async function realProject(t, generators) {
+  const { symlink } = await import('node:fs/promises');
+  const { fileURLToPath } = await import('node:url');
+  const packageRoot = fileURLToPath(new URL('../', import.meta.url));
+  const files = {
+    'package.json': '{"name":"stable-gen","type":"module"}\n',
+    '.blocks/config.json': JSON.stringify({ schemaVersion: 1, apps: [{ id: 'site', root: '.', entries: ['source/main.ts'] }],
+      families: [{ id: 'unit', contract: 'definitions/unit.ts', manifests: 'catalog/*.entry.ts', registry: { out: 'generated/units.ts', exportName: 'units', importExtension: '.ts' } }],
+      generators: Object.keys(generators) }),
+    'definitions/unit.ts': `import { defineFamily, s } from 'block-beaver/kernel'; export default defineFamily({id:'unit',fields:s.object({}),implementation:['module'],generators:['registry']});\n`,
+    'catalog/alpha.entry.ts': `export const alpha = {id:'alpha',family:'unit',version:1,name:'Alpha',description:'a',rationale:'r',implementation:{kind:'module',module:'../source/main.ts'}} as const;\n`,
+    'source/main.ts': 'export const main = true;\n',
+    ...generators,
+  };
+  const root = await repo(t, files);
+  await mkdir(join(root, 'node_modules'), { recursive: true });
+  await symlink(packageRoot, join(root, 'node_modules/block-beaver'), 'dir');
+  return root;
+}
+
+test('a generator that imports the generated registry settles in one gen and gen --check is clean', async (t) => {
+  const { generateProject } = await import('../src/families/commands.mjs');
+  const root = await realProject(t, {
+    'generators/count.ts': `import { defineGenerator } from 'block-beaver/kernel';
+let count = -1;
+try { count = (await import('../generated/units.ts')).units.all.length; } catch {}
+export default defineGenerator({ out: 'generated/count.json', inputs: ['catalog/*.entry.ts'], generate() { return JSON.stringify({ count }); } });\n`,
+  });
+  const result = await generateProject(root, { now: NOW });
+  assert.equal(result.ok, true, JSON.stringify(result));
+  assert.ok(result.passes >= 2 && result.passes <= 3, `passes ${result.passes}`);
+  assert.deepEqual(JSON.parse(await readFile(join(root, 'generated/count.json'), 'utf8')), { count: 1 });
+  assert.ok(result.written.includes('generated/units.ts') && result.written.includes('generated/count.json'));
+  const checked = await generateProject(root, { check: true, now: NOW });
+  assert.equal(checked.ok, true, JSON.stringify(checked));
+  assert.deepEqual(checked.pending, []);
+  const again = await generateProject(root, { now: NOW });
+  assert.deepEqual(again.written, []);
+  assert.equal(again.passes, 1);
+});
+
+test('a generator that depends on its own previous output is reported as generator-unstable after three passes', async (t) => {
+  const { generateProject } = await import('../src/families/commands.mjs');
+  const root = await realProject(t, {
+    'generators/osc.ts': `import { defineGenerator } from 'block-beaver/kernel';
+import { readFileSync } from 'node:fs';
+const file = new URL('../generated/osc.json', import.meta.url);
+let n = 0;
+try { n = JSON.parse(readFileSync(file, 'utf8')).n; } catch {}
+export default defineGenerator({ out: 'generated/osc.json', inputs: ['catalog/*.entry.ts'], cache: false, generate() { return JSON.stringify({ n: n + 1 }); } });\n`,
+  });
+  const result = await generateProject(root, { now: NOW });
+  assert.equal(result.ok, false);
+  assert.equal(result.passes, 3);
+  const unstable = result.diagnostics.find((item) => item.code === 'generator-unstable');
+  assert.ok(unstable, JSON.stringify(result.diagnostics));
+  assert.equal(unstable.rule, 'family-drift');
+  assert.equal(unstable.severity, 'error');
+  assert.deepEqual(unstable.files, ['generated/osc.json']);
+  assert.match(unstable.message, /generated\/osc\.json/);
+  assert.equal(JSON.parse(await readFile(join(root, 'generated/osc.json'), 'utf8')).n, 3);
+  assert.ok(result.written.includes('generated/osc.json'));
+});
+
+test('gen --check and --dry-run stay single-plan and read-only', async (t) => {
+  const { generateProject } = await import('../src/families/commands.mjs');
+  const root = await realProject(t, {});
+  for (const mode of [{ check: true }, { dryRun: true }]) {
+    const result = await generateProject(root, { ...mode, now: NOW });
+    assert.deepEqual(result.written, []);
+    assert.equal(result.passes, undefined);
+  }
+  assert.equal((await readdir(root)).includes('generated'), false);
+});

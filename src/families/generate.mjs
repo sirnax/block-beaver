@@ -232,3 +232,11 @@ export function checkGeneration(plan) {
   }
   return [...plan.diagnostics, ...drift];
 }
+
+/** Outputs a plan would still write. */
+export const changedOutputs = (plan) => plan.outputs.filter((item) => item.status === 'stale' || item.status === 'missing').map((item) => item.out);
+
+/** Generation kept changing its own inputs; name the files still changing on the last pass. */
+export const generatorUnstable = (files, passes) => problem('generator-unstable',
+  `Generation did not settle after ${passes} passes; still changing: ${files.join(', ')}. A manifest or generator output depends on its own previous output.`,
+  { file: files[0], files });
