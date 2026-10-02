@@ -11,6 +11,8 @@ import { DEFAULT_CI_NODE, nodeSetupFrom } from './install-host.mjs';
 const marker = '# block-beaver:managed-ci';
 const begin = '# block-beaver:start';
 const end = '# block-beaver:end';
+// A hash line inside the managed region means install/upgrade owns it; init and start must not rewrite it.
+const hostOwned = (text) => text !== null && new RegExp(`^${begin}\\n(?:[^\\n]*\\n)*?[ \\t]*# block-beaver:hash [0-9a-f]{64}\\n(?:[^\\n]*\\n)*?[ \\t]*${end}$`, 'm').test(text);
 
 async function exists(path) {
   try { await lstat(path); return true; }
@@ -20,6 +22,7 @@ async function exists(path) {
 async function managedFile(root, path, content) {
   const before = await readProjectFile(root, path);
   if (before !== null && !before.startsWith(`${marker}\n`)) throw new Error(`Existing CI file is not Block Beaver managed: ${path}`);
+  if (hostOwned(before)) return [];
   return await writeProjectFiles(root, [{ path, before, content }]);
 }
 
@@ -36,11 +39,11 @@ async function ciNode(root) {
 }
 
 function githubWorkflow(spec, node) {
-  return `${marker}\nname: Block Beaver compliance\non:\n  pull_request:\n    types: [opened, synchronize, reopened]\npermissions:\n  contents: read\njobs:\n  audit:\n    runs-on: ubuntu-latest\n    steps:\n      - uses: actions/checkout@v7\n        with:\n          fetch-depth: 0\n      - uses: actions/setup-node@v7\n        with:\n          ${node.yaml}\n      - run: npm install --no-save --ignore-scripts '${spec}'\n      - run: npx --no-install block-beaver audit --root . --base "\u0024{{ github.event.pull_request.base.sha }}"\n`;
+  return `${marker}\nname: Block Beaver compliance\non:\n  pull_request:\n    types: [opened, synchronize, reopened]\npermissions:\n  contents: read\njobs:\n  audit:\n    runs-on: ubuntu-latest\n    steps:\n      - uses: actions/checkout@v7\n        with:\n          fetch-depth: 0\n      - uses: actions/setup-node@v7\n        with:\n          ${node.yaml}\n      - run: npm install --no-save --ignore-scripts '${spec}'\n      - run: npx --no-install block-beaver audit --root . --base "\u0024{{ github.event.pull_request.base.sha }}" --format summary\n`;
 }
 
 function gitlabJob(spec, node) {
-  return `${marker}\nblock_beaver_audit:\n  image: node:${node.image ?? DEFAULT_CI_NODE}\n  stage: .pre\n  variables:\n    GIT_DEPTH: '0'\n  script:\n    - npm install --no-save --ignore-scripts '${spec}'\n    - npx --no-install block-beaver audit --root . --base "$CI_MERGE_REQUEST_DIFF_BASE_SHA"\n  rules:\n    - if: '$CI_PIPELINE_SOURCE == "merge_request_event"'\n`;
+  return `${marker}\nblock_beaver_audit:\n  image: node:${node.image ?? DEFAULT_CI_NODE}\n  stage: .pre\n  variables:\n    GIT_DEPTH: '0'\n  script:\n    - npm install --no-save --ignore-scripts '${spec}'\n    - npx --no-install block-beaver audit --root . --base "$CI_MERGE_REQUEST_DIFF_BASE_SHA" --format summary\n  rules:\n    - if: '$CI_PIPELINE_SOURCE == "merge_request_event"'\n`;
 }
 
 async function installGitlab(root, spec, node) {
@@ -59,7 +62,7 @@ async function installGitlab(root, spec, node) {
     if (/^include\s*:/m.test(before)) throw new Error('Existing GitLab include needs manual integration; CI gate is incomplete.');
     content = before + (before.endsWith('\n') ? '\n' : '\n\n') + section + '\n';
   }
-  return await writeProjectFiles(root, [{ path: job, before: beforeJob, content: gitlabJob(spec, node) }, { path: config, before, content }]);
+  return await writeProjectFiles(root, [{ path: job, before: beforeJob, content: hostOwned(beforeJob) ? beforeJob : gitlabJob(spec, node) }, { path: config, before, content: hostOwned(before) ? before : content }]);
 }
 
 async function installHook(root) {
@@ -87,7 +90,8 @@ async function installHook(root) {
       originalInfo = info;
     } finally { await handle.close(); }
   } catch (error) { if (error.code !== 'ENOENT' || existing) throw error; }
-  const section = `${begin}\nif ! command -v block-beaver >/dev/null 2>&1; then\n  echo 'Block Beaver is required for this commit. Install it, then retry.' >&2\n  exit 1\nfi\nblock-beaver audit --staged --root . || exit $?\n${end}\n`;
+  const section = `${begin}\nif ! command -v block-beaver >/dev/null 2>&1; then\n  echo 'Block Beaver is required for this commit. Install it, then retry.' >&2\n  exit 1\nfi\nblock-beaver audit --staged --format summary --root . || exit $?\n${end}\n`;
+  if (hostOwned(before)) return { status: 'installed', path: file, changed: false };
   let content;
   if (before === null) content = `#!/bin/sh\n${section}`;
   else {

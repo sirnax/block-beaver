@@ -50,7 +50,7 @@ test('a pre-commit audit in a linked worktree leaves the host repository untouch
   const committed = spawnSync('git', ['-C', worktree, ...identity, 'commit', '-m', 'change in worktree'], { env, encoding: 'utf8' });
   assert.equal(committed.status, 0, committed.stderr);
   // git reports the hook's output on stderr; the summary is the only audit output and it is one line.
-  assert.deepEqual(`${committed.stdout}${committed.stderr}`.split('\n').filter((line) => line.includes('block-beaver audit')), ['block-beaver audit: pass (1 files, 0 errors)']);
+  assert.deepEqual(`${committed.stdout}${committed.stderr}`.split('\n').filter((line) => line.includes('block-beaver audit')), ['block-beaver audit: pass (1 file, 0 errors)']);
   assert.ok(!/unreviewed-source|"rules"/.test(`${committed.stdout}${committed.stderr}`));
   assert.equal(run(root, 'config', '--get', 'core.bare'), 'false');
   assert.equal(run(root, 'remote', 'get-url', 'origin'), origin);

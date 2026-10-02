@@ -6,6 +6,7 @@ import { join } from 'node:path';
 import { execFileSync } from 'node:child_process';
 import { installProject, upgradeProject } from '../src/install.mjs';
 import { auditProject } from '../src/compliance.mjs';
+import { initializeProject } from '../src/project-integration.mjs';
 import { installationFixture, packageRunner, snapshot } from './helpers/install-fixture.mjs';
 
 function withoutScanTime(files) {
@@ -287,4 +288,33 @@ test('an owner edit inside a 0.6.0 hook region still conflicts instead of being 
   const upgraded = await upgradeProject(root, { version: '0.6.0', runner });
   assert.ok(upgraded.conflicts.some((conflict) => conflict.code === 'managed-edited' && conflict.path === '.git/hooks/pre-commit'));
   assert.equal(await readFile(hook, 'utf8'), edited);
+});
+
+
+test('init and start leave an installed, hash-trusted hook and CI workflow alone, so upgrade stays conflict-free', async (t) => {
+  const root = await installationFixture(t), runner = packageRunner(root);
+  await mkdir(join(root, '.github/workflows'), { recursive: true });
+  await writeFile(join(root, '.github/workflows/ci.yml'), 'on: push\n');
+  await installProject(root, { agents: ['codex'], version: '0.7.0', runner });
+  commitAll(root, 'base');
+  const paths = ['.git/hooks/pre-commit', '.github/workflows/block-beaver.yml'];
+  const installed = {};
+  for (const path of paths) installed[path] = await readFile(join(root, path), 'utf8');
+  assert.match(installed[paths[0]], /audit --staged --format summary --root \./);
+  await initializeProject(root, { editor: 'agents' });
+  for (const path of paths) assert.equal(await readFile(join(root, path), 'utf8'), installed[path], path);
+  const upgraded = await upgradeProject(root, { version: '0.7.0', runner });
+  assert.deepEqual(upgraded.conflicts, []);
+  assert.match(await readFile(join(root, paths[0]), 'utf8'), /audit --staged --format summary/);
+});
+
+test('a plain init writes the summary-format hook and CI audit commands', async (t) => {
+  const root = await installationFixture(t);
+  await mkdir(join(root, '.github/workflows'), { recursive: true });
+  await writeFile(join(root, '.github/workflows/ci.yml'), 'on: push\n');
+  commitAll(root, 'base');
+  const result = await initializeProject(root, { editor: 'agents' });
+  assert.equal(result.enforcement.hook.status, 'installed', JSON.stringify(result.enforcement));
+  assert.match(await readFile(join(root, '.git/hooks/pre-commit'), 'utf8'), /block-beaver audit --staged --format summary --root \. \|\| exit \$\?/);
+  assert.match(await readFile(join(root, '.github/workflows/block-beaver.yml'), 'utf8'), /audit --root \. --base "[^"]+" --format summary\n/);
 });
