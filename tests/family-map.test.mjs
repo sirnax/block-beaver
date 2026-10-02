@@ -40,7 +40,8 @@ test('family map has configured floor order, typed links and app-relative ordina
   assert.match(html, /var\(--bb-link-displays,/);
   assert.match(html, /--bb-link-displays:#123456/);
   assert.match(html, /class="ordinary-slab"/);
-  assert.match(html, /lib · 1 files/);
+  assert.match(html, /<text class="rail-name"[^>]*>admin · lib<\/text>/, 'rail rows are app-relative folders, prefixed by app when there are several');
+  assert.match(html, /<text class="rail-count[^"]*"[^>]*>1 file<\/text>/);
   assert.match(html, /block-beaver:fixture-repository:family-history/);
   assert.match(html, /id="family-history"[^>]*max="2"/);
   assert.equal(html, renderBlockMap(graph));
@@ -179,6 +180,7 @@ function fakeDocument(html) {
       get options() { return elements.filter((other) => other.tagName === 'option' && other.index > this.index && !elements.some((between) => between.tagName !== 'option' && between.index > this.index && between.index < other.index)); },
       textContent: '', innerHTML: '',
       hasAttribute: (name) => attributes.has(name),
+      getAttribute: (name) => attributes.has(name) ? attributes.get(name) : null,
       setAttribute: (name, value) => attributes.set(name, String(value)),
       removeAttribute: (name) => attributes.delete(name),
       toggleAttribute(name, force) { if (force) attributes.set(name, ''); else attributes.delete(name); },
@@ -271,7 +273,9 @@ test('unused blocks are dashed and listed in the key', () => {
   assert.match(map, /<g class="family-node" tabindex="0" role="button" aria-label="Inspect First record"/);
   assert.match(map, /1 unused block \(dashed\)/);
   assert.match(map, /<summary>Unused blocks · 1<\/summary><ul><li><button type="button" data-map-select="block:record:second">Second record<\/button> <small>record<\/small><\/li><\/ul>/);
-  assert.match(FAMILY_MAP_CSS, /\.family-node\.unused \.family-block-slab\{[^}]*stroke-dasharray/);
+  // Bricks are <use> clones, so state reaches their faces through inherited custom properties.
+  assert.match(FAMILY_MAP_CSS, /\.family-node\.unused\{[^}]*--dash:/);
+  assert.match(FAMILY_MAP_CSS, /\.top,\.l,\.r,\.stud\{[^}]*stroke-dasharray:var\(--dash,none\)/);
 });
 
 test('removed blocks return as ghost bricks only at snapshots where they stood', (t) => {
@@ -449,4 +453,151 @@ test('map.group treats empty strings as no value, so the empty fallback applies 
   const manifests = [['screen', 'a', { area: '' }], ['screen', 'b', { area: 0 }], ['tool', 'c', { modes: [''] }], ['tool', 'd', { modes: ['', 'chat', false] }]].map(([family, id, extra]) => ({ family, id, path: `${family}/${id}.ts`, value: { id, family, name: id, description: id, ...extra } }));
   const graph = attachFamilies({ root: '.', nodes: [], edges: [], apps: [], summary: {} }, { load: { families, manifests, generators: [], diagnostics: [] }, project: { resolveImport() { return null; } } });
   assert.deepEqual(graph.nodes.map((node) => node.group), ['Area internal', 'Area 0', null, 'chat + false']);
+});
+
+const brickFixture = (count, groups) => {
+  const graph = familyMapFixture();
+  graph.families = [{ id: 'unit', floor: 0, title: 'Units' }];
+  graph.nodes = Array.from({ length: count }, (_, index) => ({ id: `block:unit:u${String(index).padStart(2, '0')}`, family: 'unit', kind: 'block', floor: 0, name: `Unit ${index}`, description: '', path: `u${index}.ts`, app: 'web', ...(groups ? { group: groups[index % groups.length] } : {}) }));
+  graph.edges = []; graph.history = [];
+  return graph;
+};
+const bricksOf = (map) => [...map.matchAll(/<g class="family-node[^"]*"[^>]*data-map-id="([^"]+)"(?: data-family-block="[^"]*" data-map-app="[^"]*")?(?: data-map-group="([^"]*)")?[^>]*>.*?<use href="#bb-brick" x="([\d.-]+)" y="([\d.-]+)"\/>/g)].map(([, id, group, x, y]) => ({ id, group, x: Number(x), y: Number(y) }));
+const slabWidth = (map) => { const xs = map.match(/<polygon class="slab family-surface" points="([^"]+)"/)[1].split(' ').map((pair) => Number(pair.split(',')[0])); return Math.round((Math.max(...xs) - Math.min(...xs)) * 10) / 10; };
+
+test('blocks are isometric bricks on a tight near-square plate, drawn back to front', () => {
+  const map = renderFamilyMap(brickFixture(10));
+  assert.equal(map.match(/<g id="bb-brick">/g).length, 1, 'one shared brick shape');
+  assert.match(map, /<g id="bb-brick"><polygon class="l" points="[^"]+"\/><polygon class="r" points="[^"]+"\/><polygon class="top family-block-slab" points="[^"]+"\/><ellipse class="stud base"[^>]*\/><ellipse class="stud cap"[^>]*\/><\/g>/);
+  const bricks = bricksOf(map);
+  assert.equal(bricks.length, 10);
+  assert.ok(bricks.every((brick, index) => !index || brick.y >= bricks[index - 1].y), 'nearer bricks come later');
+  // 10 blocks make a 4 × 3 grid: the plate spans cols + rows plus 0.7 cells of padding on each side, 17 units per cell.
+  assert.equal(slabWidth(map), Math.round((4 + 3 + 2.8) * 17 * 10) / 10);
+  assert.equal(slabWidth(renderFamilyMap(brickFixture(60))), Math.round((8 + 8 + 2.8) * 17 * 10) / 10);
+  assert.match(map, /<polygon class="slab-edge" points=/);
+  assert.match(map, /<path class="gridline" d="M/);
+  assert.match(map, /<text class="brick-label" x="[\d.]+" y="[\d.]+">Unit 0<\/text>/);
+  assert.doesNotMatch(map, /class="family-floor[^"]* few"/, 'labels wait for hover, selection or zoom on a full floor');
+  assert.match(renderFamilyMap(brickFixture(2)), /class="family-floor fam-0 few"/, 'a small floor shows its names');
+});
+
+test('grouped floors pack each group as its own box, one empty cell from the next', () => {
+  const map = renderFamilyMap(brickFixture(23, ['read', 'write', 'admin', null]));
+  const bricks = bricksOf(map);
+  assert.equal(bricks.length, 23);
+  const cell = (a, b) => { const across = (b.x - a.x) / 17, down = (b.y - a.y) / 8.5; return [Math.round((across + down) / 2), Math.round((down - across) / 2)]; };
+  for (const a of bricks) for (const b of bricks) {
+    if (a.group === b.group) continue;
+    const [dx, dy] = cell(a, b);
+    assert.ok(Math.max(Math.abs(dx), Math.abs(dy)) >= 2, `${a.id} and ${b.id} sit in different groups but touch`);
+  }
+  assert.deepEqual([...map.matchAll(/<text class="group-label"[^>]*>([^<]*)<\/text>/g)].map((match) => match[1]), ['admin · 6', 'read · 6', 'write · 6', 'Ungrouped · 5']);
+  assert.equal(renderFamilyMap(brickFixture(23, ['read', 'write', 'admin', null])), map, 'packing is deterministic');
+});
+
+test('floor colours follow floor order and family tokens override them through the stylesheet only', async (t) => {
+  const graph = familyMapFixture();
+  const map = renderFamilyMap(graph);
+  assert.match(map, /<g class="family-floor fam-0 few" data-family="record" data-floor="0">/);
+  assert.match(map, /<g class="family-floor fam-1 few" data-family="screen" data-floor="1">/);
+  const colours = [...FAMILY_MAP_CSS.matchAll(/\.fam-\d+\{--fam:(#[0-9a-f]{6})\}/g)].map((match) => match[1]);
+  assert.ok(new Set(colours).size >= 8, 'at least eight distinct floor colours');
+  assert.match(map, /<g class="floor-tag"><title>Record inventory · Tracked records<\/title><path d="M[^"]+"\/><text class="floor-title" x="\d+" y="\d+">Record inventory<\/text><text class="floor-count"[^>]*>2<\/text><\/g>/);
+  graph.mapStyle = { css: '', tokens: { 'family-record': '#123456', 'link-displays': '#654321' } };
+  const html = renderBlockMap(graph);
+  assert.match(html, /:root\{--bb-family-record:#123456;--bb-link-displays:#654321\}\n\.family-floor\[data-family="record"\]\{--fam:var\(--bb-family-record\)\}/);
+  assert.doesNotMatch(html, /\sstyle=/);
+  const root = await mkdtemp(join(tmpdir(), 'block-beaver-family-token-'));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const checked = await prepareMapStyle(root, { map: { tokens: { 'family-record': 'red;x:y', 'family-Bad': '#fff' } } });
+  assert.deepEqual(checked.tokens, {});
+  assert.equal(checked.diagnostics.length, 2);
+  assert.doesNotMatch(renderMapStyle({ tokens: { 'family-"]{}x': '#fff' } }), /data-family/);
+});
+
+test('conduits count drawn links per floor pair and kind, beside the tower', () => {
+  const graph = familyMapFixture();
+  graph.edges.push(
+    { from: 'block:screen:main', to: 'block:record:second', kind: 'displays', link: true, evidence: {} },
+    { from: 'block:record:first', to: 'block:record:second', kind: 'related-to', link: true, evidence: {} },
+    { from: 'block:record:first', to: 'file:src/main.ts', kind: 'implemented-by' },
+  );
+  const map = renderFamilyMap(graph);
+  const conduits = [...map.matchAll(/<g class="conduit-pair" data-kind="([^"]+)"><title>[^<]*<\/title><path class="conduit" stroke="([^"]+)" d="[^"]+"\/><text class="conduit-label mono"[^>]*transform="rotate\(-90 [^"]+\)">([^<]+)<\/text><\/g>/g)].map((match) => [match[1], match[2], match[3]]);
+  assert.deepEqual(conduits, [['related-to', `var(--bb-link-related-to,${linkColor('related-to')})`, '1 related-to'], ['displays', `var(--bb-link-displays,${linkColor('displays')})`, '2 displays']]);
+  assert.match(map, /<title>2 displays links: Screen inventory → Record inventory<\/title>/);
+  assert.equal([...map.matchAll(/class="family-link[^"]*"[^>]*hidden>/g)].length, 3, 'individual links start hidden');
+});
+
+test('selecting a brick lights it, its linked bricks and links and dims the rest until cleared', (t) => {
+  withBrowserGlobals(t);
+  const graph = parityFixture();
+  const dom = fakeDocument(renderFamilyMap(graph));
+  const controller = installFamilyMap(dom, graph);
+  const scene = dom.querySelector('.family-scene'), path = dom.querySelector('[data-map-edge]');
+  const brick = (id) => dom.querySelector(`[data-map-id="${id}"]`);
+  assert.equal(path.hasAttribute('hidden'), true, 'no selection, no individual links');
+  dom.listeners.get('click')({ type: 'click', target: { closest: () => brick('block:record:first') } });
+  assert.ok(scene.classes.has('dim'));
+  assert.ok(brick('block:record:first').classes.has('lit') && brick('block:record:first').classes.has('sel'));
+  assert.ok(brick('block:screen:main').classes.has('lit'), 'the linked brick lights');
+  assert.ok(!brick('block:record:second').classes.has('lit'));
+  assert.equal(path.hasAttribute('hidden'), false);
+  assert.ok(path.classes.has('lit'));
+  assert.ok(dom.querySelector('[data-map-reach]').classes.has('lit'), 'the code folder that reaches it lights');
+  assert.equal(dom.querySelectorAll('[data-reach-block="block:record:first"]').filter((line) => !line.hasAttribute('hidden')).length, 1);
+  assert.equal(dom.querySelector('#family-evidence').hidden, false, 'the details panel still opens');
+  dom.listeners.get('click')({ type: 'click', target: { closest: (selector) => selector === '.family-scene' ? scene : null } });
+  assert.ok(!scene.classes.has('dim'));
+  assert.equal(dom.querySelectorAll('.lit').length, 0);
+  assert.equal(path.hasAttribute('hidden'), true);
+  dom.listeners.get('click')({ type: 'click', target: { closest: () => brick('block:screen:main') } });
+  dom.listeners.get('keydown')({ type: 'keydown', key: 'Escape', target: { closest: () => null } });
+  assert.ok(!scene.classes.has('dim'), 'Escape clears the selection');
+  controller.dispose();
+});
+
+test('zoom buttons move the viewBox, show labels when close and fit back; play steps through history', (t) => {
+  withBrowserGlobals(t);
+  t.mock.timers.enable({ apis: ['setInterval'] });
+  const graph = parityFixture();
+  const dom = fakeDocument(renderFamilyMap(graph));
+  const controller = installFamilyMap(dom, graph);
+  const scene = dom.querySelector('.family-scene'), fit = scene.getAttribute('viewBox');
+  const press = (name) => dom.listeners.get('click')({ type: 'click', target: { closest: () => dom.querySelector(`[data-map-zoom="${name}"]`) } });
+  press('in');
+  const [, , width] = scene.getAttribute('viewBox').split(' ').map(Number);
+  assert.ok(width < Number(fit.split(' ')[2]));
+  assert.ok(!scene.classes.has('lod'));
+  press('in'); press('in');
+  assert.ok(scene.classes.has('lod'), 'labels show once zoomed in two times or more');
+  press('fit');
+  assert.equal(scene.getAttribute('viewBox'), fit);
+  assert.ok(!scene.classes.has('lod'));
+  for (let index = 0; index < 20; index++) press('out');
+  assert.equal(scene.getAttribute('viewBox'), fit, 'never zooms out past the whole map');
+  const slider = dom.querySelector('#family-history'), play = dom.querySelector('#family-history-play'), ghost = dom.querySelector('[data-map-ghost]');
+  play.listeners.get('click')();
+  assert.equal(slider.value, '0');
+  assert.equal(play.textContent, 'Pause');
+  assert.equal(ghost.hasAttribute('hidden'), false);
+  t.mock.timers.tick(800);
+  assert.equal(slider.value, '1');
+  t.mock.timers.tick(1600);
+  assert.equal(slider.value, '3');
+  t.mock.timers.tick(800);
+  assert.equal(play.textContent, 'Play', 'stops at the current state');
+  assert.equal(ghost.hasAttribute('hidden'), true);
+  controller.dispose();
+  assert.equal(play.listeners.size, 0);
+  assert.equal(scene.listeners.size, 0);
+});
+
+test('the ordinary-code rail lists folders by reach, then size, right of the tower', () => {
+  const map = renderFamilyMap(parityFixture());
+  const rows = [...map.matchAll(/<g class="ordinary-code[^"]*"[^>]*?data-map-app="([^"]*)"[^>]*>[\s\S]*?<text class="rail-name"[^>]*>([^<]+)<\/text><path class="ordinary-slab" d="M([\d.]+) [\d.]+h([\d.-]+)/g)].map((match) => [match[2], Number(match[4])]);
+  assert.deepEqual(rows.map(([name]) => name), ['web · src', 'admin · lib']);
+  assert.match(map, /<text class="floor-title" x="\d+" y="\d+">Ordinary code<\/text><text class="rail-sub mono"[^>]*>Not blocks yet · source files by folder<\/text>/);
+  assert.match(map, /<circle class="rail-port"/, 'reaching rows get a port for their reach lines');
 });

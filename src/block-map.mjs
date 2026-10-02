@@ -105,7 +105,7 @@ ${areaHtml}
 const search = document.querySelector('#search');
 const appFilter = document.querySelector('#app-filter');
 const params = new URL(location.href).searchParams;
-${familyMap ? `const familyController = (${installFamilyMap.toString()})(document, JSON.parse(document.querySelector('#family-map-data').textContent), { filters: () => ({ query: search.value, app: appFilter.value }) });` : ''}
+${familyMap ? `const familyController = (${installFamilyMap.toString().replace(/\n\s+/g, '\n')})(document, JSON.parse(document.querySelector('#family-map-data').textContent), { filters: () => ({ query: search.value, app: appFilter.value }) });` : ''}
 search.value = params.get('q') || '';
 if ([...appFilter.options].some(option => option.value === params.get('app'))) appFilter.value = params.get('app');
 function filter() {
