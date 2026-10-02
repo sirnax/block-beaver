@@ -40,11 +40,18 @@ export declare function assertSchema(value:unknown): Node;
 export declare function validate<const S extends Node>(schema:S,value:unknown): Result<Infer<S>>;
 export declare function coerce<const S extends Node>(schema:S,value:unknown): Result<Infer<S>>;
 export type CoreManifest = {id:string;family:string;version:number|string;name:string;description:string;rationale:string;implementation:{kind:'module';module:string}|{kind:'none'};files?:readonly string[]};
-export type FamilyDefinition = {id:string;fields:Extract<Node,{type:'object'}>;implementation:readonly ('module'|'none')[];
+type ObjectNode = Extract<Node,{type:'object'}>;
+export type FamilyDefinition = {id:string;fields:ObjectNode;implementation:readonly string[];
+  /** Extra data-only implementation kinds (kebab-case, not module/none); each must also be listed in `implementation`. */
+  dataKinds?:readonly string[];
+  /** Per-arm extra fields merged into that arm (`module`, `none` or a data kind); core keys `kind` and `module` cannot be redeclared. */
+  implementationFields?:Readonly<Record<string,ObjectNode>>;
   links?:readonly {field:string;to:string|readonly string[];kind:string}[];generators?:readonly ('registry'|'index'|'history')[];
   map?:{title?:string;blurb?:string};scaffold?:{files:readonly {path:string;template:string}[];manualSteps?:readonly string[]};
   check?:(manifest:CoreManifest & Record<string,unknown>,ctx:{family:string;get(ref:string):unknown}) => readonly {path:string;message:string;code?:string}[] | void;};
-export type ManifestOf<F extends FamilyDefinition> = CoreManifest & {family:F['id']} & Infer<F['fields']>;
+type ImplementationOf<F extends FamilyDefinition> = F['implementation'][number] extends infer K ? K extends string
+  ? {kind:K} & (K extends 'module' ? {module:string} : unknown) & (F['implementationFields'] extends infer R ? K extends keyof R ? R[K] extends ObjectNode ? Infer<R[K]> : unknown : unknown : unknown) : never : never;
+export type ManifestOf<F extends FamilyDefinition> = Omit<CoreManifest,'implementation'> & {family:F['id'];implementation:ImplementationOf<F>} & Infer<F['fields']>;
 export type GeneratorContext = {config:unknown;families:readonly unknown[];manifests(familyId:string):readonly CoreManifest[];blocks():readonly CoreManifest[];graph:unknown;resolve(from:string,spec:string):unknown;label:string|null};
 export type GeneratorDefinition = {out:string;inputs:readonly string[];cache?:boolean;generate(ctx:GeneratorContext):string|Promise<string>};
 export declare function defineFamily<const F extends FamilyDefinition>(definition:F): DeepReadonly<F>;
@@ -56,4 +63,4 @@ export declare function validateManifest<F extends FamilyDefinition = FamilyDefi
 export type Registry<M extends {id:string;family:string}> = Readonly<{family:string;all:readonly DeepReadonly<M>[];byId:Readonly<Record<M['id'],DeepReadonly<M>>>;get(id:string):DeepReadonly<M>|undefined;has(id:string):id is M['id']}>;
 export declare class KernelError extends Error {code:string;details:unknown;constructor(code:string,message:string,details?:unknown);}
 export declare function createRegistry<const M extends {id:string;family:string}>(family:string,manifests:readonly M[]): Registry<M>;
-export declare function compose<M extends CoreManifest>(base:Registry<M>,dynamic:readonly unknown[],options?:{family?:FamilyDefinition}): Registry<M|CoreManifest>;
+export declare function compose<M extends {id:string;family:string}>(base:Registry<M>,dynamic:readonly unknown[],options?:{family?:FamilyDefinition}): Registry<M|CoreManifest>;

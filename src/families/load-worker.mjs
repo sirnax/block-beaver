@@ -72,7 +72,20 @@ function contractProblems(definition, entry, configured) {
   if (definition.id !== entry.id) issue('contract-id-mismatch', `Contract ID must equal configured family ${entry.id}`, '$.id');
   if (!isSchema(definition.fields) || definition.fields?.type !== 'object') issue('contract-invalid', 'Family fields must be an object schema', '$.fields');
   else for (const key of Object.keys(definition.fields.shape)) if (coreKeys.has(key)) issue('contract-reserved-field', `Family field ${key} is a reserved core manifest field`, `$.fields.shape.${key}`);
-  if (!Array.isArray(definition.implementation) || !definition.implementation.length || definition.implementation.some((kind) => !['module', 'none'].includes(kind)) || new Set(definition.implementation).size !== definition.implementation.length) issue('contract-invalid', 'implementation must be a nonempty list of module and/or none', '$.implementation');
+  const dataKinds = definition.dataKinds;
+  if (dataKinds !== undefined && (!Array.isArray(dataKinds) || dataKinds.some((kind) => typeof kind !== 'string' || !idPattern.test(kind) || kind === 'module' || kind === 'none') || new Set(dataKinds).size !== dataKinds.length)) issue('contract-invalid', 'dataKinds must be unique kebab-case kinds other than module and none', '$.dataKinds');
+  const kinds = ['module', 'none', ...(Array.isArray(dataKinds) ? dataKinds : [])];
+  if (!Array.isArray(definition.implementation) || !definition.implementation.length || definition.implementation.some((kind) => !kinds.includes(kind)) || new Set(definition.implementation).size !== definition.implementation.length) issue('contract-invalid', 'implementation must be a nonempty list of module, none and/or declared dataKinds', '$.implementation');
+  else if (Array.isArray(dataKinds) && dataKinds.some((kind) => !definition.implementation.includes(kind))) issue('contract-invalid', 'Every dataKinds entry must also be listed in implementation to be permitted', '$.dataKinds');
+  if (definition.implementationFields !== undefined) {
+    const fields = definition.implementationFields;
+    if (!object(fields)) issue('contract-invalid', 'implementationFields must be an object keyed by implementation kind', '$.implementationFields');
+    else for (const [kind, schema] of Object.entries(fields)) {
+      if (!kinds.includes(kind)) issue('contract-invalid', `implementationFields names unknown implementation kind ${kind}`, `$.implementationFields.${kind}`);
+      else if (!isSchema(schema) || schema.type !== 'object') issue('contract-invalid', 'implementationFields entries must be object schemas', `$.implementationFields.${kind}`);
+      else for (const key of ['kind', 'module']) if (Object.hasOwn(schema.shape, key)) issue('contract-reserved-field', `Implementation field ${key} is a reserved core key`, `$.implementationFields.${kind}.shape.${key}`);
+    }
+  }
   if (definition.check !== undefined && typeof definition.check !== 'function') issue('contract-invalid', 'check must be a function', '$.check');
   if (definition.generators !== undefined && (!Array.isArray(definition.generators) || definition.generators.some((name) => !['registry', 'index', 'history'].includes(name)) || new Set(definition.generators).size !== definition.generators.length)) issue('contract-invalid', 'Contract generators may request registry, index and history once each', '$.generators');
   if (Array.isArray(definition.generators) && definition.generators.includes('registry') && !entry.registry?.out) issue('registry-out-missing', 'Family requesting registry must configure registry.out', '$.registry.out');

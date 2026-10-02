@@ -80,7 +80,7 @@ export async function runKit(root, command, args = [], options = {}) {
     }
     if (command === 'describe') {
       const family = getFamily(args[0]);
-      return success({ kernelSchemaVersion: 1, id: family.id, fields: family.fields, core: coreManifestSchema, implementation: family.implementation, links: family.links || [], generators: family.generators || [], map: family.map || {}, scaffold: { files: (family.scaffold?.files || []).map((file) => file.path), manualSteps: family.scaffold?.manualSteps || [] } });
+      return success({ kernelSchemaVersion: 1, id: family.id, fields: family.fields, core: coreManifestSchema, implementation: family.implementation, dataKinds: family.dataKinds || [], implementationFields: family.implementationFields || {}, links: family.links || [], generators: family.generators || [], map: family.map || {}, scaffold: { files: (family.scaffold?.files || []).map((file) => file.path), manualSteps: family.scaffold?.manualSteps || [] } });
     }
     if (command === 'validate') {
       const family = getFamily(input.family || input.manifest?.family);

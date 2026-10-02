@@ -473,3 +473,39 @@ test('excluded and ignored fixture folders are not family-unclaimed after attach
   assert.deepEqual(load.manifests.map((item) => item.id), ['alpha']);
   assert.deepEqual(graph.familyDiagnostics.map((item) => [item.code, item.file, item.severity]), [['family-unclaimed', 'catalog/widgets/stray', 'error'], ['family-unclaimed', 'catalog/widgets/tests', 'warning']]);
 });
+
+test('implementation arms: declared fields and data kinds load, bad declarations are contract problems', async (t) => {
+  const arms = "implementation:['module','none','plan'],dataKinds:['plan'],implementationFields:{module:s.object({export:s.optional(s.string()),loading:s.optional(s.enum(['eager','lazy']))}),plan:s.object({steps:s.integer()})},";
+  const data = await fixture(t, {
+    [family.contract]: contract(arms),
+    'catalog/widgets/alpha.item.ts': manifest('alpha', { implementation: { kind: 'module', module: '../../main', export: 'X', loading: 'lazy' } }),
+    'catalog/widgets/bravo.item.ts': manifest('bravo', { implementation: { kind: 'plan', steps: 2 } }),
+    'catalog/widgets/charlie.item.ts': manifest('charlie', { implementation: { kind: 'module', module: '../../main', loading: 'never' } }),
+    'catalog/widgets/delta.item.ts': manifest('delta', { implementation: { kind: 'module', module: '../../main', stray: 1 } }),
+    'catalog/widgets/echo.item.ts': manifest('echo', { implementation: { kind: 'module', export: 'X' } }),
+  });
+  const result = await loadFamilies(data);
+  assert.deepEqual(result.manifests.map((item) => item.id), ['alpha', 'bravo']);
+  assert.deepEqual(result.families[0].dataKinds, ['plan']);
+  assert.equal(result.families[0].implementationFields.plan.shape.steps.type, 'number');
+  const fields = result.diagnostics.filter((item) => item.code === 'manifest-schema').map((item) => item.field).sort();
+  assert.deepEqual(fields, ['$.implementation.loading', '$.implementation.module', '$.implementation.stray']);
+  const bad = [
+    ["dataKinds:['module'],", '$.dataKinds'],
+    ["dataKinds:['Not Kebab'],", '$.dataKinds'],
+    ["dataKinds:['plan','plan'],implementation:['none','plan'],", '$.dataKinds'],
+    ["dataKinds:['plan'],", '$.dataKinds'],
+    ["implementation:['plan'],", '$.implementation'],
+    ["implementationFields:[],", '$.implementationFields'],
+    ["implementationFields:{plan:s.object({})},", '$.implementationFields.plan'],
+    ["implementationFields:{none:s.string()},", '$.implementationFields.none'],
+    ["implementationFields:{none:{type:'object'}},", '$.implementationFields.none'],
+    ["implementationFields:{none:s.object({kind:s.string()})},", '$.implementationFields.none.shape.kind'],
+    ["implementationFields:{none:s.object({module:s.string()})},", '$.implementationFields.none.shape.module'],
+  ];
+  for (const [extra, field] of bad) {
+    const loaded = await loadFamilies(await fixture(t, { [family.contract]: contract(extra) }));
+    assert.ok(loaded.diagnostics.some((item) => item.field === field && item.code.startsWith('contract-')), extra + JSON.stringify(loaded.diagnostics));
+    assert.equal(loaded.manifests.length, 0);
+  }
+});

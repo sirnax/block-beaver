@@ -151,3 +151,46 @@ test('the public kernel export supports CommonJS fallback loaders', () => {
   const result = kernel.validateManifest({ id: 'fixture', family: 'sample', version: 1, name: 'Fixture', description: 'Runtime fixture', rationale: 'Verify the require condition', implementation: { kind: 'none' } }, { mode: 'runtime' });
   assert.equal(result.valid, true);
 });
+
+test('implementation arms accept declared fields, select by kind and name the failing field', () => {
+  const family = defineFamily({id:'service',fields:s.object({}),implementation:['module','none','plan'],dataKinds:['plan'],implementationFields:{
+    module:s.object({export:s.optional(s.string()),loading:s.optional(s.enum(['eager','lazy']))}),plan:s.object({steps:s.integer()}),none:s.object({note:s.optional(s.string())})}});
+  const check = (implementation,options = {}) => validateManifest(manifest('one',{implementation}),{family,...options});
+  const paths = result => result.errors.map(e => `${e.path}:${e.code}`);
+  assert.equal(check({kind:'module',module:'@/x',export:'X',loading:'eager'}).valid,true);
+  assert.equal(check({kind:'module',module:'@/x'}).valid,true);
+  assert.deepEqual(paths(check({kind:'module',module:'@/x',loading:'sometimes'})),['$.implementation.loading:enum']);
+  assert.deepEqual(paths(check({kind:'module',module:'@/x',extra:1})),['$.implementation.extra:unknown-key']);
+  assert.deepEqual(paths(check({kind:'module',export:'X'})),['$.implementation.module:required']);
+  assert.deepEqual(paths(check({kind:'module',module:''})),['$.implementation.module:min']);
+  assert.deepEqual(paths(check({kind:'none',export:'X'})),['$.implementation.export:unknown-key']);
+  assert.equal(check({kind:'none',note:'n'}).valid,true);
+  assert.deepEqual(paths(check({kind:'unheard'})),['$.implementation.kind:enum']);
+  assert.deepEqual(paths(check({})),['$.implementation.kind:required']);
+  assert.equal(paths(check('plan'))[0],'$.implementation:type');
+  // Declared data kinds validate in both modes; module stays forbidden at runtime.
+  for (const mode of ['build','runtime']) {
+    assert.equal(check({kind:'plan',steps:2},{mode}).valid,true);
+    assert.deepEqual(paths(check({kind:'plan'},{mode})),['$.implementation.steps:required']);
+  }
+  assert.deepEqual(paths(check({kind:'module',module:'@/x',loading:'lazy'},{mode:'runtime'})),['$.implementation:runtime-module']);
+  assert.deepEqual(paths(check({kind:'plan',steps:2,module:'@/x'})),['$.implementation.module:unknown-key']);
+});
+
+test('implementation kinds need a declared arm and a family permission', () => {
+  const closed = defineFamily({id:'service',fields:s.object({}),implementation:['none','plan']});
+  assert.deepEqual(validateManifest(manifest('one',{implementation:{kind:'plan'}}),{family:closed}).errors.map(e => e.path),['$.implementation.kind']);
+  const unlisted = defineFamily({id:'service',fields:s.object({}),implementation:['none'],dataKinds:['plan']});
+  assert.deepEqual(validateManifest(manifest('one',{implementation:{kind:'plan'}}),{family:unlisted}).errors.map(e => `${e.path}:${e.code}`),['$.implementation.kind:enum']);
+  assert.equal(validateManifest(manifest('one',{implementation:{kind:'module',module:'./a'}}),{family:closed}).errors.length,1);
+});
+
+test('core keys win over family-declared arm fields and families without arms match 0.5.1', () => {
+  const sneaky = defineFamily({id:'service',fields:s.object({}),implementation:['module'],implementationFields:{module:s.object({module:s.optional(s.string()),kind:s.optional(s.string())})}});
+  assert.equal(validateManifest(manifest('one',{implementation:{kind:'module'}}),{family:sneaky}).errors[0].path,'$.implementation.module');
+  assert.equal(validateManifest(manifest('one',{implementation:{kind:'module',module:'./a'}}),{family:sneaky}).valid,true);
+  const plain = defineFamily({id:'service',fields:s.object({}),implementation:['none','module']});
+  assert.equal(validateManifest(manifest('one',{implementation:{kind:'module',module:'./a',loading:'eager'}}),{family:plain}).errors[0].path,'$.implementation.loading');
+  assert.equal(validateManifest(manifest('one',{implementation:{kind:'module',module:'./a'}}),{family:plain}).valid,true);
+  assert.equal(validateManifest(manifest('one',{implementation:{kind:'module',module:'./a',loading:'eager'}})).errors[0].path,'$.implementation.loading');
+});
