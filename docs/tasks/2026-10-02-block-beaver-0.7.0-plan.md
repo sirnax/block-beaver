@@ -173,7 +173,14 @@ Issues #36–#43 came from the next adoption steps in the repository that drove 
 
 ## Known limits
 
-To be filled in during the build.
+- **Map-detail exports keep ordinary-code slabs.** Each slab carries its file paths in its title and search text, so a small graph shrinks to about half and a 174-block, 1800-file graph to about 4%. Cross-app list items are replaced by a count, so history scrubbing does not filter that list.
+- **`gen --check` and `--dry-run` do not evaluate a history label module.** A broken label module is reported by the next `gen` that appends an entry, not by `--check`. A typo in the module path is only caught then, because `config-valid` checks the path's syntax, not that the file exists.
+- **The derived label labels the history entry only.** Generators see `ctx.label` as `--label`, a string config label, or null, never the derived value.
+- **Label module dependencies are tracked in loader memory.** A fresh process learns them after its first generate pass that evaluates the module.
+- **Region markers match the managed-section parsers exactly.** A stray exact `block-beaver:start` token earlier in a file, even inside a code fence, blocks any later region in that file. In Markdown, marker lines inside fenced code blocks are examples and never count as region markers.
+- **`output-required-for-load` recognises relative imports and tsconfig aliases.** Specifiers only Node's own resolver can resolve, such as package `exports` maps, stay `unresolved-import`. Index and history count as claimed outputs only through a contract's literal `generators` array.
+- **A staged audit snapshot is built from tracked files.** A tracked `node_modules` symlink that points outside the repository fails the hook with "Snapshot symlink leaves repository". This predates 0.7.0.
+- **`gen --adopt` paths resolve against `--root`**, not its real path, so an absolute path in a different symlink form than `--root` is refused as outside the project root.
 
 ## Evidence
 
