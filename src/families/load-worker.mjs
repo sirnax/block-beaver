@@ -103,6 +103,15 @@ function contractProblems(definition, entry, configured) {
     }
   }
   if (definition.map !== undefined && (!object(definition.map) || ['title', 'blurb'].some((key) => definition.map[key] !== undefined && typeof definition.map[key] !== 'string'))) issue('contract-invalid', 'map title and blurb must be strings', '$.map');
+  else if (definition.map?.group !== undefined) {
+    const group = definition.map.group;
+    if (!object(group) || Object.keys(group).some((key) => !['field', 'join', 'empty', 'format'].includes(key))) issue('contract-invalid', 'map.group must be an object with only field, join, empty and format', '$.map.group');
+    else {
+      if (!linkSchema(definition.fields, group.field)) issue('contract-invalid', 'map.group.field must walk the schema, marking every array with []', '$.map.group.field');
+      for (const key of ['join', 'empty']) if (group[key] !== undefined && typeof group[key] !== 'string') issue('contract-invalid', `map.group.${key} must be a string`, `$.map.group.${key}`);
+      if (group.format !== undefined && (typeof group.format !== 'string' || group.format.split('{value}').length !== 2)) issue('contract-invalid', 'map.group.format must be a string with exactly one {value}', '$.map.group.format');
+    }
+  }
   if (definition.scaffold !== undefined) {
     const scaffold = definition.scaffold;
     if (!object(scaffold) || !Array.isArray(scaffold.files) || !scaffold.files.length || scaffold.files.some((file) => !object(file) || !isFamilyPath(file.path) || typeof file.template !== 'string') || (scaffold.manualSteps !== undefined && (!Array.isArray(scaffold.manualSteps) || scaffold.manualSteps.some((step) => typeof step !== 'string')))) issue('contract-invalid', 'scaffold must contain safe file paths, templates and optional string manual steps', '$.scaffold');

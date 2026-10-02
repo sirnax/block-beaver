@@ -318,6 +318,16 @@ test('map.groupBy clusters floors with labels, from attachFamilies node.group', 
   assert.match(renderFamilyMap(grouped), /&lt;b&gt;&quot;x&quot;&lt;\/b&gt; · 1/);
 });
 
+test('a family map.group wins over config groupBy for its floor only, and format is not applied without a value', async () => {
+  const { attachFamilies } = await import('../src/families/graph.mjs');
+  const families = [{ id: 'screen', floor: 0, configIndex: 0, config: { id: 'screen', manifests: 'blocks/*.ts' }, map: { group: { field: 'meta.area', format: 'Area {value}' } } }, { id: 'page', floor: 1, configIndex: 1, config: { id: 'page', manifests: 'pages/*.ts' } }];
+  const manifests = [['screen', 'a', { meta: { area: 'x' }, area: 'ignored' }], ['screen', 'b', { meta: null, area: 'ignored' }], ['page', 'c', { area: 'p' }]].map(([family, id, extra]) => ({ family, id, path: `${family}/${id}.ts`, value: { id, family, name: id, description: id, ...extra } }));
+  const graph = attachFamilies({ root: '.', nodes: [], edges: [], apps: [], summary: {} }, { load: { families, manifests, generators: [], diagnostics: [] }, project: { resolveImport() { return null; } }, groupBy: 'area' });
+  assert.deepEqual(graph.nodes.map((node) => node.group), ['Area x', null, 'p']);
+  const labels = [...renderFamilyMap(graph).matchAll(/<text class="group-label"[^>]*>([^<]*)<\/text>/g)].map((match) => match[1]);
+  assert.deepEqual(labels, ['Area x · 1', 'Ungrouped · 1', 'p · 1']);
+});
+
 test('map.skins render validated, nonce-carrying sheets with a remembered per-browser toggle', async (t) => {
   const root = await mkdtemp(join(tmpdir(), 'block-beaver-skins-'));
   t.after(() => rm(root, { recursive: true, force: true }));
@@ -375,4 +385,12 @@ test('hostile text in reach, unused, ghost and group data is escaped', () => {
   assert.doesNotMatch(html, /<img/i, 'no raw tag survives; the payload only appears escaped');
   assert.match(html, /&lt;img src=x onerror=alert\(1\)&gt;&quot;&#39;/);
   assert.match(html, /aria-label="&lt;img src=x onerror=alert\(1\)&gt;&quot;&#39; reaches 1 block"/);
+});
+
+test('map.group treats empty strings as no value, so the empty fallback applies and 0 and false still group', async () => {
+  const { attachFamilies } = await import('../src/families/graph.mjs');
+  const families = [{ id: 'screen', floor: 0, configIndex: 0, config: { id: 'screen', manifests: 'blocks/*.ts' }, map: { group: { field: 'area', empty: 'internal', format: 'Area {value}' } } }, { id: 'tool', floor: 1, configIndex: 1, config: { id: 'tool', manifests: 'tools/*.ts' }, map: { group: { field: 'modes[]', join: ' + ' } } }];
+  const manifests = [['screen', 'a', { area: '' }], ['screen', 'b', { area: 0 }], ['tool', 'c', { modes: [''] }], ['tool', 'd', { modes: ['', 'chat', false] }]].map(([family, id, extra]) => ({ family, id, path: `${family}/${id}.ts`, value: { id, family, name: id, description: id, ...extra } }));
+  const graph = attachFamilies({ root: '.', nodes: [], edges: [], apps: [], summary: {} }, { load: { families, manifests, generators: [], diagnostics: [] }, project: { resolveImport() { return null; } } });
+  assert.deepEqual(graph.nodes.map((node) => node.group), ['Area internal', 'Area 0', null, 'chat + false']);
 });

@@ -630,3 +630,88 @@ test('join link match validation waits for the target and is skipped when the ta
   assert.ok(!load.diagnostics.some((item) => item.code === 'link-path-invalid'), JSON.stringify(load.diagnostics));
   assert.deepEqual(load.families.map((item) => item.id), ['task']);
 });
+
+const groupFamilies = ['capability', 'tool', 'node', 'command', 'plain'].map((id) => ({ id, contract: `definitions/${id}.family.ts`, manifests: `catalog/${id}/*.item.ts` }));
+const groupContract = (id, fields, group) => `import { defineFamily, s } from 'block-beaver/kernel';
+export default defineFamily({id:'${id}',fields:s.object({${fields}}),implementation:['none'],${group ? `map:{title:'${id} floor',group:${group}},` : ''}});\n`;
+const groupManifest = (family, id, extra = {}) => [`catalog/${family}/${id}.item.ts`, `export default ${JSON.stringify({ ...value(id, { family, ...extra }), tag: undefined })};\n`];
+const groupFiles = (overrides = {}) => ({
+  'definitions/capability.family.ts': groupContract('capability', 'access:s.string()', `{field:'access'}`),
+  'definitions/tool.family.ts': groupContract('tool', 'modes:s.array(s.string())', `{field:'modes[]',join:' + ',empty:'internal'}`),
+  'definitions/node.family.ts': groupContract('node', 'sizing:s.optional(s.nullable(s.object({kind:s.string()})))', `{field:'sizing.kind',empty:'fixed',format:'{value} size'}`),
+  'definitions/command.family.ts': groupContract('command', 'surface:s.optional(s.string())'),
+  'definitions/plain.family.ts': groupContract('plain', 'note:s.optional(s.string())'),
+  ...Object.fromEntries([
+    groupManifest('capability', 'a', { access: 'read' }), groupManifest('capability', 'b', { access: 'write' }), groupManifest('capability', 'c', { access: 'read' }),
+    groupManifest('tool', 'a', { modes: ['assistant', 'chat'] }), groupManifest('tool', 'b', { modes: [] }), groupManifest('tool', 'c', { modes: ['chat'] }),
+    groupManifest('node', 'a', { sizing: { kind: 'flex' } }), groupManifest('node', 'b', { sizing: null }), groupManifest('node', 'c'),
+    groupManifest('command', 'a', { surface: 'cli' }), groupManifest('command', 'b'), groupManifest('plain', 'a'),
+  ]),
+  ...overrides,
+});
+const groupLoad = async (t, overrides) => loadFamilies(await fixture(t, groupFiles(overrides), configFor({ families: groupFamilies })));
+const groupGraph = (load, groupBy) => attachFamilies({ schemaVersion: 2, root: '.', fingerprint: 'source', apps: [], summary: {}, nodes: [], edges: [] }, { load, project: { resolveImport() { throw new Error('unexpected'); } }, groupBy });
+const groupsOf = (graph, family) => graph.nodes.filter((node) => node.family === family).sort((a, b) => a.id < b.id ? -1 : 1).map((node) => Object.hasOwn(node, 'group') ? node.group : 'NO-GROUP');
+
+test('per-family map.group clusters each family by its own field, array, nullable path, empty fallback and format', async (t) => {
+  const { renderFamilyMap } = await import('../src/families/map-render.mjs');
+  const load = await groupLoad(t);
+  assert.deepEqual(load.diagnostics, [], JSON.stringify(load.diagnostics));
+  const graph = groupGraph(load, 'surface');
+  assert.deepEqual(groupsOf(graph, 'capability'), ['read', 'write', 'read']);
+  assert.deepEqual(groupsOf(graph, 'tool'), ['assistant + chat', 'internal', 'chat']);
+  assert.deepEqual(groupsOf(graph, 'node'), ['flex size', 'fixed size', 'fixed size']);
+  assert.deepEqual(groupsOf(graph, 'command'), ['cli', null], 'a family without a rule falls back to config groupBy');
+  assert.deepEqual(groupsOf(graph, 'plain'), [null]);
+  assert.deepEqual(graph.families.find((item) => item.id === 'tool').group, { field: 'modes[]', join: ' + ', empty: 'internal' });
+  assert.ok(!Object.hasOwn(graph.families.find((item) => item.id === 'plain'), 'group'));
+  const html = renderFamilyMap(graph);
+  const labels = [...html.matchAll(/<text class="group-label"[^>]*>([^<]*)<\/text>/g)].map((match) => match[1]);
+  assert.deepEqual(labels, ['read · 2', 'write · 1', 'assistant + chat · 1', 'chat · 1', 'internal · 1', 'fixed size · 2', 'flex size · 1', 'cli · 1', 'Ungrouped · 1', 'Ungrouped · 1']);
+  for (const group of ['read', 'assistant + chat', 'internal', 'fixed size', 'flex size', 'cli']) assert.ok(html.includes(`data-map-group="${group}"`), group);
+  const none = groupGraph(load);
+  assert.deepEqual(groupsOf(none, 'capability'), ['read', 'write', 'read'], 'a family rule needs no config groupBy');
+  assert.deepEqual(groupsOf(none, 'command'), ['NO-GROUP', 'NO-GROUP'], 'no rule and no groupBy keeps no group property');
+  assert.deepEqual(groupsOf(none, 'plain'), ['NO-GROUP']);
+  assert.ok(!/data-map-group="[^"]*"[^>]*data-family-block="block:plain/.test(renderFamilyMap(none)));
+});
+
+test('map.group without empty gives no group for missing values and skips format; graphs without map.group keep their bytes', async (t) => {
+  const withRule = await groupLoad(t, { 'definitions/node.family.ts': groupContract('node', 'sizing:s.optional(s.nullable(s.object({kind:s.string()})))', `{field:'sizing.kind',format:'{value} size'}`) });
+  assert.deepEqual(groupsOf(groupGraph(withRule), 'node'), ['flex size', null, null]);
+  const plainFiles = Object.fromEntries(groupFamilies.map(({ id }) => [`definitions/${id}.family.ts`, groupContract(id, id === 'capability' ? 'access:s.string()' : id === 'tool' ? 'modes:s.array(s.string())' : id === 'node' ? 'sizing:s.optional(s.nullable(s.object({kind:s.string()})))' : id === 'command' ? 'surface:s.optional(s.string())' : 'note:s.optional(s.string())')]));
+  const plain = groupGraph(await groupLoad(t, plainFiles));
+  assert.ok(plain.nodes.every((node) => !Object.hasOwn(node, 'group')));
+  assert.deepEqual(plain.families.map((item) => Object.keys(item)), plain.families.map(() => ['id', 'floor', 'title', 'blurb', 'linkKinds', 'count']));
+  assert.ok(!JSON.stringify(plain).includes('"group"'));
+});
+
+test('the graph fingerprint changes when only a family group rule changes', async (t) => {
+  const rule = (extra) => groupLoad(t, { 'definitions/capability.family.ts': groupContract('capability', 'access:s.string()', `{field:'access'${extra}}`) });
+  const [one, same, other] = [groupGraph(await rule('')), groupGraph(await rule('')), groupGraph(await rule(`,format:'{value}!'`))];
+  assert.equal(one.fingerprint, same.fingerprint);
+  assert.notEqual(one.fingerprint, other.fingerprint);
+});
+
+test('contracts reject a bad map.group as contract-invalid at its own path and drop only that family', async (t) => {
+  const bad = {
+    "{field:'missing'}": '$.map.group.field',
+    "{field:'modes'}": '$.map.group.field',
+    '{field:3}': '$.map.group.field',
+    "{}": '$.map.group.field',
+    "{field:'access',join:3}": '$.map.group.join',
+    "{field:'access',empty:true}": '$.map.group.empty',
+    "{field:'access',format:'no placeholder'}": '$.map.group.format',
+    "{field:'access',format:'{value} {value}'}": '$.map.group.format',
+    "{field:'access',format:5}": '$.map.group.format',
+    "{field:'access',other:1}": '$.map.group',
+    "'access'": '$.map.group',
+    '[]': '$.map.group',
+  };
+  for (const [group, field] of Object.entries(bad)) {
+    const load = await groupLoad(t, { 'definitions/capability.family.ts': groupContract('capability', 'access:s.string(),modes:s.array(s.string())', group) });
+    assert.ok(load.diagnostics.some((item) => item.code === 'contract-invalid' && item.field === field && item.family === 'capability' && item.severity === 'error'), `${group} ${JSON.stringify(load.diagnostics)}`);
+    assert.ok(!load.families.some((item) => item.id === 'capability'), group);
+    assert.ok(load.families.some((item) => item.id === 'tool'), group);
+  }
+});

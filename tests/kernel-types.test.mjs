@@ -22,6 +22,9 @@ test('kernel declarations infer family schemas and registry literal ids', () => 
     // @ts-expect-error required family fields survive inference
     const absent: ManifestOf<typeof family> = {id:'a',family:'service',version:1,name:'a',description:'a',rationale:'a',implementation:{kind:'none'}};
     const arms = defineFamily({id:'arms',fields:s.object({}),implementation:['module','none','plan'],dataKinds:['plan'],implementationFields:{module:s.object({export:s.optional(s.string()),loading:s.optional(s.enum(['eager','lazy']))}),plan:s.object({steps:s.integer()})}});
+    defineFamily({id:'grouped',fields:s.object({modes:s.array(s.string())}),implementation:['none'],map:{title:'Grouped',group:{field:'modes[]',join:' + ',empty:'internal',format:'{value} mode'}}});
+    // @ts-expect-error a map group needs its field
+    defineFamily({id:'grouped',fields:s.object({}),implementation:['none'],map:{group:{join:','}}});
     const base = {id:'a',family:'arms',version:1,name:'a',description:'a',rationale:'a'} as const;
     defineFamily({id:'set',fields:s.object({}),implementation:['none'],checkAll:(manifests,{all,get}) => manifests.length || all('other').length || get('other:x') ? [] : [{message:'empty',code:'empty'}]});
     defineFamily({id:'plans',fields:s.object({}),implementation:['plan'],dataKinds:['plan'],check:(manifest: LoadedManifest) => manifest.implementation.kind === 'plan' ? [] : [{path:'$.implementation',message:'plan only'}]});
