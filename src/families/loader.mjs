@@ -6,7 +6,7 @@ import { join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { promisify } from 'node:util';
 import { canonicalJson } from './canonical.mjs';
-import { isFamilyPath, parseFamiliesConfig } from './config.mjs';
+import { historyLabelModule, isFamilyPath, parseFamiliesConfig } from './config.mjs';
 import { discoverFiles, matchManifests } from './glob.mjs';
 
 const cliVersion = createRequire(import.meta.url)('../../package.json').version;
@@ -114,7 +114,7 @@ export async function loadFamilies({ root: inputRoot, config, paths, resolutionS
   const ignored = Array.isArray(config?.ignore) && config.ignore.length ? (await import('../project-model.mjs')).ignoreMatcher(config.ignore) : () => false;
   const manifestCandidates = matchingPaths.filter((path) => !ignored(path));
   const matched = parsed.families.flatMap((entry) => matchManifests(manifestCandidates, entry));
-  const direct = [...parsed.families.map((entry) => entry.contract), ...parsed.families.flatMap((entry) => entry.generators || []), ...parsed.generators, ...(Array.isArray(config.checks) ? config.checks.filter(isFamilyPath) : []), ...matched];
+  const direct = [...parsed.families.map((entry) => entry.contract), ...parsed.families.flatMap((entry) => entry.generators || []), ...parsed.generators, ...(Array.isArray(config.checks) ? config.checks.filter(isFamilyPath) : []), ...[historyLabelModule(config)].filter(Boolean), ...matched];
   const state = rootCache(root);
   let loaderUrl;
   try { loaderUrl = await resolveLoader(root, parsed.loader); }
@@ -125,7 +125,7 @@ export async function loadFamilies({ root: inputRoot, config, paths, resolutionS
   if (!generate && state.results.has(key)) return structuredClone(state.results.get(key));
   if (!generate && state.inflight.has(key)) return structuredClone(await state.inflight.get(key));
   const load = async () => {
-    if (!parsed.families.length && !parsed.generators.length && !(Array.isArray(config.checks) && config.checks.length)) return { key, ...empty(parsed.diagnostics), discoveredFiles: matchingPaths, ...(generate ? { outputs: [] } : {}) };
+    if (!parsed.families.length && !parsed.generators.length && !(Array.isArray(config.checks) && config.checks.length) && !historyLabelModule(config)) return { key, ...empty(parsed.diagnostics), discoveredFiles: matchingPaths, ...(generate ? { outputs: [] } : {}) };
     // The worker gets both the exact resolver ownership list and discovery inputs.
     const result = await spawnLoad({ root, paths: resolverPaths, config, generate, loaderUrl });
     state.loadedFiles = [...new Set([...result.loadedFiles, ...Object.keys(result.fileHashes || {})])];

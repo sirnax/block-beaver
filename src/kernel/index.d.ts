@@ -65,6 +65,7 @@ export type GeneratorEntry = Readonly<{ref:string;family:string;id:string;path:s
 export type GeneratorContext = {config:unknown;families:readonly unknown[];manifests(familyId:string):readonly CoreManifest[];blocks():readonly CoreManifest[];
   /** Manifests with their path and export name, in `manifests`/`blocks` order; omit `familyId` for every family. */
   entries(familyId?:string):readonly GeneratorEntry[];graph:unknown;resolve(from:string,spec:string):unknown;label:string|null};
+export type HistoryLabel = (ctx:GeneratorContext)=>string|null|Promise<string|null>;
 export type GeneratorDefinition = {out:string;inputs:readonly string[];cache?:boolean;generate(ctx:GeneratorContext):string|Promise<string>};
 export declare function defineFamily<const F extends FamilyDefinition>(definition:F): DeepReadonly<F>;
 export declare function defineGenerator<const G extends GeneratorDefinition>(definition:G): DeepReadonly<G>;
