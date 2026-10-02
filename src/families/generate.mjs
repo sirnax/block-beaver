@@ -91,7 +91,7 @@ export async function planGeneration({ root, config = {}, graph, paths, label = 
   const diagnostics = await explainMissingOutputs(root, config, [...(loaded.diagnostics ?? [])]);
   const families = [...(loaded.families ?? [])].sort((a, b) => configIndexOf(a) - configIndexOf(b));
   const manifests = loaded.manifests ?? [];
-  let resolvedLabel = label ?? (typeof config?.history?.label === 'string' ? config.history.label : null);
+  const resolvedLabel = label ?? (typeof config?.history?.label === 'string' ? config.history.label : null);
   // Everything exposed by ctx can affect the result, even when it is not a
   // matched input file. A scan's wall-clock timestamp is not project state.
   const { scannedAt: _scannedAt, ...stableGraph } = graph ?? {};
@@ -157,7 +157,7 @@ export async function planGeneration({ root, config = {}, graph, paths, label = 
 
   // 3b. A label module runs (in the generate pass) only when an entry will really be appended: not for a read-only
   // plan (--check, --dry-run, audit), not once the plan already has an error (nothing is written), and not with --label.
-  let labelModule = null;
+  let labelModule = null, historyLabel = resolvedLabel;
   if (label === null && !readOnly && !diagnostics.some((item) => item.severity === 'error') && historyLabelModule(config) && currents.has('history')) {
     try { if (appendHistory(readHistory(currents.get('history')), new Map(manifests.map((item) => [item.ref, item.hash])), { now: stamp }).changed) labelModule = historyLabelModule(config); }
     catch { /* an unreadable history is reported when it is rendered */ }
@@ -173,10 +173,10 @@ export async function planGeneration({ root, config = {}, graph, paths, label = 
     const files = [...new Set([...(await discoverFiles(root)), ...(paths ?? [])])];
     for (const claim of cacheable) {
       const matched = matchGlobs(files, claim.info.inputs);
-      hashes.set(claim.key, inputsHash({ closureHash: claim.info.closureHash, out: claim.out, inputs: await hashInputs(root, matched), context: labelModule ? { ...generationContext, label: { derived: labelModule } } : generationContext }));
+      hashes.set(claim.key, inputsHash({ closureHash: claim.info.closureHash, out: claim.out, inputs: await hashInputs(root, matched), context: generationContext }));
     }
   }
-  const skipped = new Set(labelModule ? [] : cacheable.filter((claim) => {
+  const skipped = new Set(cacheable.filter((claim) => {
     const entry = cache.entries[claim.key], current = currents.get(claim.key);
     return hashes.has(claim.key) && entry?.inputsHash === hashes.get(claim.key) && current !== null && entry.outHash === outputHash(current);
   }).map((claim) => claim.key));
@@ -184,7 +184,7 @@ export async function planGeneration({ root, config = {}, graph, paths, label = 
   const generated = new Map();
   if (toRun.length || labelModule) {
     const result = await load({ ...base, generate: { keys: toRun, graph, label: resolvedLabel, ...(labelModule ? { labelModule } : {}) } });
-    if (labelModule && typeof result.label === 'string') resolvedLabel = result.label;
+    if (labelModule && typeof result.label === 'string') historyLabel = result.label;
     for (const output of result.outputs ?? []) generated.set(output.key, output);
     const outputDiagnostics = new Set((result.outputs ?? []).filter((output) => output.diagnostic).map((output) => JSON.stringify(output.diagnostic)));
     for (const item of await explainMissingOutputs(root, config, result.diagnostics ?? [])) {
@@ -220,7 +220,7 @@ export async function planGeneration({ root, config = {}, graph, paths, label = 
         let doc;
         try { doc = readHistory(current); }
         catch (error) { throw problem('output-conflict', `${historyPath} cannot be extended: ${error.message}`, { file: historyPath }); }
-        const appended = appendHistory(doc, new Map(manifests.map((item) => [item.ref, item.hash])), { label: resolvedLabel, now: stamp });
+        const appended = appendHistory(doc, new Map(manifests.map((item) => [item.ref, item.hash])), { label: historyLabel, now: stamp });
         // An unchanged history keeps its exact bytes.
         expected = appended.changed || current === null || current.trim() === '' ? serializeHistory(appended.doc) : current;
       }

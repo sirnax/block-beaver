@@ -184,7 +184,7 @@ A generator can own part of a file instead of the whole file. `defineGenerator({
 
 Markers are whole lines. Region outputs have no header, the rest of the file is never touched and CRLF line endings are kept. Missing or duplicate markers fail `region-missing` or `region-duplicate` and nothing is written. `gen --check` compares only the region. Two generators may own different regions of one file; the same region twice, or a whole-file and a region output on one file, is `output-collision`. JSON outputs cannot have regions.
 
-The history label can come from code. Set `history.label` to `{ "module": ".blocks/history-label.ts" }`. The module's default export `(ctx) => string | null` receives the generator context, and an optional `export const inputs` declares its cache inputs. It runs only when a history entry is appended, `--label` still overrides it, and a plain string label is unchanged. An invalid module fails `history-label-invalid` and nothing is written.
+The history label can come from code. Set `history.label` to `{ "module": ".blocks/history-label.ts" }`. The module's default export `(ctx) => string | null` receives the generator context, and an optional `export const inputs` lists files whose changes re-evaluate the loader; the label itself is computed only when an entry is appended. It runs only when a history entry is appended, `--label` still overrides it, and a plain string label is unchanged. An invalid module fails `history-label-invalid` and nothing is written.
 
 ### Hosting the map
 
