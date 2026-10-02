@@ -48,7 +48,8 @@ export type FamilyDefinition = {id:string;fields:ObjectNode;implementation:reado
   dataKinds?:readonly string[];
   /** Per-arm extra fields merged into that arm (`module`, `none` or a data kind); core keys `kind` and `module` cannot be redeclared. */
   implementationFields?:Readonly<Record<string,ObjectNode>>;
-  links?:readonly {field:string;to:string|readonly string[];kind:string}[];generators?:readonly ('registry'|'index'|'history')[];
+  /** `match` makes a join link: an edge to every `to` manifest whose `match` path (on that one family) shares a value with `field`. */
+  links?:readonly {field:string;to:string|readonly string[];kind:string;match?:string}[];generators?:readonly ('registry'|'index'|'history')[];
   map?:{title?:string;blurb?:string};scaffold?:{files:readonly {path:string;template:string}[];manualSteps?:readonly string[]};
   check?:(manifest:CoreManifest & Record<string,unknown>,ctx:{family:string;get(ref:string):unknown}) => readonly {path:string;message:string;code?:string}[] | void;
   checkAll?:(manifests:readonly (CoreManifest & Record<string,unknown>)[],ctx:SetCheckContext) => SetCheckIssues | Promise<SetCheckIssues>;};

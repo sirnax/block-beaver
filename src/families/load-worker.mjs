@@ -96,6 +96,8 @@ function contractProblems(definition, entry, configured) {
       if (!object(link) || !linkSchema(definition.fields, link.field)) issue('link-path-invalid', 'Link field must walk the schema, marking every array with []', `$.links[${index}].field`);
       const targets = typeof link?.to === 'string' ? [link.to] : link?.to;
       if (!Array.isArray(targets) || !targets.length || targets.some((id) => !configured.has(id)) || new Set(targets).size !== targets.length) issue('link-target-family', 'Link targets must name configured families', `$.links[${index}].to`);
+      else if (link.match !== undefined && targets.length !== 1) issue('link-target-family', 'A join link (match) must name exactly one target family', `$.links[${index}].to`);
+      if (link?.match !== undefined && (typeof link.match !== 'string' || !link.match)) issue('link-path-invalid', 'Link match must be a non-empty path string', `$.links[${index}].match`);
       if (typeof link?.kind !== 'string' || !idPattern.test(link.kind)) issue('contract-invalid', 'Link kind must be kebab-case', `$.links[${index}].kind`);
       else if (reservedLinkKinds.has(link.kind)) issue('contract-invalid', `Link kind ${link.kind} is reserved for source graph relationships`, `$.links[${index}].kind`);
     }
@@ -168,6 +170,14 @@ async function execute(message) {
         result.families.push({ ...jsonCopy(metadata), hasCheck: typeof check === 'function', hasCheckAll: typeof checkAll === 'function', config: familyConfig, floor, configIndex });
       } catch (error) { errorDiagnostic(error, { file: entry.contract, family: entry.id }); }
     }
+    // A join link's match walks the target family's fields, so it is checked once every contract is in; only the family holding the bad link is dropped.
+    const badJoins = new Set();
+    for (const entry of parsed.families) for (const [index, link] of (definitions.get(entry.id)?.links ?? []).entries()) {
+      const target = link.match === undefined ? undefined : definitions.get(typeof link.to === 'string' ? link.to : link.to[0]);
+      if (target && !linkSchema(target.fields, link.match)) { badJoins.add(entry.id); diagnostic('link-path-invalid', `Link match must walk the fields of family ${target.id}, marking every array with []`, { file: entry.contract, family: entry.id, field: `$.links[${index}].match` }); }
+    }
+    for (const id of badJoins) definitions.delete(id);
+    if (badJoins.size) result.families = result.families.filter((family) => !badJoins.has(family.id));
     const candidates = parsed.families.flatMap((entry) => matchManifests(manifestPaths.filter((path) => !ignored(path)), entry).map((path) => ({ entry, path }))).sort((a, b) => compare(a.path, b.path) || a.entry.configIndex - b.entry.configIndex);
     const manifestRefs = new Set();
     for (const { entry, path } of candidates) {

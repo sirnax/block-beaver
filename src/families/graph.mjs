@@ -4,10 +4,13 @@ import { posix } from 'node:path';
 import { matchGlob } from './glob.mjs';
 import { canonicalJson } from './canonical.mjs';
 import { readHistory, historySnapshots } from './history.mjs';
+import { walkPath, valuesAt } from './paths.mjs';
 
 const compare = (a, b) => a < b ? -1 : a > b ? 1 : 0;
 const sorted = (values) => [...new Set(values)].sort(compare);
 const graphId = (ref) => `block:${ref}`;
+// Join values compare by type and value, so 1 never meets '1'; objects, arrays and null never join.
+const joinKey = (value) => ['string', 'number', 'boolean'].includes(typeof value) ? `${typeof value}:${value}` : null;
 const diagnostic = (code, message, extra = {}) => ({ rule: 'manifest-valid', code, severity: 'error', message, ...extra });
 
 /** Expand configured field paths into concrete, typed block references. */
@@ -15,33 +18,20 @@ export function extractLinks(family, manifest) {
   const links = [], diagnostics = [];
   const block = `${manifest.family || family.id}:${manifest.id}`;
   for (const definition of family.links || []) {
+    if (definition.match !== undefined) continue; // Join links name no id; attachFamilies resolves them.
+    if (definition.field.includes('[][]')) continue; // 0.6.0 never walked nested arrays for id links; keep their graphs byte-identical.
     const allowed = typeof definition.to === 'string' ? [definition.to] : definition.to;
-    const segments = definition.field.split('.');
     const fail = (field, message) => diagnostics.push(diagnostic('link-value-invalid', message, { family: family.id, block, field, link: definition.kind }));
-    function walk(value, index, field) {
-      if (value == null) return;
-      if (index === segments.length) {
-        if (typeof value !== 'string' || !value) { fail(field, 'A link must be a non-empty block reference string'); return; }
-        const parts = value.split(':');
-        let targetFamily, id;
-        if (parts.length === 1 && allowed.length === 1) [targetFamily, id] = [allowed[0], value];
-        else if (parts.length === 2 && allowed.includes(parts[0])) [targetFamily, id] = parts;
-        else { fail(field, `Link '${value}' must name one of: ${allowed.join(', ')}`); return; }
-        if (!/^[A-Za-z0-9][A-Za-z0-9._-]*$/.test(id)) { fail(field, `Invalid block reference '${value}'`); return; }
-        links.push({ field, target: graphId(`${targetFamily}:${id}`), kind: definition.kind });
-        return;
-      }
-      const segment = segments[index], key = segment.replace(/\[\]$/, ''), array = segment.endsWith('[]');
-      if (typeof value !== 'object' || Array.isArray(value)) { fail(field, 'A link field path must traverse an object'); return; }
-      const next = Object.hasOwn(value, key) ? value[key] : undefined;
-      const nextField = `${field}.${key}`;
-      if (next == null) return;
-      if (array) {
-        if (!Array.isArray(next)) { fail(nextField, 'A [] link field must contain an array'); return; }
-        next.forEach((entry, position) => walk(entry, index + 1, `${nextField}[${position}]`));
-      } else walk(next, index + 1, nextField);
-    }
-    walk(manifest, 0, '$');
+    walkPath(manifest, definition.field, (field, value) => {
+      if (typeof value !== 'string' || !value) { fail(field, 'A link must be a non-empty block reference string'); return; }
+      const parts = value.split(':');
+      let targetFamily, id;
+      if (parts.length === 1 && allowed.length === 1) [targetFamily, id] = [allowed[0], value];
+      else if (parts.length === 2 && allowed.includes(parts[0])) [targetFamily, id] = parts;
+      else { fail(field, `Link '${value}' must name one of: ${allowed.join(', ')}`); return; }
+      if (!/^[A-Za-z0-9][A-Za-z0-9._-]*$/.test(id)) { fail(field, `Invalid block reference '${value}'`); return; }
+      links.push({ field, target: graphId(`${targetFamily}:${id}`), kind: definition.kind });
+    }, fail);
   }
   return { links, diagnostics };
 }
@@ -158,7 +148,22 @@ export function attachFamilies(graph, { load, project, history, bindings, source
   const familyConfigs = families.map((family) => family.config).filter((config) => typeof config?.manifests === 'string');
   diagnostics.push(...findUnclaimed(familyConfigs, sorted([...fileNodes.keys(), ...(load.discoveredFiles || [])]), { isIgnored: typeof project?.isIgnored === 'function' ? (path) => project.isIgnored(path) : undefined }));
   const familyById = new Map(families.map((family) => [family.id, family]));
-  const accepted = [];
+  const accepted = [], joinIndexes = new Map();
+  // targetFamily + match path -> joinKey -> Set of block node ids; built once, after every node exists.
+  const joinIndex = (targetFamily, match) => {
+    const key = `${targetFamily}\0${match}`;
+    if (!joinIndexes.has(key)) {
+      const index = new Map();
+      for (const { item, node } of accepted) if (item.family === targetFamily) for (const { value } of valuesAt(item.value, match)) {
+        const joined = joinKey(value);
+        if (joined === null) continue;
+        if (!index.has(joined)) index.set(joined, new Set());
+        index.get(joined).add(node.id);
+      }
+      joinIndexes.set(key, index);
+    }
+    return joinIndexes.get(key);
+  };
   const grouping = typeof groupBy === 'string' && identifier.test(groupBy) ? groupBy : null;
   for (const item of manifests) {
     const id = item.graphId || graphId(`${item.family}:${item.id}`);
@@ -210,9 +215,28 @@ export function attachFamilies(graph, { load, project, history, bindings, source
       if (!edges.has(key)) edges.set(key, { from: node.id, to: link.target, kind: link.kind, link: true, fields: [], evidence: { file: item.path, line: 1, column: 1, text: '' } });
       edges.get(key).fields.push(link.field);
     }
+    // Join links (0.7.0): an edge to every target manifest whose match values meet a source value; no match is no edge and no diagnostic.
+    const joins = new Map();
+    for (const definition of family.links || []) {
+      if (definition.match === undefined) continue;
+      const targetFamily = typeof definition.to === 'string' ? definition.to : definition.to[0], index = joinIndex(targetFamily, definition.match), hits = new Map();
+      for (const { field, value: source } of valuesAt(item.value, definition.field)) for (const target of index.get(joinKey(source)) ?? []) {
+        if (target === node.id) continue;
+        if (!hits.has(target)) hits.set(target, []);
+        hits.get(target).push(field);
+      }
+      for (const target of [...hits.keys()].sort(compare)) {
+        const key = `${target}\0${definition.kind}`;
+        if (!edges.has(key)) edges.set(key, { from: node.id, to: target, kind: definition.kind, link: true, fields: [], evidence: { file: item.path, line: 1, column: 1, text: '' } });
+        const edge = edges.get(key);
+        edge.fields.push(...hits.get(target));
+        if (!joins.has(edge)) joins.set(edge, new Set());
+        joins.get(edge).add(`${targetFamily}.$.${definition.match}`);
+      }
+    }
     for (const edge of edges.values()) {
       edge.fields = sorted(edge.fields);
-      edge.evidence.text = `${edge.fields.join(', ')} → ${edge.to.slice(6)}`;
+      edge.evidence.text = `${edge.fields.join(', ')}${joins.has(edge) ? ` ↔ ${sorted(joins.get(edge)).join(', ')}` : ''} → ${edge.to.slice(6)}`;
       graph.edges.push(edge);
     }
     node.dependencies = sorted([...edges.values()].map((edge) => edge.to));

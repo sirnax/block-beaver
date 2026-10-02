@@ -204,3 +204,11 @@ test('kit describe and validate carry implementation arms and data kinds', async
   const bad = await runKit(root,'validate',[],{ ...withArms, input: { manifest: value('new',{implementation:{kind:'module',module:'./a',loading:'soon'}}) } });
   assert.deepEqual(bad.result.errors.map((issue) => issue.path),['$.implementation.loading']);
 });
+
+test('kit validation does not look up targets for join links', async (t) => {
+  const root = await fixture(t);
+  const joined = { ...family, links: [{ field: 'parent', to: 'sample', match: 'parent', kind: 'joins' }] };
+  const run = (parent) => runKit(root,'validate',[],options({ loadFamilies: async () => ({ ...load, families: [joined] }), input: { manifest: value('new', { parent }) } }));
+  assert.equal((await run('nothing-has-this')).result.valid, true);
+  assert.equal((await runKit(root,'validate',[],options({ input: { manifest: value('new', { parent: 'nothing-has-this' }) } }))).result.valid, false);
+});

@@ -588,3 +588,45 @@ test('map.bindings names must be strings', () => {
   const parsed = parseFamiliesConfig({ families: [family], map: { bindings: [{ family: 'widget', call: true, registry: 'units' }, { family: 'widget', call: 'render', registry: ['units'] }] } });
   assert.deepEqual(parsed.diagnostics.map((item) => item.field), ['$.map.bindings[0]', '$.map.bindings[1]']);
 });
+
+const joinFamilies = [{ id: 'task', contract: 'definitions/task.family.ts', manifests: 'catalog/tasks/*.item.ts' }, { id: 'tool', contract: 'definitions/tool.family.ts', manifests: 'catalog/tools/*.item.ts' }];
+const joinContract = (id, fields, links = '') => `import { defineFamily, s } from 'block-beaver/kernel';
+export default defineFamily({id:'${id}',fields:s.object({${fields}}),implementation:['none'],${links}});\n`;
+const joinManifest = (id, family, extra) => `export default ${JSON.stringify({ ...value(id, { family, ...extra }), tag: undefined })};\n`;
+const joinFiles = (taskLinks, extra = {}) => ({
+  'definitions/task.family.ts': joinContract('task', 'tools:s.string()', taskLinks), 'definitions/tool.family.ts': joinContract('tool', 'modes:s.array(s.string())'),
+  'catalog/tasks/summarise.item.ts': joinManifest('summarise', 'task', { tools: 'assistant' }), 'catalog/tools/create-note.item.ts': joinManifest('create-note', 'tool', { modes: ['assistant', 'chat'] }),
+  ...extra,
+});
+const joinLoad = async (t, taskLinks, extra) => loadFamilies(await fixture(t, joinFiles(taskLinks, extra), configFor({ families: joinFamilies })));
+
+test('join links load against the target family fields and become graph edges', async (t) => {
+  const load = await joinLoad(t, `links:[{field:'tools',to:'tool',match:'modes[]',kind:'can-use'}],`);
+  assert.deepEqual(load.diagnostics, [], JSON.stringify(load.diagnostics));
+  assert.equal(load.families.find((item) => item.id === 'task').links[0].match, 'modes[]');
+  const graph = { schemaVersion: 2, root: '.', fingerprint: 'source', apps: [], summary: {}, nodes: [], edges: [] };
+  attachFamilies(graph, { load, project: { resolveImport() { throw new Error('unexpected'); } } });
+  assert.deepEqual(graph.edges.filter((edge) => edge.link).map((edge) => [edge.from, edge.to, edge.kind, edge.fields]), [['block:task:summarise', 'block:tool:create-note', 'can-use', ['$.tools']]]);
+});
+
+test('join link contracts reject bad match paths, several targets and non-string match, dropping only that family', async (t) => {
+  const bad = {
+    "links:[{field:'tools',to:'tool',match:'missing[]',kind:'can-use'}],": ['link-path-invalid', '$.links[0].match'],
+    "links:[{field:'tools',to:'tool',match:'modes',kind:'can-use'}],": ['link-path-invalid', '$.links[0].match'],
+    "links:[{field:'tools',to:'tool',match:3,kind:'can-use'}],": ['link-path-invalid', '$.links[0].match'],
+    "links:[{field:'tools',to:['tool','task'],match:'modes[]',kind:'can-use'}],": ['link-target-family', '$.links[0].to'],
+  };
+  for (const [links, [code, field]] of Object.entries(bad)) {
+    const load = await joinLoad(t, links);
+    assert.ok(load.diagnostics.some((item) => item.code === code && item.field === field && item.family === 'task' && item.rule === 'manifest-valid' && item.severity === 'error'), `${links} ${JSON.stringify(load.diagnostics)}`);
+    assert.deepEqual(load.families.map((item) => item.id), ['tool']);
+    assert.deepEqual(load.manifests.map((item) => item.ref), ['tool:create-note']);
+  }
+});
+
+test('join link match validation waits for the target and is skipped when the target failed to load', async (t) => {
+  const load = await joinLoad(t, `links:[{field:'tools',to:'tool',match:'modes[]',kind:'can-use'}],`, { 'definitions/tool.family.ts': 'export const nothing = 1;' });
+  assert.ok(load.diagnostics.some((item) => item.code === 'contract-default-missing' && item.family === 'tool'));
+  assert.ok(!load.diagnostics.some((item) => item.code === 'link-path-invalid'), JSON.stringify(load.diagnostics));
+  assert.deepEqual(load.families.map((item) => item.id), ['task']);
+});
