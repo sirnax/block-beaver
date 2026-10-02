@@ -601,3 +601,69 @@ test('the ordinary-code rail lists folders by reach, then size, right of the tow
   assert.match(map, /<text class="floor-title" x="\d+" y="\d+">Ordinary code<\/text><text class="rail-sub mono"[^>]*>Not blocks yet · source files by folder<\/text>/);
   assert.match(map, /<circle class="rail-port"/, 'reaching rows get a port for their reach lines');
 });
+
+test('a selection that history or filters hide is dropped, so the map does not stay dimmed', (t) => {
+  withBrowserGlobals(t);
+  const graph = parityFixture(), filter = { query: '', app: 'all' };
+  const dom = fakeDocument(renderFamilyMap(graph));
+  const controller = installFamilyMap(dom, graph, { filters: () => filter });
+  const scene = dom.querySelector('.family-scene'), slider = dom.querySelector('#family-history');
+  const select = (id) => dom.listeners.get('click')({ type: 'click', target: { closest: () => dom.querySelector(`[data-map-id="${id}"]`) } });
+  select('block:screen:main');
+  assert.ok(scene.classes.has('dim'));
+  slider.value = '0'; slider.listeners.get('input')();
+  assert.equal(dom.querySelector('[data-map-id="block:screen:main"]').hasAttribute('hidden'), true);
+  assert.ok(!scene.classes.has('dim'), 'scrubbing to before the brick existed clears the selection');
+  assert.equal(dom.querySelectorAll('.lit').length, 0);
+  slider.value = '3'; slider.listeners.get('input')();
+  assert.ok(!scene.classes.has('dim'), 'the selection does not come back');
+  select('block:record:first');
+  filter.query = 'main screen'; controller.update();
+  assert.ok(!scene.classes.has('dim'), 'a search that hides the selected brick clears it');
+  filter.query = ''; select('block:record:first');
+  filter.app = 'app:admin'; controller.update();
+  assert.ok(!scene.classes.has('dim'), 'an app filter that hides it does too');
+  select('block:screen:main');
+  assert.ok(scene.classes.has('dim'), 'a visible brick can still be selected under the filter');
+  controller.dispose();
+});
+
+test('a selection reveals reach lines only when their folder row and brick are both visible', (t) => {
+  withBrowserGlobals(t);
+  const graph = parityFixture(), filter = { query: '', app: 'all' };
+  const dom = fakeDocument(renderFamilyMap(graph));
+  const controller = installFamilyMap(dom, graph, { filters: () => filter });
+  const shown = () => dom.querySelectorAll('[data-reach-source]').filter((line) => !line.hasAttribute('hidden')).map((line) => line.dataset.reachBlock);
+  const row = dom.querySelector('[data-map-reach]');
+  const select = (id) => dom.listeners.get('click')({ type: 'click', target: { closest: () => dom.querySelector(`[data-map-id="${id}"]`) } });
+  select('block:screen:main');
+  assert.deepEqual(shown(), ['block:screen:main'], 'visible folder and brick: the line shows');
+  filter.query = 'main screen'; controller.update();
+  assert.equal(row.hasAttribute('hidden'), true, 'the search hides the src folder row');
+  select('block:screen:main');
+  assert.ok(dom.querySelector('.family-scene').classes.has('dim'));
+  assert.deepEqual(shown(), [], 'no line from a hidden folder');
+  assert.ok(!row.classes.has('lit'));
+  filter.query = '';
+  const brick = dom.querySelector('[data-map-id="block:record:first"]');
+  select('block:record:first');
+  brick.setAttribute('hidden', '');
+  dom.listeners.get('focusout')({ type: 'focusout', target: { closest: () => row }, relatedTarget: null });
+  dom.listeners.get('focusin')({ type: 'focusin', target: { closest: () => row } });
+  dom.listeners.get('focusout')({ type: 'focusout', target: { closest: () => row }, relatedTarget: null });
+  assert.deepEqual(shown(), [], 'no line to a hidden brick');
+  controller.dispose();
+});
+
+test('group packing stays fast for thousands of distinct groups', () => {
+  // Generous bounds: about 15 ms and 35 ms here; the old all-widths scan took about 0.16 s and 2.3 s.
+  for (const [count, limit] of [[2000, 800], [8000, 1500]]) {
+    const graph = brickFixture(count);
+    for (const node of graph.nodes) node.group = node.id;
+    const started = performance.now();
+    const map = renderFamilyMap(graph);
+    const elapsed = performance.now() - started;
+    assert.equal([...map.matchAll(/<text class="group-label"/g)].length, count);
+    assert.ok(elapsed < limit, `${count} groups rendered in ${Math.round(elapsed)} ms`);
+  }
+});

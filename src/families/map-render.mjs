@@ -101,20 +101,25 @@ const BRICK_SHAPE = (() => {
 /** Pack each cluster as a near-square box, shelf by shelf, one empty cell apart; keep the floor near square. */
 function packFloor(clusters) {
   const boxes = clusters.map((cluster) => ({ cluster, ...gridFor(cluster.items.length) }));
-  const widest = Math.max(...boxes.map((box) => box.cols)), total = boxes.reduce((sum, box) => sum + box.cols + 1, -1);
-  let best;
-  for (let width = widest; width <= total; width++) {
+  const shelve = (width, place) => {
     let x = 0, y = 0, shelf = 0, cols = 0;
-    const placed = boxes.map((box) => {
+    for (const box of boxes) {
       if (x && x + box.cols > width) { x = 0; y += shelf + 1; shelf = 0; }
-      const at = { ...box, x, y };
+      place?.(box, x, y);
       x += box.cols + 1; shelf = Math.max(shelf, box.rows); cols = Math.max(cols, x - 1);
-      return at;
-    });
-    const rows = y + shelf, size = Math.max(cols, rows), area = cols * rows;
-    if (!best || size < best.size || (size === best.size && area < best.area)) best = { cols, rows, boxes: placed, size, area };
+    }
+    return { cols, rows: y + shelf };
+  };
+  const widest = Math.max(...boxes.map((box) => box.cols)), total = boxes.reduce((sum, box) => sum + box.cols + 1, -1);
+  // A layout packed at width w is the same layout packed at its own column count, so widths past the best size never win.
+  let best;
+  for (let width = widest; width <= total && !(best && width > best.size); width++) {
+    const { cols, rows } = shelve(width), size = Math.max(cols, rows), area = cols * rows;
+    if (!best || size < best.size || (size === best.size && area < best.area)) best = { cols, rows, size, area, width };
   }
-  return best;
+  const placed = [];
+  shelve(best.width, (box, x, y) => placed.push({ ...box, x, y }));
+  return { cols: best.cols, rows: best.rows, boxes: placed };
 }
 
 export function renderFamilyMap(graph, { edges = graph.edges } = {}) {
@@ -330,10 +335,13 @@ export function installFamilyMap(container, graph, { filters = () => ({ query: '
   /* Selection lights the selected brick, its linked bricks, its links and the code folders that reach it. */
   function paintReach() {
     if (!selected) return;
+    const block = container.querySelector(`[data-map-id="${cssEscape(selected)}"]`);
+    if (!block || block.hasAttribute('hidden')) return;
     for (const line of container.querySelectorAll('[data-reach-block]')) {
-      if (line.dataset.reachBlock !== selected) continue;
+      const row = line.dataset.reachBlock === selected && container.querySelector(`[data-map-reach="${cssEscape(line.dataset.reachSource)}"]`);
+      if (!row || row.hasAttribute('hidden')) continue;
       line.removeAttribute('hidden');
-      container.querySelector(`[data-map-reach="${cssEscape(line.dataset.reachSource)}"]`)?.classList.add('lit');
+      row.classList.add('lit');
     }
   }
   function paint() {
@@ -382,15 +390,17 @@ export function installFamilyMap(container, graph, { filters = () => ({ query: '
     const query = (current.query || '').toLowerCase();
     const app = current.app || 'all';
     const cross = app === 'cross' || app === 'cross-app';
-    clearReach();
     for (const item of container.querySelectorAll('[data-family-block]')) {
       const matchApp = app === 'all' || cross || (app === 'outside' ? item.dataset.mapApp === '' : app === `app:${item.dataset.mapApp}`);
       const matchSearch = !(item.dataset.mapSearch || item.dataset.search || '').includes(query) ? !query : true;
       item.toggleAttribute('hidden', Boolean((active && !active.has(item.dataset.familyBlock)) || !matchApp || !matchSearch || cross));
     }
+    /* A selection the history step or filters hide is dropped, so nothing stays dimmed around a missing brick. */
+    if (selected && container.querySelector(`[data-map-id="${cssEscape(selected)}"]`)?.hasAttribute('hidden') !== false) selected = null;
     for (const item of container.querySelectorAll('[data-map-ghost]')) item.toggleAttribute('hidden', !active || !active.has(item.dataset.mapGhost) || cross || !(item.dataset.mapSearch || '').includes(query));
     for (const item of container.querySelectorAll('[data-map-ghost-label]')) item.toggleAttribute('hidden', !active);
     for (const item of container.querySelectorAll('.ordinary-code')) item.toggleAttribute('hidden', cross || (app !== 'all' && (app === 'outside' ? item.dataset.mapApp !== '' : app !== `app:${item.dataset.mapApp}`)) || !item.dataset.mapSearch.includes(query));
+    clearReach();
     for (const path of container.querySelectorAll('[data-map-edge]')) {
       const edge = graph.edges[Number(path.dataset.mapEdge)];
       const from = container.querySelector(`[data-map-id="${cssEscape(path.dataset.mapFrom)}"]`);
