@@ -628,8 +628,8 @@ test('0.7.0: a README region and a derived history label follow the roadmap file
 
 test('0.7.0: a map-detail view export is far smaller than the full one, drops files and evidence, and fails under a too-small budget', async (t) => {
   // Ordinary code behind the entry gives the full graph file-level nodes and evidence to carry.
-  const library = Object.fromEntries(Array.from({ length: 400 }, (_, index) => [`src/lib/m${index}.ts`, `${index ? `import { v${index - 1} } from './m${index - 1}.ts';\n` : ''}export const v${index} = ${index ? `v${index - 1} + 1` : 0};\n`]));
-  const root = await settled070(t, { ...library, 'src/main.ts': "import { reader } from './nodes/reader.ts';\nimport { v399 } from './lib/m399.ts';\nexport const main = [reader, v399];\n" });
+  const library = Object.fromEntries(Array.from({ length: 480 }, (_, index) => [`src/lib/m${index}.ts`, `${index ? `import { v${index - 1} } from './m${index - 1}.ts';\n` : ''}export const v${index} = ${index ? `v${index - 1} + 1` : 0};\n`]));
+  const root = await settled070(t, { ...library, 'src/main.ts': "import { reader } from './nodes/reader.ts';\nimport { v479 } from './lib/m479.ts';\nexport const main = [reader, v479];\n" });
   const payload = async (path) => (await import(pathToFileURL(join(root, path)).href + `?${Math.random()}`)).BLOCK_BEAVER_VIEW;
   const full = json(root, ['view', '--format', 'module', '--out', 'src/view-full.mjs']);
   assert.equal(full.detail, 'full');
