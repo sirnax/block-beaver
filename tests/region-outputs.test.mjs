@@ -226,7 +226,7 @@ test('a .htm, .css or line-comment file uses its own marker style', async (t) =>
 });
 
 test('generated region content may not contain region or managed markers', async (t) => {
-  for (const content of ['ok\n<!-- /block-beaver:region roadmap-badge -->\nmore', '<!-- block-beaver:start -->', 'see <!-- block-beaver:end --> inline', 'x # block-beaver:start y', '```js\nopen fence']) {
+  for (const content of ['ok\n<!-- /block-beaver:region roadmap-badge -->\nmore', '<!-- block-beaver:start -->', 'see <!-- block-beaver:end --> inline', 'x # block-beaver:start y', '```js\nopen fence', '- ```md\n  open list fence', '> ~~~\n> open quote fence']) {
     const root = await repo(t, { 'README.md': readme() });
     const result = await plan(root, badgeLoader(content));
     assert.deepEqual(codes(result), ['generator-failed'], content);
@@ -273,6 +273,12 @@ test('a marker example inside a Markdown code fence is not a region', async (t) 
     'indented with info': `  \`\`\`\` html title="x"\n${start}\nexample body\n${end}\n\`\`\`\nstill fenced\n  \`\`\`\`\n`,
     'tilde fence ignores a backtick close': `~~~~\n${start}\n\`\`\`\n${end}\n~~~~\n`,
     unterminated: `intro\n\`\`\`\n${start}\nexample body\n${end}\n`,
+    'list item fence': `- Example:\n- \`\`\`md\n  ${start}\n  example body\n  ${end}\n  \`\`\`\n`,
+    'ordered list fence': `1. \`\`\`\n   ${start}\n   example body\n   ${end}\n   \`\`\`\n2. next\n`,
+    'ordered list fence with a paren': `1) \`\`\`html\n   ${start}\n   ${end}\n   \`\`\`\n`,
+    'blockquote fence': `> \`\`\`\n${start}\nexample body\n${end}\n> \`\`\`\n`,
+    'nested list tilde fence': `- outer\n  - ~~~~ md\n    ${start}\n    example body\n    ${end}\n    ~~~~\n`,
+    'unterminated list fence': `- \`\`\`\n  ${start}\n  example body\n  ${end}\n`,
   };
   for (const [name, text] of Object.entries(cases)) {
     const root = await repo(t, { 'README.md': text });
@@ -295,6 +301,17 @@ test('a fenced marker example beside a real region leaves the example bytes inta
       assert.equal(await readFile(join(root, 'README.md'), 'utf8'), `# Docs\n${start}\n[badge](./docs/ROADMAP.md)\n${end}\n`);
       continue;
     }
+    assert.deepEqual(result.diagnostics, []);
+    assert.deepEqual((await applyGeneration(root, result)).written, ['README.md']);
+    assert.equal(await readFile(join(root, 'README.md'), 'utf8'), text.replace('old badge', '[badge](./docs/ROADMAP.md)'));
+  }
+});
+
+test('a list-item fence example beside a real region keeps its bytes while the real region updates', async (t) => {
+  const example = `- Add the markers:\n  - \`\`\`md\n    ${start}\n    example body\n    ${end}\n    \`\`\`\n`;
+  for (const text of [`# Docs\n\n${example}\n${readme()}`, `${readme()}\n${example}`]) {
+    const root = await repo(t, { 'README.md': text });
+    const result = await plan(root, badgeLoader('[badge](./docs/ROADMAP.md)'));
     assert.deepEqual(result.diagnostics, []);
     assert.deepEqual((await applyGeneration(root, result)).written, ['README.md']);
     assert.equal(await readFile(join(root, 'README.md'), 'utf8'), text.replace('old badge', '[badge](./docs/ROADMAP.md)'));

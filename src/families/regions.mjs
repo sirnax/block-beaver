@@ -36,8 +36,15 @@ const lf = (text) => text.replace(/\r\n?/g, '\n');
 const linesOf = (text) => text.match(/[^\n]*\n|[^\n]+$/g) ?? [];
 /** A region body compares and hashes with LF endings and no final newline. */
 const canonical = (text) => lf(text).replace(/\n$/, '');
-const fence = /^\s*(`{3,}|~{3,})(.*)$/;
-/** CommonMark-style fences: ``` or ~~~ with an info string, closed by a bare run of the same character at least as long; an open fence runs to the end. */
+// Any indentation, then a chain of list (`-`, `*`, `+`, `1.`, `1)`) and blockquote (`>`) container markers.
+// This errs towards seeing a fence: a hidden marker only makes gen refuse, a missed fence could overwrite an example.
+const container = String.raw`^\s*(?:(?:[-*+]|\d{1,9}[.)]|>)\s*)*`;
+const fence = new RegExp(`${container}(\`{3,}|~{3,})(.*)$`), fenceClose = new RegExp(`${container}(\`{3,}|~{3,})\\s*$`);
+/**
+ * CommonMark-style fences, top level or inside list items and blockquotes: ``` or ~~~ with an info
+ * string, closed by a bare run of the same character at least as long; an open fence runs to the end.
+ * Marker discovery, nesting checks, splicing and generated-content checks all use this one parser.
+ */
 function fencedLines(lines) {
   const fenced = new Set();
   let open = null;
@@ -45,7 +52,7 @@ function fencedLines(lines) {
     const text = line.replace(/\r?\n$/, '');
     if (open) {
       fenced.add(index);
-      const close = text.match(/^\s*(`{3,}|~{3,})\s*$/);
+      const close = text.match(fenceClose);
       if (close && close[1][0] === open[0] && close[1].length >= open.length) open = null;
       return;
     }
