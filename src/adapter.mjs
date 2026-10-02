@@ -87,7 +87,7 @@ export async function attachProjectRegistry(graph, { config: suppliedConfig, loa
       for (const path of paths) texts.set(path, await readProjectFile(graph.root, path));
       sourceText = (path) => texts.get(path) ?? null;
     }
-    attachFamilies(graph, { load: { ...load, diagnostics: [...(load.diagnostics || []), ...historyDiagnostics] }, project, history, bindings, sourceText });
+    attachFamilies(graph, { load: { ...load, diagnostics: [...(load.diagnostics || []), ...historyDiagnostics] }, project, history, bindings, sourceText, groupBy: config.map?.groupBy });
     graph.adapter = 'families';
   }
   if (config?.map) {

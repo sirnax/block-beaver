@@ -1,4 +1,4 @@
-import { FAMILY_MAP_CSS, renderFamilyMap, renderMapStyle, installFamilyMap } from './families/map-render.mjs';
+import { FAMILY_MAP_CSS, renderFamilyMap, renderMapStyle, renderMapSkins, installFamilyMap } from './families/map-render.mjs';
 const $ = (selector) => document.querySelector(selector);
 const esc = (value) => String(value ?? '').replace(/[&<>"']/g, (char) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[char]);
 const state = { graph: null, view: 'map', selected: null, kind: 'all', app: 'all', query: '', suggestions: [], proposal: null, roadmaps: [] };
@@ -82,7 +82,12 @@ function renderMap() {
   $('#map-content').innerHTML = areas + crossLinks || '<div class="empty-list">No files found. Try another search or app filter.</div>';
   familyController = familyHtml ? installFamilyMap($('#map-view'), state.graph, { filters: () => ({query: state.query, app: state.app}), onSelect: (id) => { state.selected = id; renderDetail(); }, onEdge: showEdge, onChange: (active) => { familyActiveBlocks = active; } }) : null;
 }
-function listItem(node, glyph) { return `<button class="item" data-id="${esc(node.id)}" type="button"><span class="item-glyph">${glyph}</span><span class="item-body"><strong>${esc(node.name)}</strong><small>${esc(node.path || node.id)}</small>${usedByChip(node)}</span><span class="item-meta">${esc(node.kind)}</span></button>`; }
+function blockChips(node) {
+  if (node.kind !== 'block' || !state.graph?.families?.length) return '';
+  const folders = new Set((state.graph.codeReach || []).filter((entry) => entry.block === node.id).map((entry) => `${entry.app ?? ''}/${entry.folder}`)).size;
+  return `${(state.graph.unused || []).includes(node.id) ? '<span class="block-chip unused" title="No block links to it and no ordinary code reaches it">unused</span>' : ''}${folders ? `<span class="block-chip reach" title="Ordinary code folders that import or bind this block">reached from ${number(folders)} ${folders === 1 ? 'folder' : 'folders'}</span>` : ''}${node.group != null ? `<span class="block-chip">${esc(node.group)}</span>` : ''}`;
+}
+function listItem(node, glyph) { return `<button class="item" data-id="${esc(node.id)}" type="button"><span class="item-glyph">${glyph}</span><span class="item-body"><strong>${esc(node.name)}</strong><small>${esc(node.path || node.id)}</small>${usedByChip(node)}${blockChips(node)}</span><span class="item-meta">${esc(node.kind)}</span></button>`; }
 function renderPieces() {
   if (!state.graph) return;
   const pieces = state.graph.nodes.filter((node) => !['file', 'block'].includes(node.kind) && matches(node));
@@ -159,6 +164,9 @@ async function scan() {
     let style = document.querySelector('#family-map-style');
     if (!style) { style = document.createElement('style'); style.id = 'family-map-style'; style.nonce = document.querySelector('script[nonce]')?.nonce || '__BLOCK_BEAVER_NONCE__'; document.head.append(style); }
     style.textContent = result.families?.length ? FAMILY_MAP_CSS + renderMapStyle(result.mapStyle) : '';
+    // map.skins: one sheet per skin, switched by the family map's skin toggle through each sheet's media.
+    for (const sheet of document.querySelectorAll('style[data-map-skin]')) sheet.remove();
+    if (result.families?.length) renderMapSkins(result.mapStyle).forEach((skin, index) => { const sheet = document.createElement('style'); sheet.nonce = style.nonce; sheet.dataset.mapSkin = skin.id; sheet.media = index ? 'not all' : 'all'; sheet.textContent = skin.css; document.head.append(sheet); });
     expandedApps.clear();
     state.selected = null;
     state.query = '';

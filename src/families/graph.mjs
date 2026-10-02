@@ -150,7 +150,7 @@ export function attachMapParity(graph, { bindings = [], sourceText } = {}) {
 }
 
 /** Add validated family manifests to the existing project graph in place. */
-export function attachFamilies(graph, { load, project, history, bindings, sourceText }) {
+export function attachFamilies(graph, { load, project, history, bindings, sourceText, groupBy }) {
   const families = load.families || [], manifests = load.manifests || [];
   const diagnostics = [...(load.diagnostics || [])];
   const nodes = new Map(graph.nodes.map((node) => [node.id, node]));
@@ -159,12 +159,15 @@ export function attachFamilies(graph, { load, project, history, bindings, source
   diagnostics.push(...findUnclaimed(familyConfigs, sorted([...fileNodes.keys(), ...(load.discoveredFiles || [])]), { isIgnored: typeof project?.isIgnored === 'function' ? (path) => project.isIgnored(path) : undefined }));
   const familyById = new Map(families.map((family) => [family.id, family]));
   const accepted = [];
+  const grouping = typeof groupBy === 'string' && identifier.test(groupBy) ? groupBy : null;
   for (const item of manifests) {
     const id = item.graphId || graphId(`${item.family}:${item.id}`);
     if (nodes.has(id)) { diagnostics.push(diagnostic('block-duplicate', `Duplicate block '${item.family}:${item.id}'`, { family: item.family, block: `${item.family}:${item.id}`, file: item.path })); continue; }
     const family = familyById.get(item.family);
     if (!family) continue; // The loader reports unknown family definitions.
     const node = { id, kind: 'block', family: item.family, floor: family.floor ?? families.indexOf(family), name: item.value.name, description: item.value.description, manifest: item.value, path: item.path, dependencies: [], app: null, usedBy: [] };
+    // map.groupBy (0.6.0): the map clusters a floor by this manifest field; scalar values only, else null.
+    if (grouping) node.group = ['string', 'number', 'boolean'].includes(typeof item.value?.[grouping]) ? String(item.value[grouping]) : null;
     graph.nodes.push(node); nodes.set(id, node); accepted.push({ item, node, family });
   }
   for (const family of families) {
@@ -247,6 +250,8 @@ export function attachFamilies(graph, { load, project, history, bindings, source
       diagnostics,
       // Bindings change codeReach without changing a source or manifest hash.
       ...(mapBindings.length ? { bindings: mapBindings } : {}),
+      // groupBy changes node.group without changing a manifest hash.
+      ...(grouping ? { groupBy: grouping } : {}),
     };
     graph.fingerprint = createHash('sha256').update(canonicalJson(content)).digest('hex').slice(0, 16);
   }

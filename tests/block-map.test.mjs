@@ -63,3 +63,10 @@ test('old snapshots render all source files in a single project area', () => {
   assert.match(html, /<h2>Project<\/h2>/);
   assert.match(html, /scripts\/tool.mjs/);
 });
+
+test('projects without families ignore map parity data and skins entirely', () => {
+  const plain = renderBlockMap(fixture());
+  const extended = renderBlockMap({ ...fixture(), codeReach: [], unused: ['block:shared'], mapStyle: { css: '', tokens: {}, skins: [{ id: 'paper', css: 'p{}', tokens: {} }, { id: 'night', css: 'n{}', tokens: {} }] } });
+  assert.equal(extended, plain);
+  assert.doesNotMatch(plain, /family-map|data-map-skin|family-skin/);
+});
