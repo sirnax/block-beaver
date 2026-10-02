@@ -88,6 +88,10 @@ export function parseFamiliesConfig(config) {
       }
     }
   }
+  if (config.view !== undefined) {
+    if (!object(config.view)) issue('family-path-invalid', 'view must be an object', '$.view');
+    else if (config.view.detail !== undefined && !['full', 'map'].includes(config.view.detail)) issue('family-path-invalid', 'view.detail must be full or map', '$.view.detail');
+  }
   return { families, generators, diagnostics, ...(loader ? { loader } : {}) };
 }
 

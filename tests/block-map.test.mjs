@@ -70,3 +70,21 @@ test('projects without families ignore map parity data and skins entirely', () =
   assert.equal(extended, plain);
   assert.doesNotMatch(plain, /family-map|data-map-skin|family-skin/);
 });
+
+test('map detail keeps the page elements the script uses and drops evidence, file lists and per-file text', () => {
+  const graph = fixture();
+  const full = renderBlockMap(graph);
+  assert.equal(renderBlockMap(graph, { detail: 'full' }), full, 'full detail is the default, byte for byte');
+  const slim = renderBlockMap(graph, { detail: 'map' });
+  assert.ok(slim.length < full.length);
+  for (const id of ['search', 'app-filter', 'cross-app-links']) assert.match(slim, new RegExp(`id="${id}"`));
+  assert.match(slim, /data-app="web"/);
+  assert.match(slim, /data-app="admin"/);
+  assert.match(slim, /3 health issues/);
+  assert.match(slim, /<h4>lib<\/h4><small>2 files · 5 lines<\/small>/, 'folder slabs carry counts');
+  assert.match(slim, /1 cross-app link;/);
+  assert.match(slim, /Reusable component/, 'declared block cards stay');
+  for (const gone of ['class="files"', 'class="file item"', 'class="evidence"', 'class="cross-edge', 'import shared from', 'panel.ts:2', 'Invalid tsconfig', 'Module not found', 'unreachable from app entry']) assert.ok(!slim.includes(gone), gone);
+  assert.match(slim, /const search = document\.querySelector\('#search'\)/);
+  assert.equal(renderBlockMap(graph, { detail: 'map' }), slim, 'deterministic');
+});

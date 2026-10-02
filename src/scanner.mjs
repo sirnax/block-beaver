@@ -44,6 +44,7 @@ export async function scanRepository(inputRoot, options = {}) {
       registeredExports.add(entry.path);
     }
   }
+  for (const path of options.extraExports || []) registeredExports.add(path);
   const discoveredPaths = (await findSourceFiles(root, { ...options, plugins })).filter((path) => !registeredExports.has(path));
   const project = await loadProjectModel(root, { paths: discoveredPaths, writeConfig: options.writeConfig ?? true, strict: false });
   const paths = discoveredPaths.filter((path) => !project.isIgnored(path));
