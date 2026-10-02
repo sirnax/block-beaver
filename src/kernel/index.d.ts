@@ -48,8 +48,10 @@ export type FamilyDefinition = {id:string;fields:ObjectNode;implementation:reado
   dataKinds?:readonly string[];
   /** Per-arm extra fields merged into that arm (`module`, `none` or a data kind); core keys `kind` and `module` cannot be redeclared. */
   implementationFields?:Readonly<Record<string,ObjectNode>>;
-  links?:readonly {field:string;to:string|readonly string[];kind:string}[];generators?:readonly ('registry'|'index'|'history')[];
-  map?:{title?:string;blurb?:string};scaffold?:{files:readonly {path:string;template:string}[];manualSteps?:readonly string[]};
+  /** `match` makes a join link: an edge to every `to` manifest whose `match` path (on that one family) shares a value with `field`. */
+  links?:readonly {field:string;to:string|readonly string[];kind:string;match?:string}[];generators?:readonly ('registry'|'index'|'history')[];
+  /** `group` clusters this family's map floor by a schema path (`.`/`[]`): array values are joined with `join` (default `', '`), no value gives `empty` (default no group), and `format` wraps the label around one `{value}`. It wins over config `map.groupBy`. */
+  map?:{title?:string;blurb?:string;group?:{field:string;join?:string;empty?:string;format?:string}};scaffold?:{files:readonly {path:string;template:string}[];manualSteps?:readonly string[]};
   check?:(manifest:CoreManifest & Record<string,unknown>,ctx:{family:string;get(ref:string):unknown}) => readonly {path:string;message:string;code?:string}[] | void;
   checkAll?:(manifests:readonly (CoreManifest & Record<string,unknown>)[],ctx:SetCheckContext) => SetCheckIssues | Promise<SetCheckIssues>;};
 /** Context for a family's `checkAll` and for config-level `checks` modules (default export `(manifests, ctx) => issues`, where `manifests` spans every family). */
@@ -58,8 +60,15 @@ export type SetCheckIssues = readonly {message:string;block?:string;field?:strin
 type ImplementationOf<F extends FamilyDefinition> = F['implementation'][number] extends infer K ? K extends string
   ? {kind:K} & (K extends 'module' ? {module:string} : unknown) & (F['implementationFields'] extends infer R ? K extends keyof R ? R[K] extends ObjectNode ? Infer<R[K]> : unknown : unknown : unknown) : never : never;
 export type ManifestOf<F extends FamilyDefinition> = Omit<CoreManifest,'implementation'> & {family:F['id'];implementation:ImplementationOf<F>} & Infer<F['fields']>;
-export type GeneratorContext = {config:unknown;families:readonly unknown[];manifests(familyId:string):readonly CoreManifest[];blocks():readonly CoreManifest[];graph:unknown;resolve(from:string,spec:string):unknown;label:string|null};
-export type GeneratorDefinition = {out:string;inputs:readonly string[];cache?:boolean;generate(ctx:GeneratorContext):string|Promise<string>};
+/** A loaded manifest with where it lives: `path` is repository-relative and `exportName` is its single runtime export. */
+export type GeneratorEntry = Readonly<{ref:string;family:string;id:string;path:string;exportName:string;hash:string;value:CoreManifest}>;
+export type GeneratorContext = {config:unknown;families:readonly unknown[];manifests(familyId:string):readonly CoreManifest[];blocks():readonly CoreManifest[];
+  /** Manifests with their path and export name, in `manifests`/`blocks` order; omit `familyId` for every family. */
+  entries(familyId?:string):readonly GeneratorEntry[];graph:unknown;resolve(from:string,spec:string):unknown;label:string|null};
+export type HistoryLabel = (ctx:GeneratorContext)=>string|null|Promise<string|null>;
+export type GeneratorDefinition = {out:string;
+  /** Kebab-case region id: the generator owns only the lines between whole-line `block-beaver:region ID` and `/block-beaver:region ID` markers in `out` (.md/.html/.htm, .js/.ts family or .css comment style), with no header. */
+  region?:string;inputs:readonly string[];cache?:boolean;generate(ctx:GeneratorContext):string|Promise<string>};
 export declare function defineFamily<const F extends FamilyDefinition>(definition:F): DeepReadonly<F>;
 export declare function defineGenerator<const G extends GeneratorDefinition>(definition:G): DeepReadonly<G>;
 export declare function isFamily(value:unknown): value is FamilyDefinition;

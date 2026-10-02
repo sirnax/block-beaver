@@ -2,9 +2,11 @@ import { posix } from 'node:path';
 import { readProjectFile, writeProjectFiles } from '../project-files.mjs';
 import { indexPath, renderIndex, renderRegistry } from './builtin-generators.mjs';
 import { cachePath, hashInputs, inputsHash, outputHash, readCache, serializeCache } from './cache.mjs';
-import { isFamilyPath } from './config.mjs';
+import { explainMissingOutputs } from './claimed-outputs.mjs';
+import { historyLabelModule, isFamilyPath } from './config.mjs';
 import { discoverFiles, matchGlobs } from './glob.mjs';
 import { appendHistory, historyPath, readHistory, serializeHistory } from './history.mjs';
+import { clashesOf, composeRegions, readRegion, regionBody, regionStyle, regionStyles } from './regions.mjs';
 
 const lineComment = new Set(['.ts', '.tsx', '.mts', '.cts', '.js', '.jsx', '.mjs', '.cjs']);
 const htmlComment = new Set(['.md', '.html']);
@@ -47,6 +49,17 @@ const toDate = (now) => {
   return date;
 };
 
+/** A first line another tool may have written as a header: a comment in the output's own style that mentions generation. */
+const foreignHeader = { line: /^\s*(?:\/\/.*|\/\*.*\*\/\s*)$/, block: /^\s*\/\*.*\*\/\s*$/, html: /^\s*<!--[\s\S]*--!?>\s*$/ };
+const withoutFirstLine = (text) => text.slice(text.indexOf('\n') + 1 || text.length);
+/** Adoption compares bodies only: the header line is the one difference a lossless takeover makes. */
+function bodyIdentical(out, current, expected) {
+  const lf = (text) => text.replace(/\r\n?/g, '\n');
+  const body = withoutFirstLine(lf(expected)), first = lf(current).split('\n', 1)[0];
+  return lf(current) === body || (!!foreignHeader[headerStyle(out)]?.test(first) && /generated/i.test(first) && withoutFirstLine(lf(current)) === body);
+}
+const writes = (item) => item.status === 'stale' || item.status === 'missing' || item.status === 'adopted';
+
 const fileHashesOf = (graph) => Object.fromEntries((graph?.nodes ?? []).filter((node) => node.kind === 'file' && node.hash).map((node) => [node.path, node.hash]));
 
 async function safeRead(root, path) {
@@ -60,6 +73,7 @@ function unsafeReason(claim, protectedPaths) {
   if (protectedPaths.has(folded)) return 'would overwrite a manifest, contract, generator or config file';
   if (folded.split('/').some((part) => ['.claude', '.codex', '.agents', '.cursor'].includes(part))) return 'is inside an agent guidance location';
   if (folded.split('/').some((part) => part === '.git' || part === 'node_modules') || folded.startsWith('.blocks/cache/')) return 'is inside a reserved location';
+  if (claim.region) return regionStyle(claim.out) ? null : `has no region marker style (${regionStyles})`;
   if (headerStyle(claim.out) === null) return 'has no supported header style (.ts .js .css .md .html .json)';
   return null;
 }
@@ -67,21 +81,22 @@ function unsafeReason(claim, protectedPaths) {
 /**
  * Decide every generated output without touching the disk. Order is fixed: registries in
  * family order, index, family generators, top-level generators, extra outputs, history.
+ * `adopt` (true, or output paths) takes over existing outputs that lack a header.
  */
-export async function planGeneration({ root, config = {}, graph, paths, label = null, now, extraOutputs = [], loadFamilies } = {}) {
+export async function planGeneration({ root, config = {}, graph, paths, label = null, now, extraOutputs = [], loadFamilies, adopt = null, readOnly = false } = {}) {
   const stamp = toDate(now);
   const load = loadFamilies ?? (await import('./loader.mjs')).loadFamilies;
   const base = { root, config, paths, fileHashes: fileHashesOf(graph), ...(graph?.resolutionSignature ? { resolutionSignature: graph.resolutionSignature } : {}) };
   const loaded = await load(base);
-  const diagnostics = [...(loaded.diagnostics ?? [])];
+  const diagnostics = await explainMissingOutputs(root, config, [...(loaded.diagnostics ?? [])]);
   const families = [...(loaded.families ?? [])].sort((a, b) => configIndexOf(a) - configIndexOf(b));
   const manifests = loaded.manifests ?? [];
-  const resolvedLabel = label ?? config?.history?.label ?? null;
+  const resolvedLabel = label ?? (typeof config?.history?.label === 'string' ? config.history.label : null);
   // Everything exposed by ctx can affect the result, even when it is not a
   // matched input file. A scan's wall-clock timestamp is not project state.
   const { scannedAt: _scannedAt, ...stableGraph } = graph ?? {};
   const generationContext = { config, label: resolvedLabel, graph: stableGraph,
-    families, manifests: manifests.map((item) => ({ family: item.family, id: item.id, hash: item.hash, value: item.value })) };
+    families, manifests: manifests.map((item) => ({ ref: item.ref, family: item.family, id: item.id, path: item.path, exportName: item.exportName, hash: item.hash, value: item.value })) };
   const asks = (kind) => families.some((family) => family.generators?.includes(kind));
 
   // 1. Claims, in the fixed order.
@@ -94,14 +109,17 @@ export async function planGeneration({ root, config = {}, graph, paths, label = 
   if (asks('index')) claims.push({ key: 'index', kind: 'index', out: indexPath, inputs: [] });
   const customs = (loaded.generators ?? []).filter((info) => info.source === 'custom');
   const known = new Set(families.map((family) => family.id));
-  const customClaim = (info) => ({ key: info.key, kind: 'custom', out: info.out, info, familyId: info.family, inputs: info.inputs });
+  const customClaim = (info) => ({ key: info.key, kind: 'custom', out: info.out, ...(info.region ? { region: info.region } : {}), info, familyId: info.family, inputs: info.inputs });
   for (const family of families) claims.push(...customs.filter((info) => info.family === family.id).map(customClaim));
   claims.push(...customs.filter((info) => !info.family || !known.has(info.family)).map(customClaim));
   for (const extra of extraOutputs) claims.push({ key: extra.key, kind: 'extra', out: extra.out, extra, inputs: extra.inputs ?? [] });
   if (asks('history')) claims.push({ key: 'history', kind: 'history', out: historyPath, inputs: [] });
+  const listed = adopt && adopt !== true ? new Set(adopt) : null;
+  const adopting = (out) => adopt === true || !!listed?.has(out);
+  if (listed) for (const out of listed) if (!claims.some((claim) => claim.out === out)) diagnostics.push(problem('adopt-not-claimed', `${out} is not claimed by any generator, so there is nothing to adopt`, { file: out }));
 
   // 2. Reject unsafe outputs, then collisions, before any generator runs.
-  const protectedPaths = new Set(['.blocks/config.json', '.blocks/WORKFLOW.md', '.blocks/managed-files.json', '.blocks/install.json', '.blocks/baseline.json', '.blocks/view-exports.json', '.blocks/view/exports.json', '.github/copilot-instructions.md', cachePath, ...manifests.map((item) => item.path), ...families.map((family) => family.config?.contract), ...customs.map((info) => info.path), ...(Array.isArray(config?.checks) ? config.checks.filter(isFamilyPath) : [])].filter(Boolean).map((path) => path.toLowerCase()));
+  const protectedPaths = new Set(['.blocks/config.json', '.blocks/WORKFLOW.md', '.blocks/managed-files.json', '.blocks/install.json', '.blocks/baseline.json', '.blocks/view-exports.json', '.blocks/view/exports.json', '.github/copilot-instructions.md', cachePath, ...manifests.map((item) => item.path), ...families.map((family) => family.config?.contract), ...customs.map((info) => info.path), historyLabelModule(config), ...(Array.isArray(config?.checks) ? config.checks.filter(isFamilyPath) : [])].filter(Boolean).map((path) => path.toLowerCase()));
   const safe = [];
   for (const claim of claims) {
     const reason = unsafeReason(claim, protectedPaths);
@@ -115,19 +133,34 @@ export async function planGeneration({ root, config = {}, graph, paths, label = 
   }
   const colliding = new Set();
   for (const group of byOut.values()) {
-    if (group.length < 2) continue;
-    for (const claim of group) colliding.add(claim);
-    diagnostics.push(problem('output-collision', `${group.map((claim) => claim.key).join(' and ')} all write ${group[0].out}`, { file: group[0].out }));
+    for (const clash of clashesOf(group)) {
+      for (const claim of clash) colliding.add(claim);
+      const region = clash.every((claim) => claim.region === clash[0].region) && clash[0].region;
+      diagnostics.push(problem('output-collision', `${clash.map((claim) => claim.key).join(' and ')} all write ${clash[0].out}${region ? ` region ${region}` : ''}`, { file: clash[0].out }));
+    }
   }
   const accepted = safe.filter((claim) => !colliding.has(claim));
 
   // 3. Current bytes on disk for everything still in play.
-  const currents = new Map();
+  const currents = new Map(), regionTexts = new Map();
   const readable = [];
   for (const claim of accepted) {
     const read = await safeRead(root, claim.out);
     if (read.error) diagnostics.push(problem('output-unsafe', `Cannot read ${claim.out}: ${read.error.message}`, { file: claim.out }));
-    else { currents.set(claim.key, read.text); readable.push(claim); }
+    else if (claim.region) {
+      // A region claim's current value is its body; the whole text is kept for splicing.
+      const found = readRegion(read.text, claim);
+      if (found.problem) diagnostics.push(problem(found.problem.code, found.problem.message, { file: claim.out, ...(claim.familyId ? { family: claim.familyId } : {}) }));
+      else { currents.set(claim.key, found.body); regionTexts.set(claim.key, read.text); readable.push(claim); }
+    } else { currents.set(claim.key, read.text); readable.push(claim); }
+  }
+
+  // 3b. A label module runs (in the generate pass) only when an entry will really be appended: not for a read-only
+  // plan (--check, --dry-run, audit), not once the plan already has an error (nothing is written), and not with --label.
+  let labelModule = null, historyLabel = resolvedLabel;
+  if (label === null && !readOnly && !diagnostics.some((item) => item.severity === 'error') && historyLabelModule(config) && currents.has('history')) {
+    try { if (appendHistory(readHistory(currents.get('history')), new Map(manifests.map((item) => [item.ref, item.hash])), { now: stamp }).changed) labelModule = historyLabelModule(config); }
+    catch { /* an unreadable history is reported when it is rendered */ }
   }
 
   // 4. Custom generators: skip those whose inputs, code and output are unchanged.
@@ -149,28 +182,34 @@ export async function planGeneration({ root, config = {}, graph, paths, label = 
   }).map((claim) => claim.key));
   const toRun = wanted.filter((claim) => !skipped.has(claim.key)).map((claim) => claim.key);
   const generated = new Map();
-  if (toRun.length) {
-    const result = await load({ ...base, generate: { keys: toRun, graph, label: resolvedLabel } });
+  if (toRun.length || labelModule) {
+    const result = await load({ ...base, generate: { keys: toRun, graph, label: resolvedLabel, ...(labelModule ? { labelModule } : {}) } });
+    if (labelModule && typeof result.label === 'string') historyLabel = result.label;
     for (const output of result.outputs ?? []) generated.set(output.key, output);
     const outputDiagnostics = new Set((result.outputs ?? []).filter((output) => output.diagnostic).map((output) => JSON.stringify(output.diagnostic)));
-    for (const item of result.diagnostics ?? []) {
+    for (const item of await explainMissingOutputs(root, config, result.diagnostics ?? [])) {
       if (!outputDiagnostics.has(JSON.stringify(item)) && !diagnostics.some((existing) => JSON.stringify(existing) === JSON.stringify(item))) diagnostics.push(item);
     }
   }
 
   // 5. Render every output in claim order.
   const outputs = [];
-  const settled = new Map();
+  const settled = new Map(), regionResults = [];
   for (const claim of readable) {
     const current = currents.get(claim.key);
     let expected;
     try {
       if (claim.kind === 'custom') {
+        if (claim.region && skipped.has(claim.key)) { regionResults.push({ claim, body: current, status: 'cached' }); settled.set(claim.key, current); continue; }
         if (skipped.has(claim.key)) { outputs.push({ key: claim.key, out: claim.out, expected: current, current, status: 'cached' }); settled.set(claim.key, current); continue; }
         const result = generated.get(claim.key);
         if (!result) throw problem('generator-failed', `Generator ${claim.key} produced no output`, { file: claim.info.path });
         if (result.diagnostic) { diagnostics.push(result.diagnostic); continue; }
-        expected = finalize(claim.out, result.content, claim.inputs);
+        if (claim.region) {
+          const made = regionBody(claim, result.content);
+          if (made.problem) throw problem(made.problem.code, made.problem.message, { file: claim.info.path, ...(claim.familyId ? { family: claim.familyId } : {}) });
+          expected = made.body;
+        } else expected = finalize(claim.out, result.content, claim.inputs);
       } else if (claim.kind === 'registry') {
         expected = finalize(claim.out, renderRegistry({ family: claim.family, manifests: manifests.filter((item) => item.family === claim.family.id) }), claim.inputs);
       } else if (claim.kind === 'index') {
@@ -181,7 +220,7 @@ export async function planGeneration({ root, config = {}, graph, paths, label = 
         let doc;
         try { doc = readHistory(current); }
         catch (error) { throw problem('output-conflict', `${historyPath} cannot be extended: ${error.message}`, { file: historyPath }); }
-        const appended = appendHistory(doc, new Map(manifests.map((item) => [item.ref, item.hash])), { label: resolvedLabel, now: stamp });
+        const appended = appendHistory(doc, new Map(manifests.map((item) => [item.ref, item.hash])), { label: historyLabel, now: stamp });
         // An unchanged history keeps its exact bytes.
         expected = appended.changed || current === null || current.trim() === '' ? serializeHistory(appended.doc) : current;
       }
@@ -189,32 +228,34 @@ export async function planGeneration({ root, config = {}, graph, paths, label = 
       diagnostics.push(error?.rule ? error : problem('generator-failed', `${claim.key} failed: ${error?.message ?? error}`, { file: claim.out, ...(claim.familyId ? { family: claim.familyId } : {}) }));
       continue;
     }
+    if (claim.region) { regionResults.push({ claim, body: expected, status: current === expected ? 'fresh' : 'stale' }); settled.set(claim.key, expected); continue; }
     let status;
     if (current === null) status = 'missing';
     else if (current === expected) status = 'fresh';
     else if (headerStyle(claim.out) !== 'none' && !generatedHeader.test(current)) {
-      status = 'conflict';
-      diagnostics.push(problem('output-conflict', `${claim.out} exists and was not generated by block-beaver; refusing to overwrite it`, { file: claim.out }));
+      status = adopting(claim.out) ? 'adopted' : 'conflict';
+      if (status === 'conflict') diagnostics.push(problem('output-conflict', `${claim.out} exists and was not generated by block-beaver; refusing to overwrite it (gen --adopt ${claim.out} takes it over)`, { file: claim.out }));
     } else status = 'stale';
-    outputs.push({ key: claim.key, out: claim.out, expected, current, status });
+    outputs.push({ key: claim.key, out: claim.out, expected, current, status, ...(status === 'adopted' ? { bodyIdentical: bodyIdentical(claim.out, current, expected) } : {}) });
     if (claim.kind === 'custom' && status !== 'conflict') settled.set(claim.key, expected);
   }
+  outputs.push(...composeRegions(regionResults, regionTexts));
 
   // 6. Cache entries for the custom generators that produced a trustworthy output.
   let cacheUpdate = null;
   if (!cacheRead.error) {
     const entries = {};
-    for (const claim of cacheable) if (settled.has(claim.key) && hashes.has(claim.key)) entries[claim.key] = { inputsHash: hashes.get(claim.key), outHash: outputHash(settled.get(claim.key)) };
+    for (const claim of cacheable) if (settled.has(claim.key) && hashes.has(claim.key)) entries[claim.key] = { inputsHash: hashes.get(claim.key), outHash: outputHash(settled.get(claim.key)), out: claim.out };
     const content = serializeCache(entries);
     if (content !== cacheRead.text && (cacheRead.text !== null || Object.keys(entries).length)) cacheUpdate = { path: cachePath, before: cacheRead.text, content };
   }
   return { outputs, diagnostics, cacheUpdate };
 }
 
-/** Write stale and missing outputs (and the cache) through the safe writer; refuse on any error. */
+/** Write stale, missing and adopted outputs (and the cache) through the safe writer; refuse on any error. */
 export async function applyGeneration(root, plan) {
   if (plan.diagnostics.some((item) => item.severity === 'error')) return { written: [], diagnostics: plan.diagnostics };
-  const files = plan.outputs.filter((item) => item.status === 'stale' || item.status === 'missing').map((item) => ({ path: item.out, before: item.current, content: item.expected }));
+  const files = plan.outputs.filter(writes).map((item) => ({ path: item.out, before: item.current, content: item.expected }));
   if (plan.cacheUpdate) files.push({ path: plan.cacheUpdate.path, before: plan.cacheUpdate.before, content: plan.cacheUpdate.content });
   try {
     const changed = await writeProjectFiles(root, files);
@@ -229,6 +270,10 @@ export function checkGeneration(plan) {
   const drift = [];
   for (const output of plan.outputs) {
     if (output.status !== 'missing' && output.status !== 'stale') continue;
+    if (output.regions) {
+      for (const item of output.regions.filter((entry) => entry.status === 'stale')) drift.push(problem('output-stale', `${output.out} region ${item.region} is out of date; run block-beaver gen`, { file: output.out, region: item.region }));
+      continue;
+    }
     const code = output.key === 'history' ? 'history-stale' : output.status === 'missing' ? 'output-missing' : 'output-stale';
     drift.push(problem(code, `${output.out} is ${output.status === 'missing' ? 'missing' : 'out of date'}; run block-beaver gen`, { file: output.out, ...(output.key.startsWith('registry:') ? { family: output.key.slice('registry:'.length) } : {}) }));
   }
@@ -236,7 +281,7 @@ export function checkGeneration(plan) {
 }
 
 /** Outputs a plan would still write. */
-export const changedOutputs = (plan) => plan.outputs.filter((item) => item.status === 'stale' || item.status === 'missing').map((item) => item.out);
+export const changedOutputs = (plan) => plan.outputs.filter(writes).map((item) => item.out);
 
 /** Generation kept changing its own inputs; name the files still changing on the last pass. */
 export const generatorUnstable = (files, passes) => problem('generator-unstable',

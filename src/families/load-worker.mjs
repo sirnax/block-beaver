@@ -9,8 +9,9 @@ import { isSchema, validateManifest } from '../kernel/index.mjs';
 import { ignoreMatcher, loadProjectModel } from '../project-model.mjs';
 import { parseFamiliesConfig, isFamilyGlob, isFamilyPath } from './config.mjs';
 import { canonicalJson, manifestHash } from './canonical.mjs';
-import { captureManifestId, discoverFiles, matchManifests } from './glob.mjs';
+import { captureManifestId, discoverFiles, matchGlobs, matchManifests } from './glob.mjs';
 import { assertSafeSource, installFamilyHooks, runtimeSourcePath } from './hooks.mjs';
+import { regionIdPattern, regionStyle, regionStyles } from './regions.mjs';
 
 const coreKeys = new Set(['id', 'family', 'version', 'name', 'description', 'rationale', 'implementation', 'files']);
 const idPattern = /^[a-z][a-z0-9]*(-[a-z0-9]+)*$/;
@@ -96,11 +97,22 @@ function contractProblems(definition, entry, configured) {
       if (!object(link) || !linkSchema(definition.fields, link.field)) issue('link-path-invalid', 'Link field must walk the schema, marking every array with []', `$.links[${index}].field`);
       const targets = typeof link?.to === 'string' ? [link.to] : link?.to;
       if (!Array.isArray(targets) || !targets.length || targets.some((id) => !configured.has(id)) || new Set(targets).size !== targets.length) issue('link-target-family', 'Link targets must name configured families', `$.links[${index}].to`);
+      else if (link.match !== undefined && targets.length !== 1) issue('link-target-family', 'A join link (match) must name exactly one target family', `$.links[${index}].to`);
+      if (link?.match !== undefined && (typeof link.match !== 'string' || !link.match)) issue('link-path-invalid', 'Link match must be a non-empty path string', `$.links[${index}].match`);
       if (typeof link?.kind !== 'string' || !idPattern.test(link.kind)) issue('contract-invalid', 'Link kind must be kebab-case', `$.links[${index}].kind`);
       else if (reservedLinkKinds.has(link.kind)) issue('contract-invalid', `Link kind ${link.kind} is reserved for source graph relationships`, `$.links[${index}].kind`);
     }
   }
   if (definition.map !== undefined && (!object(definition.map) || ['title', 'blurb'].some((key) => definition.map[key] !== undefined && typeof definition.map[key] !== 'string'))) issue('contract-invalid', 'map title and blurb must be strings', '$.map');
+  else if (definition.map?.group !== undefined) {
+    const group = definition.map.group;
+    if (!object(group) || Object.keys(group).some((key) => !['field', 'join', 'empty', 'format'].includes(key))) issue('contract-invalid', 'map.group must be an object with only field, join, empty and format', '$.map.group');
+    else {
+      if (!linkSchema(definition.fields, group.field)) issue('contract-invalid', 'map.group.field must walk the schema, marking every array with []', '$.map.group.field');
+      for (const key of ['join', 'empty']) if (group[key] !== undefined && typeof group[key] !== 'string') issue('contract-invalid', `map.group.${key} must be a string`, `$.map.group.${key}`);
+      if (group.format !== undefined && (typeof group.format !== 'string' || group.format.split('{value}').length !== 2)) issue('contract-invalid', 'map.group.format must be a string with exactly one {value}', '$.map.group.format');
+    }
+  }
   if (definition.scaffold !== undefined) {
     const scaffold = definition.scaffold;
     if (!object(scaffold) || !Array.isArray(scaffold.files) || !scaffold.files.length || scaffold.files.some((file) => !object(file) || !isFamilyPath(file.path) || typeof file.template !== 'string') || (scaffold.manualSteps !== undefined && (!Array.isArray(scaffold.manualSteps) || scaffold.manualSteps.some((step) => typeof step !== 'string')))) issue('contract-invalid', 'scaffold must contain safe file paths, templates and optional string manual steps', '$.scaffold');
@@ -168,6 +180,14 @@ async function execute(message) {
         result.families.push({ ...jsonCopy(metadata), hasCheck: typeof check === 'function', hasCheckAll: typeof checkAll === 'function', config: familyConfig, floor, configIndex });
       } catch (error) { errorDiagnostic(error, { file: entry.contract, family: entry.id }); }
     }
+    // A join link's match walks the target family's fields, so it is checked once every contract is in; only the family holding the bad link is dropped.
+    const badJoins = new Set();
+    for (const entry of parsed.families) for (const [index, link] of (definitions.get(entry.id)?.links ?? []).entries()) {
+      const target = link.match === undefined ? undefined : definitions.get(typeof link.to === 'string' ? link.to : link.to[0]);
+      if (target && !linkSchema(target.fields, link.match)) { badJoins.add(entry.id); diagnostic('link-path-invalid', `Link match must walk the fields of family ${target.id}, marking every array with []`, { file: entry.contract, family: entry.id, field: `$.links[${index}].match` }); }
+    }
+    for (const id of badJoins) definitions.delete(id);
+    if (badJoins.size) result.families = result.families.filter((family) => !badJoins.has(family.id));
     const candidates = parsed.families.flatMap((entry) => matchManifests(manifestPaths.filter((path) => !ignored(path)), entry).map((path) => ({ entry, path }))).sort((a, b) => compare(a.path, b.path) || a.entry.configIndex - b.entry.configIndex);
     const manifestRefs = new Set();
     for (const { entry, path } of candidates) {
@@ -259,20 +279,40 @@ async function execute(message) {
         if (!object(definition) || definition[Symbol.for('block-beaver.generator')] !== true || !isFamilyPath(definition.out) || !Array.isArray(definition.inputs) || !definition.inputs.length || definition.inputs.some((input) => !isFamilyGlob(input)) || !definition.inputs.some((input) => !input.startsWith('!')) || typeof definition.generate !== 'function' || (definition.cache !== undefined && typeof definition.cache !== 'boolean')) {
           diagnostic('generator-invalid', 'Generator needs a defineGenerator() default, safe out, nonempty input globs and generate function', { file: path, ...(family ? { family } : {}) }); continue;
         }
+        if (definition.region !== undefined && (typeof definition.region !== 'string' || !regionIdPattern.test(definition.region) || !regionStyle(definition.out))) {
+          diagnostic('generator-invalid', `Generator region must be a kebab-case id, and a region out needs a comment style (${regionStyles})`, { file: path, ...(family ? { family } : {}) }); continue;
+        }
         const { generate: fn, ...metadata } = definition;
         try { jsonCopy(metadata); } catch { diagnostic('generator-invalid', 'Generator metadata must contain only JSON data', { file: path, ...(family ? { family } : {}) }); continue; }
         const key = `custom:${path}`;
-        result.generators.push({ key, source: 'custom', ...(family ? { family } : {}), path, out: definition.out, inputs: [...definition.inputs], cache: definition.cache !== false, closureHash: '' });
+        result.generators.push({ key, source: 'custom', ...(family ? { family } : {}), path, out: definition.out, ...(definition.region === undefined ? {} : { region: definition.region }), inputs: [...definition.inputs], cache: definition.cache !== false, closureHash: '' });
         generatorFunctions.set(key, fn);
       } catch (error) { errorDiagnostic(error, { file: path, ...(family ? { family } : {}) }); }
     }
     if (result.families.some((family) => family.generators?.includes('history'))) result.generators.push({ key: 'history', source: 'builtin', out: '.blocks/history.json', inputs: allInputs, cache: true, closureHash: '' });
     if (generate) {
       const manifests = readonly(result.manifests.map((item) => item.value));
+      const entries = readonly(result.manifests.map(({ ref, family, id, path, exportName, hash }, index) => ({ ref, family, id, path, exportName, hash, value: manifests[index] })));
       const selected = new Set(generate.keys);
       let ctx, contextError;
-      try { ctx = readonly({ config: jsonCopy(config), families: jsonCopy(result.families), manifests: (family) => readonly(manifests.filter((item) => item.family === family)), blocks: () => manifests, graph: jsonCopy(generate.graph), resolve: (from, spec) => readonly(project.resolveImport(from, spec, { mode: 'import' })), label: generate.label ?? null }); }
+      const buildContext = (label) => readonly({ config: jsonCopy(config), families: jsonCopy(result.families), manifests: (family) => readonly(manifests.filter((item) => item.family === family)), blocks: () => manifests, entries: (family) => family === undefined ? entries : readonly(entries.filter((item) => item.family === family)), graph: jsonCopy(generate.graph), resolve: (from, spec) => readonly(project.resolveImport(from, spec, { mode: 'import' })), label });
+      try { ctx = buildContext(generate.label ?? null); }
       catch (error) { contextError = new TypeError(`Generator context must contain only JSON data: ${error.message}`); }
+      // A derived history label labels the history entry only; ctx.label stays the non-derived value for every generator.
+      if (generate.labelModule && !contextError) {
+        const path = generate.labelModule, before = new Set(loadedFiles);
+        try {
+          const exports = await importSource(path);
+          if (typeof exports.default !== 'function') throw new TypeError('its default export must be a function (ctx) => string | null');
+          if (exports.inputs !== undefined && (!Array.isArray(exports.inputs) || exports.inputs.some((input) => !isFamilyGlob(input)))) throw new TypeError('inputs must be an array of repository-relative globs');
+          const value = await exports.default(ctx);
+          if (value !== null && typeof value !== 'string') throw new TypeError(`it returned ${typeof value}; the label must be a string or null`);
+          for (const input of matchGlobs(discovered, exports.inputs ?? [])) loadedFiles.add(input);
+          result.label = value;
+        } catch (error) { diagnostic('history-label-invalid', `History label module ${path} is invalid: ${error?.message || String(error)}`, { file: path, field: '$.history.label.module' }, 'family-drift'); }
+        // Files only the label module reached (its import closure and declared inputs), so ordinary loads can keep tracking them.
+        result.labelFiles = [...loadedFiles].filter((file) => !before.has(file));
+      }
       for (const info of result.generators) {
         if (info.source !== 'custom' || !selected.has(info.key)) continue;
         try {

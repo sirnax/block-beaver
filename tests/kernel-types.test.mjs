@@ -6,7 +6,7 @@ import { fileURLToPath } from 'node:url';
 test('kernel declarations infer family schemas and registry literal ids', () => {
   const file = fileURLToPath(new URL('../src/kernel/type-fixture.ts',import.meta.url)).replaceAll('\\', '/');
   const source = `
-    import {s, type Infer, type ManifestOf, type LoadedManifest, defineFamily, createRegistry, compose, validate} from 'block-beaver/kernel';
+    import {s, type Infer, type ManifestOf, type LoadedManifest, type GeneratorDefinition, defineFamily, defineGenerator, type GeneratorEntry, createRegistry, compose, validate} from 'block-beaver/kernel';
     const schema = s.object({state:s.enum(['open','closed']), label:s.optional(s.string()), values:s.array(s.integer()), nullable:s.nullable(s.string())});
     const value: Infer<typeof schema> = {state:'open',values:[1],nullable:null};
     s.withDefault(s.string(),'default');
@@ -22,6 +22,9 @@ test('kernel declarations infer family schemas and registry literal ids', () => 
     // @ts-expect-error required family fields survive inference
     const absent: ManifestOf<typeof family> = {id:'a',family:'service',version:1,name:'a',description:'a',rationale:'a',implementation:{kind:'none'}};
     const arms = defineFamily({id:'arms',fields:s.object({}),implementation:['module','none','plan'],dataKinds:['plan'],implementationFields:{module:s.object({export:s.optional(s.string()),loading:s.optional(s.enum(['eager','lazy']))}),plan:s.object({steps:s.integer()})}});
+    defineFamily({id:'grouped',fields:s.object({modes:s.array(s.string())}),implementation:['none'],map:{title:'Grouped',group:{field:'modes[]',join:' + ',empty:'internal',format:'{value} mode'}}});
+    // @ts-expect-error a map group needs its field
+    defineFamily({id:'grouped',fields:s.object({}),implementation:['none'],map:{group:{join:','}}});
     const base = {id:'a',family:'arms',version:1,name:'a',description:'a',rationale:'a'} as const;
     defineFamily({id:'set',fields:s.object({}),implementation:['none'],checkAll:(manifests,{all,get}) => manifests.length || all('other').length || get('other:x') ? [] : [{message:'empty',code:'empty'}]});
     defineFamily({id:'plans',fields:s.object({}),implementation:['plan'],dataKinds:['plan'],check:(manifest: LoadedManifest) => manifest.implementation.kind === 'plan' ? [] : [{path:'$.implementation',message:'plan only'}]});
@@ -47,6 +50,16 @@ test('kernel declarations infer family schemas and registry literal ids', () => 
     const badId: Id = 'c';
     // @ts-expect-error registry values are deeply readonly
     registry.all[0].implementation.kind = 'none';
+    defineGenerator({out:'gen/imports.ts',inputs:['catalog/*.ts'],generate:(ctx) => ctx.entries('unit').map((entry: GeneratorEntry) => "import { " + entry.exportName + " } from './" + entry.path + "'; // " + entry.ref + entry.family + entry.id + entry.hash + entry.value.id).join('\\n') + ctx.entries().length});
+    // @ts-expect-error generator entries are read-only
+    defineGenerator({out:'gen/x.ts',inputs:['catalog/*.ts'],generate:(ctx) => { ctx.entries()[0].path = 'moved.ts'; return ''; }});
+    // @ts-expect-error an entry's family filter is a family id string
+    defineGenerator({out:'gen/y.ts',inputs:['catalog/*.ts'],generate:(ctx) => String(ctx.entries(1))});
+    const badge = defineGenerator({out:'README.md',region:'roadmap-badge',inputs:['docs/*.md'],generate:() => 'badge'});
+    const owned: string | undefined = badge.region;
+    const regionId: Required<GeneratorDefinition>['region'] = 'roadmap-badge';
+    // @ts-expect-error a region is a kebab-case string id
+    const numbered: Required<GeneratorDefinition>['region'] = 1;
     const result = validate(schema,{});
     if (result.valid) { const state: 'open'|'closed' = result.value.state; }
   `;

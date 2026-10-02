@@ -3,7 +3,11 @@ import assert from 'node:assert/strict';
 import { mkdtemp, mkdir, readFile, readdir, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
+import { symlink } from 'node:fs/promises';
+import { fileURLToPath } from 'node:url';
+import { spawnSync } from 'node:child_process';
 import { generateProject, importProjectHistory } from '../src/families/commands.mjs';
+import { parseFamiliesConfig } from '../src/families/config.mjs';
 import { HistoryError, appendHistory, historySnapshots, importHistory, readHistory, replayHistory, serializeHistory } from '../src/families/history.mjs';
 
 const NOW = new Date('2026-10-01T12:00:00Z');
@@ -258,4 +262,153 @@ test('snapshots keep removed blocks as gone until they return', () => {
     [{ id: 'block:a:one', family: 'a', name: 'one' }, { id: 'block:b:two', family: 'b', name: 'two' }],
     [{ id: 'block:b:two', family: 'b', name: 'two' }],
   ]);
+});
+
+// ---- derived history labels (history.label = { module }), real loader and real child process ----
+
+const packageRoot = fileURLToPath(new URL('../', import.meta.url));
+const unitManifest = (name) => `export const alpha = {id:'alpha',family:'unit',version:1,name:'${name}',description:'Fixture',rationale:'Because',implementation:{kind:'none'},tag:'green'} as const;\n`;
+const labelModule = `import { readFileSync, appendFileSync } from 'node:fs';
+export default (ctx) => { appendFileSync('calls.log', 'x'); if (ctx.label !== null) throw new Error('label must be null'); return 'at ' + readFileSync('ROADMAP.md', 'utf8').trim() + ' ' + ctx.blocks().length; };
+export const inputs = ['ROADMAP.md'];
+`;
+
+async function labelRepo(t, { label = { module: '.blocks/history-label.mjs' }, module = labelModule, extra = {}, generators = [] } = {}) {
+  const root = await repo(t, {
+    'package.json': '{"name":"label-fixture","type":"module"}\n',
+    '.blocks/config.json': JSON.stringify({ schemaVersion: 1, apps: [{ id: 'site', root: '.', entries: [] }], families: [{ id: 'unit', contract: 'definitions/unit.ts', manifests: 'catalog/*.entry.ts' }], history: { label }, ...(generators.length ? { generators: generators.map(([path]) => path) } : {}) }),
+    'definitions/unit.ts': `import { defineFamily, s } from 'block-beaver/kernel'; export default defineFamily({id:'unit',fields:s.object({tag:s.string()}),implementation:['none'],generators:['history']});\n`,
+    'catalog/alpha.entry.ts': unitManifest('Alpha'),
+    'ROADMAP.md': 'step 1\n',
+    ...(module === null ? {} : { '.blocks/history-label.mjs': module }),
+    ...Object.fromEntries(generators), ...extra,
+  });
+  await mkdir(join(root, 'node_modules'), { recursive: true });
+  await symlink(packageRoot, join(root, 'node_modules/block-beaver'), 'dir');
+  return root;
+}
+const historyOf = async (root) => JSON.parse(await readFile(join(root, '.blocks/history.json'), 'utf8'));
+const calls = async (root) => readFile(join(root, 'calls.log'), 'utf8').catch(() => '');
+
+test('a label module derives the label of an appended entry from a repo file, and an unchanged set never evaluates it', async (t) => {
+  const root = await labelRepo(t);
+  const first = await generateProject(root, { now: NOW });
+  assert.equal(first.ok, true, JSON.stringify(first.diagnostics));
+  assert.deepEqual((await historyOf(root)).entries.map((item) => item.label), ['at step 1 1']);
+  assert.equal(await calls(root), 'x');
+
+  const bytes = await readFile(join(root, '.blocks/history.json'), 'utf8');
+  await writeFile(join(root, 'ROADMAP.md'), 'step 2\n');
+  const same = await generateProject(root, { now: new Date('2030-01-01T00:00:00Z') });
+  assert.deepEqual([same.ok, same.written], [true, []]);
+  assert.equal(await readFile(join(root, '.blocks/history.json'), 'utf8'), bytes, 'identical bytes');
+  assert.equal(await calls(root), 'x', 'the module was not evaluated for an unchanged block set');
+  const unchangedCheck = await generateProject(root, { check: true });
+  assert.deepEqual([unchangedCheck.ok, await calls(root)], [true, 'x']);
+
+  await writeFile(join(root, 'catalog/alpha.entry.ts'), unitManifest('Alpha two'));
+  const check = await generateProject(root, { check: true });
+  assert.deepEqual([check.ok, check.diagnostics.map((item) => item.code), await calls(root)], [false, ['history-stale'], 'x'], 'check reports the stale history but never evaluates the module');
+  const dry = await generateProject(root, { dryRun: true, now: NOW });
+  assert.deepEqual([dry.ok, dry.written, await calls(root)], [true, [], 'x'], 'dry-run does not evaluate the module either');
+  assert.equal((await historyOf(root)).entries.length, 1);
+  await writeFile(join(root, 'catalog/broken.entry.ts'), "export const broken = {id:'broken',family:'unit'} as const;\n");
+  const fatal = await generateProject(root, { now: NOW });
+  assert.equal(fatal.ok, false);
+  assert.deepEqual([fatal.written, await calls(root), (await historyOf(root)).entries.length], [[], 'x', 1], 'a plan with an error never evaluates the module and writes nothing');
+  await rm(join(root, 'catalog/broken.entry.ts'));
+  const changed = await generateProject(root, { now: NOW });
+  assert.equal(changed.ok, true, JSON.stringify(changed.diagnostics));
+  assert.deepEqual((await historyOf(root)).entries.map((item) => item.label), ['at step 1 1', 'at step 2 1']);
+});
+
+test('--label overrides the module, which then never runs; a string history.label is unchanged', async (t) => {
+  const root = await labelRepo(t);
+  const done = await generateProject(root, { now: NOW, label: 'by hand' });
+  assert.equal(done.ok, true);
+  assert.deepEqual((await historyOf(root)).entries.map((item) => item.label), ['by hand']);
+  assert.equal(await calls(root), '', 'the module did not run');
+
+  const plain = await labelRepo(t, { label: 'static', module: null });
+  assert.equal((await generateProject(plain, { now: NOW })).ok, true);
+  assert.deepEqual((await historyOf(plain)).entries.map((item) => item.label), ['static']);
+});
+
+const labelGenerator = ['generators/seen.mjs', `import { appendFileSync } from 'node:fs'; import { defineGenerator } from 'block-beaver/kernel'; export default defineGenerator({out:'generated/seen.json',inputs:['catalog/*.entry.ts'],generate:(ctx)=>{ appendFileSync('seen.log', String(ctx.label) + '\\n'); return JSON.stringify({label:ctx.label}); }});\n`];
+
+test('the derived label labels the history entry only: generators never see it, and gen settles with a clean check', async (t) => {
+  const root = await labelRepo(t, { generators: [labelGenerator] });
+  const seen = async () => (await readFile(join(root, 'seen.log'), 'utf8')).trim().split('\n');
+  const first = await generateProject(root, { now: NOW });
+  assert.equal(first.ok, true, JSON.stringify(first.diagnostics));
+  const baseline = await labelRepo(t, { label: 'static', module: null, generators: [labelGenerator] });
+  assert.equal((await generateProject(baseline, { now: NOW })).ok, true);
+  const plain = (await readFile(join(baseline, 'seen.log'), 'utf8')).trim().split('\n').length;
+  assert.deepEqual(await seen(), Array(plain).fill('null'), 'as many generator passes as a plain string label needs, never the derived label');
+  assert.deepEqual(JSON.parse(await readFile(join(root, 'generated/seen.json'), 'utf8')), { label: null });
+  assert.equal((await generateProject(root, { check: true })).ok, true, 'a settled repository checks clean');
+
+  await writeFile(join(root, 'catalog/alpha.entry.ts'), unitManifest('Alpha two'));
+  await writeFile(join(root, 'ROADMAP.md'), 'step 2\n');
+  const again = await generateProject(root, { now: NOW });
+  assert.equal(again.ok, true, JSON.stringify(again.diagnostics));
+  await writeFile(join(baseline, 'catalog/alpha.entry.ts'), unitManifest('Alpha two'));
+  assert.equal((await generateProject(baseline, { now: NOW })).ok, true);
+  const plainTotal = (await readFile(join(baseline, 'seen.log'), 'utf8')).trim().split('\n').length;
+  assert.equal((await seen()).length, plainTotal, 'the same number of generator passes as a plain string label');
+  assert.ok((await seen()).every((item) => item === 'null'));
+  assert.deepEqual(again.written.sort(), ['.blocks/history.json'].sort(), 'only the history was written; the generator output stayed fresh');
+  assert.deepEqual((await historyOf(root)).entries.map((item) => item.label), ['at step 1 1', 'at step 2 1']);
+  assert.equal((await generateProject(root, { check: true })).ok, true);
+});
+
+test('kit create with a label module persists no derived label in generator output', async (t) => {
+  const contract = `import { defineFamily, s } from 'block-beaver/kernel'; export default defineFamily({id:'unit',fields:s.object({tag:s.string()}),implementation:['none'],generators:['history'],scaffold:{files:[{path:'catalog/{{id}}.entry.ts',template:'export default { id: {{json.id}}, family: {{json.family}}, version: 1, name: {{json.name}}, description: {{json.description}}, rationale: {{json.rationale}}, implementation: { kind: "none" }, tag: "green" };\\n'}]}});\n`;
+  const root = await labelRepo(t, { generators: [labelGenerator], extra: { 'definitions/unit.ts': contract } });
+  const cli = (...args) => spawnSync(process.execPath, [join(packageRoot, 'bin/block-beaver.mjs'), ...args, '--root', root], { encoding: 'utf8', timeout: 60000 });
+  assert.equal(JSON.parse(cli('gen').stdout).ok, true);
+  const created = cli('kit', 'create', 'unit', 'beta', '--json', '{"name":"Beta","description":"Second","rationale":"Because"}');
+  assert.equal(created.status, 0, created.stdout + created.stderr);
+  assert.deepEqual(JSON.parse(await readFile(join(root, 'generated/seen.json'), 'utf8')), { label: null });
+  assert.equal((await historyOf(root)).entries.length, 2, 'the new block appended an entry');
+  const check = cli('gen', '--check');
+  assert.equal(check.status, 0, check.stdout + check.stderr);
+  assert.equal(JSON.parse(check.stdout).ok, true);
+});
+
+test('an invalid label module is a history-label-invalid error and nothing is written', async (t) => {
+  const cases = {
+    'missing file': null,
+    'default is not a function': 'export default "nope";\n',
+    'throws': 'export default () => { throw new Error("boom"); };\n',
+    'returns a non-string': 'export default () => 7;\n',
+    'bad inputs': 'export default () => "x"; export const inputs = "ROADMAP.md";\n',
+  };
+  for (const [name, module] of Object.entries(cases)) {
+    const root = await labelRepo(t, { module });
+    const result = await generateProject(root, { now: NOW });
+    assert.equal(result.ok, false, name);
+    const found = result.diagnostics.find((item) => item.code === 'history-label-invalid');
+    assert.ok(found, `${name}: ${JSON.stringify(result.diagnostics)}`);
+    assert.deepEqual([found.rule, found.severity, found.file, found.field], ['family-drift', 'error', '.blocks/history-label.mjs', '$.history.label.module'], name);
+    assert.deepEqual(result.written, [], name);
+    assert.deepEqual((await listing(root)).filter((path) => path.startsWith('.blocks/') && path !== '.blocks/config.json' && path !== '.blocks/history-label.mjs'), [], `${name}: nothing written`);
+  }
+});
+
+test('a label module is a protected path and a loader tracked input', async (t) => {
+  const root = await labelRepo(t, { generators: [['generators/clash.mjs', `import { defineGenerator } from 'block-beaver/kernel'; export default defineGenerator({out:'.blocks/history-label.mjs',inputs:['catalog/*.entry.ts'],generate:()=>'x'});\n`]] });
+  const result = await generateProject(root, { now: NOW });
+  assert.equal(result.ok, false);
+  assert.ok(result.diagnostics.some((item) => item.code === 'output-unsafe'), JSON.stringify(result.diagnostics));
+  assert.match(await readFile(join(root, '.blocks/history-label.mjs'), 'utf8'), /readFileSync/, 'the module was not overwritten');
+});
+
+test('history.label config validation names the field', () => {
+  const issues = (label) => parseFamiliesConfig({ history: { label } }).diagnostics.map((item) => [item.rule, item.code, item.field]);
+  assert.deepEqual(issues('text'), []);
+  assert.deepEqual(issues({ module: '.blocks/label.ts' }), []);
+  const bad = [['$.history.label', 7], ['$.history.label', []], ['$.history.label', null], ['$.history.label', { module: 'a.ts', extra: 1 }], ['$.history.label.module', {}], ['$.history.label.module', { module: '/abs.ts' }], ['$.history.label.module', { module: '../up.ts' }], ['$.history.label.module', { module: 5 }]];
+  for (const [field, label] of bad) assert.deepEqual(issues(label), [['config-valid', 'family-path-invalid', field]], JSON.stringify(label));
+  assert.deepEqual(parseFamiliesConfig({ history: 5 }).diagnostics.map((item) => item.field), ['$.history.label']);
 });

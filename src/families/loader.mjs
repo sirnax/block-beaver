@@ -6,7 +6,7 @@ import { join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { promisify } from 'node:util';
 import { canonicalJson } from './canonical.mjs';
-import { isFamilyPath, parseFamiliesConfig } from './config.mjs';
+import { historyLabelModule, isFamilyPath, parseFamiliesConfig } from './config.mjs';
 import { discoverFiles, matchManifests } from './glob.mjs';
 
 const cliVersion = createRequire(import.meta.url)('../../package.json').version;
@@ -114,27 +114,30 @@ export async function loadFamilies({ root: inputRoot, config, paths, resolutionS
   const ignored = Array.isArray(config?.ignore) && config.ignore.length ? (await import('../project-model.mjs')).ignoreMatcher(config.ignore) : () => false;
   const manifestCandidates = matchingPaths.filter((path) => !ignored(path));
   const matched = parsed.families.flatMap((entry) => matchManifests(manifestCandidates, entry));
-  const direct = [...parsed.families.map((entry) => entry.contract), ...parsed.families.flatMap((entry) => entry.generators || []), ...parsed.generators, ...(Array.isArray(config.checks) ? config.checks.filter(isFamilyPath) : []), ...matched];
+  const direct = [...parsed.families.map((entry) => entry.contract), ...parsed.families.flatMap((entry) => entry.generators || []), ...parsed.generators, ...(Array.isArray(config.checks) ? config.checks.filter(isFamilyPath) : []), ...[historyLabelModule(config)].filter(Boolean), ...matched];
   const state = rootCache(root);
   let loaderUrl;
   try { loaderUrl = await resolveLoader(root, parsed.loader); }
   catch (error) { return { key: '', ...empty([...parsed.diagnostics, { rule: 'config-valid', code: 'loader-package-missing', severity: 'error', file: '.blocks/config.json', field: '$.loader', message: `Cannot resolve loader package ${config.loader}: ${error.message}` }]) }; }
-  const tracked = [...new Set([...state.loadedFiles, ...direct])].sort();
+  const labelFiles = historyLabelModule(config) ? state.labelFiles ?? [] : [];
+  const tracked = [...new Set([...state.loadedFiles, ...labelFiles, ...direct])].sort();
   const hashes = await contentHashes(root, tracked, fileHashes);
   const key = cacheKey({ config, resolutionSignature, matched, hashes, loaderUrl, paths: matchingPaths });
   if (!generate && state.results.has(key)) return structuredClone(state.results.get(key));
   if (!generate && state.inflight.has(key)) return structuredClone(await state.inflight.get(key));
   const load = async () => {
-    if (!parsed.families.length && !parsed.generators.length && !(Array.isArray(config.checks) && config.checks.length)) return { key, ...empty(parsed.diagnostics), discoveredFiles: matchingPaths, ...(generate ? { outputs: [] } : {}) };
+    if (!parsed.families.length && !parsed.generators.length && !(Array.isArray(config.checks) && config.checks.length) && !historyLabelModule(config)) return { key, ...empty(parsed.diagnostics), discoveredFiles: matchingPaths, ...(generate ? { outputs: [] } : {}) };
     // The worker gets both the exact resolver ownership list and discovery inputs.
     const result = await spawnLoad({ root, paths: resolverPaths, config, generate, loaderUrl });
     state.loadedFiles = [...new Set([...result.loadedFiles, ...Object.keys(result.fileHashes || {})])];
     // The hook hashes the exact bytes supplied to Node. Re-reading here could
     // cache an older evaluated value under newer bytes saved while it was loading.
     const initialHashes = new Map(hashes.map((item) => [item[0], item]));
-    const finalHashes = [...new Set([...direct, ...state.loadedFiles])].sort().map((path) => [path, result.fileHashes?.[path] ?? initialHashes.get(path)?.[1] ?? 'missing:unread', fileHashes[path] ?? null]);
+    const finalHashes = [...new Set([...direct, ...labelFiles, ...state.loadedFiles])].sort().map((path) => [path, result.fileHashes?.[path] ?? initialHashes.get(path)?.[1] ?? 'missing:unread', fileHashes[path] ?? null]);
     const finalKey = cacheKey({ config, resolutionSignature, matched, hashes: finalHashes, loaderUrl, paths: matchingPaths });
-    const { cacheable, ...publicResult } = result;
+    const { cacheable, labelFiles: reachedByLabel, ...publicResult } = result;
+    // Kept across ordinary loads: the label module is only evaluated in a generate pass, but editing what it reads must move the key.
+    if (reachedByLabel) state.labelFiles = reachedByLabel;
     const completed = { key: finalKey, ...publicResult, discoveredFiles: matchingPaths };
     if (!generate && cacheable !== false) {
       state.results.set(finalKey, structuredClone(completed));

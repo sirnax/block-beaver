@@ -1,9 +1,9 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdir, writeFile, readFile, symlink } from 'node:fs/promises';
+import { mkdir, writeFile, readFile, symlink, chmod, rm } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import { execFileSync, spawnSync } from 'node:child_process';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 import { installProject } from '../src/install.mjs';
 import { installationFixture, packageRunner } from './helpers/install-fixture.mjs';
 
@@ -211,8 +211,8 @@ const commitAll = (root, message) => { git(root, 'add', '-A'); git(root, ...iden
 const registryImporting = authored('task', 'draw', { kind: 'image', node: 'painter', implementation: none })
   .replace('export const draw = ', "import { nodes } from '../../node/registry.out.ts';\nexport const draw = ").replace('"node":"painter"', '"node":nodes.get(\'painter\').id');
 
-async function installedProject(t) {
-  const root = await adoptedProject(t);
+async function installedProject(t, overrides = {}) {
+  const root = await adoptedProject(t, overrides);
   const { version } = JSON.parse(await readFile(join(packageRoot, 'package.json'), 'utf8'));
   const installed = await installProject(root, { version, agents: [], runner: packageRunner(root) });
   assert.equal(installed.complete, true, JSON.stringify(installed.conflicts));
@@ -316,3 +316,417 @@ test('a cross-family check failure names its files in audit and gen --check and 
   assert.equal(repaired.status, 0, repaired.stdout);
 });
 
+// ---- 0.7.0: the same system adopts the next layer (headerless outputs, join links, groups, regions, labels, map-only view, quiet audit) ----
+
+const toolFamily = `import { defineFamily, s } from 'block-beaver/kernel';
+export default defineFamily({
+  id: 'tool',
+  fields: s.object({ modes: s.array(s.string()), lane: s.string() }),
+  implementation: ['none'],
+  map: { group: { field: 'modes[]', join: ' + ', empty: 'no modes' } },
+  generators: ['registry', 'index'],
+});\n`;
+// The contract imports a generated tokens file, so the file has to exist before the first load.
+const jobFamily = `import { defineFamily, s } from 'block-beaver/kernel';
+import { lanes } from '../generated/tokens.ts';
+export default defineFamily({
+  id: 'job',
+  fields: s.object({ tools: s.string(), lane: s.enum(lanes) }),
+  implementation: ['none'],
+  links: [{ field: 'tools', to: 'tool', match: 'modes[]', kind: 'can-use' }],
+  map: { group: { field: 'lane' } },
+  generators: ['registry', 'index'],
+});\n`;
+// The contract imports the generated tool registry.
+const releaseFamily = `import { defineFamily, s } from 'block-beaver/kernel';
+import { tools } from '../tool/registry.out.ts';
+export default defineFamily({
+  id: 'release',
+  fields: s.object({ owner: s.enum(tools.all.map((tool) => tool.id)), meta: s.optional(s.object({ area: s.nullable(s.string()) })) }),
+  implementation: ['none'],
+  map: { group: { field: 'meta.area', empty: 'unassigned', format: 'Area: {value}' } },
+  generators: ['registry', 'index', 'history'],
+});\n`;
+const tokensGenerator = `import { defineGenerator } from 'block-beaver/kernel';
+export default defineGenerator({ out: 'src/blocks/generated/tokens.ts', inputs: ['src/blocks/tool/manifests/*.tool.ts'], generate(ctx) {
+  const lanes = [...new Set(ctx.manifests('tool').map((tool) => tool.lane))].sort();
+  return 'export const lanes = [' + lanes.map((lane) => "'" + lane + "'").join(', ') + '] as const;\\n';
+} });\n`;
+const importsGenerator = `import { posix } from 'node:path';
+import { defineGenerator } from 'block-beaver/kernel';
+const out = 'src/blocks/generated/imports.ts';
+export default defineGenerator({ out, inputs: ['src/blocks/*/manifests/*.ts'], generate(ctx) {
+  return ctx.entries().map((entry) => "import { " + entry.exportName + " } from '" + posix.relative(posix.dirname(out), entry.path) + "';").join('\\n') + '\\n';
+} });\n`;
+const badgeGenerator = `import { readFileSync } from 'node:fs';
+import { defineGenerator } from 'block-beaver/kernel';
+export default defineGenerator({ out: 'README.md', region: 'badge', inputs: ['docs/roadmap.md'], generate(ctx) {
+  return '[' + readFileSync('docs/roadmap.md', 'utf8').split('\\n')[0] + '](./docs/roadmap.md) - ' + ctx.blocks().length + ' blocks';
+} });\n`;
+const labelModule = `import { readFileSync } from 'node:fs';
+export default (ctx) => 'roadmap: ' + readFileSync('docs/roadmap.md', 'utf8').split('\\n')[0] + ' / ' + ctx.blocks().length + ' blocks';
+export const inputs = ['docs/roadmap.md'];\n`;
+
+const config070 = {
+  ...config,
+  families: [...config.families,
+    { id: 'tool', contract: 'src/blocks/tool/tool.family.ts', manifests: 'src/blocks/tool/manifests/*.tool.ts', registry: { out: 'src/blocks/tool/registry.out.ts', exportName: 'tools', importExtension: '.ts' } },
+    { id: 'job', contract: 'src/blocks/job/job.family.ts', manifests: 'src/blocks/job/manifests/*.job.ts', registry: { out: 'src/blocks/job/registry.out.ts', exportName: 'jobs', importExtension: '.ts' } },
+    { id: 'release', contract: 'src/blocks/release/release.family.ts', manifests: 'src/blocks/release/manifests/*.release.ts', registry: { out: 'src/blocks/release/registry.out.ts', exportName: 'releases', importExtension: '.ts' } }],
+  map: { floors: ['task', 'node', 'model', 'job', 'tool', 'release'] },
+  generators: [...config.generators, 'src/blocks/generators/tokens.ts', 'src/blocks/generators/imports.ts', 'src/blocks/generators/badge.ts'],
+  history: { label: { module: '.blocks/history-label.mjs' } },
+};
+// What a hand-built generator wrote before adoption: the same bodies Block Beaver now generates, without its header.
+const preexistingTokens = "export const lanes = ['fast', 'slow'] as const;\n";
+const preexistingToolRegistry = `import { createRegistry } from 'block-beaver/kernel';
+import { archive as m0 } from './manifests/archive.tool.ts';
+import { create_note as m1 } from './manifests/create-note.tool.ts';
+import { idle as m2 } from './manifests/idle.tool.ts';
+import { search as m3 } from './manifests/search.tool.ts';
+
+export const tools = createRegistry('tool', [m0, m1, m2, m3] as const);
+export type ToolManifest = (typeof tools)['all'][number];
+export type ToolId = ToolManifest['id'];
+`;
+const readme070 = '# Host\n\nHand-written intro.\n\n<!-- block-beaver:region badge -->\nbadge pending\n<!-- /block-beaver:region badge -->\n\nHand-written footer.\n';
+const files070 = {
+  '.blocks/config.json': JSON.stringify(config070, null, 2) + '\n',
+  'README.md': readme070,
+  'docs/roadmap.md': 'Milestone one\n',
+  '.blocks/history-label.mjs': labelModule,
+  'src/blocks/tool/tool.family.ts': toolFamily,
+  'src/blocks/job/job.family.ts': jobFamily,
+  'src/blocks/release/release.family.ts': releaseFamily,
+  'src/blocks/tool/manifests/search.tool.ts': authored('tool', 'search', { modes: ['chat'], lane: 'fast', implementation: none }),
+  'src/blocks/tool/manifests/create-note.tool.ts': authored('tool', 'create-note', { modes: ['assistant', 'chat'], lane: 'slow', implementation: none }),
+  'src/blocks/tool/manifests/archive.tool.ts': authored('tool', 'archive', { modes: ['assistant'], lane: 'slow', implementation: none }),
+  'src/blocks/tool/manifests/idle.tool.ts': authored('tool', 'idle', { modes: [], lane: 'fast', implementation: none }),
+  'src/blocks/job/manifests/summarise.job.ts': authored('job', 'summarise', { tools: 'assistant', lane: 'fast', implementation: none }),
+  'src/blocks/job/manifests/draft.job.ts': authored('job', 'draft', { tools: 'chat', lane: 'fast', implementation: none }),
+  'src/blocks/job/manifests/plain.job.ts': authored('job', 'plain', { tools: 'none', lane: 'slow', implementation: none }),
+  'src/blocks/release/manifests/v1.release.ts': authored('release', 'v1', { owner: 'search', meta: { area: 'core' }, implementation: none }),
+  'src/blocks/release/manifests/v2.release.ts': authored('release', 'v2', { owner: 'archive', meta: { area: null }, implementation: none }),
+  'src/blocks/release/manifests/v3.release.ts': authored('release', 'v3', { owner: 'idle', implementation: none }),
+  'src/blocks/generators/tokens.ts': tokensGenerator,
+  'src/blocks/generators/imports.ts': importsGenerator,
+  'src/blocks/generators/badge.ts': badgeGenerator,
+  // Both files predate Block Beaver: no header, and the contracts above import them at load time.
+  'src/blocks/generated/tokens.ts': preexistingTokens,
+  'src/blocks/tool/registry.out.ts': preexistingToolRegistry,
+};
+const oldFamilies = ['node', 'model', 'task'];
+const oldOutputs = ['src/blocks/node/registry.out.ts', 'src/blocks/model/registry.out.ts', 'src/blocks/task/registry.out.ts', 'src/blocks/coverage.json'];
+
+// An installed 0.7.0-style system whose pre-existing outputs have been taken over by one `gen --adopt`.
+async function settled070(t, overrides = {}) {
+  const root = await installedProject(t, { ...files070, ...overrides });
+  const adopted = json(root, ['gen', '--adopt']);
+  assert.equal(adopted.ok, true, JSON.stringify(adopted.diagnostics));
+  assert.equal(run(root, ['gen', '--check']).status, 0);
+  return root;
+}
+const stripHeader = (text) => text.replace(/^\/\/ generated by block-beaver[^\n]*\n/, '');
+
+test('0.7.0: gen --adopt takes over headerless outputs that contracts import, and a deleted import names its importer', async (t) => {
+  const root = await installedProject(t, files070);
+  const tokensPath = 'src/blocks/generated/tokens.ts', registryPath = 'src/blocks/tool/registry.out.ts';
+
+  // Without --adopt both are output-conflicts and nothing at all is written.
+  const refused = run(root, ['gen']);
+  assert.equal(refused.status, 2, refused.stdout + refused.stderr);
+  const refusal = JSON.parse(refused.stdout);
+  assert.equal(refusal.ok, false);
+  assert.deepEqual(refusal.diagnostics.filter((item) => item.code === 'output-conflict').map((item) => item.file).sort(), [tokensPath, registryPath]);
+  assert.deepEqual(refusal.written, []);
+  assert.equal(await read(root, tokensPath), preexistingTokens);
+  assert.equal(await read(root, registryPath), preexistingToolRegistry);
+  assert.equal(await read(root, 'README.md'), readme070);
+  for (const path of ['.blocks/index.json', 'src/blocks/node/registry.out.ts']) await assert.rejects(read(root, path), { code: 'ENOENT' }, path);
+  assert.equal(run(root, ['gen', '--adopt', '--check']).status, 1, '--check never adopts');
+
+  // A dry run reports what would be adopted and writes nothing.
+  const dry = json(root, ['gen', '--adopt', '--dry-run']);
+  assert.equal(dry.ok, true, JSON.stringify(dry.diagnostics));
+  assert.deepEqual(dry.written, []);
+  const adoptedOutputs = dry.outputs.filter((output) => output.status === 'adopted');
+  assert.deepEqual(adoptedOutputs.map((output) => [output.out, output.bodyIdentical]).sort(), [[tokensPath, true], [registryPath, true]]);
+  assert.equal(await read(root, tokensPath), preexistingTokens);
+  assert.equal(await read(root, registryPath), preexistingToolRegistry);
+  await assert.rejects(read(root, '.blocks/index.json'), { code: 'ENOENT' });
+
+  // The real adoption keeps the bodies, adds only the header, and settles everything else in the same run.
+  const adopted = json(root, ['gen', '--adopt']);
+  assert.equal(adopted.ok, true, JSON.stringify(adopted.diagnostics));
+  assert.deepEqual(adopted.diagnostics, []);
+  for (const path of [tokensPath, registryPath, '.blocks/index.json', 'src/blocks/job/registry.out.ts', 'src/blocks/generated/imports.ts', 'README.md', ...oldOutputs]) assert.ok(adopted.written.includes(path), path);
+  assert.equal(await read(root, tokensPath), `// generated by block-beaver from src/blocks/tool/manifests/*.tool.ts; do not edit\n${preexistingTokens}`);
+  assert.equal(await read(root, registryPath), `// generated by block-beaver from src/blocks/tool/manifests/*.tool.ts; do not edit\n${preexistingToolRegistry}`);
+  const checked = run(root, ['gen', '--check']);
+  assert.equal(checked.status, 0, checked.stdout);
+  assert.deepEqual(JSON.parse(checked.stdout).pending, []);
+  assert.deepEqual(json(root, ['gen']).written, [], 'a second gen writes nothing');
+  assert.deepEqual(json(root, ['gen', '--adopt']).written, [], 'adopting again is a no-op');
+
+  // #41: ctx.entries gives every manifest's path and export name in manifest order.
+  const index = JSON.parse(await read(root, '.blocks/index.json'));
+  assert.deepEqual([...new Set(index.map((item) => item.family))], ['node', 'model', 'task', 'tool', 'job', 'release']);
+  const expectedImports = index.map((item) => `import { ${item.id.replace(/-/g, '_')} } from '../${item.family}/manifests/${item.id}.${item.family}.ts';`);
+  assert.equal(expectedImports.length, 16);
+  assert.equal(await read(root, 'src/blocks/generated/imports.ts'), `// generated by block-beaver from src/blocks/*/manifests/*.ts; do not edit\n${expectedImports.join('\n')}\n`);
+  assert.deepEqual(expectedImports.slice(0, 2), ["import { painter } from '../node/manifests/painter.node.ts';", "import { reader } from '../node/manifests/reader.node.ts';"], 'families keep config order, then id order');
+
+  // Deleting an output that a contract imports names the output and the importer; gen cannot recreate it.
+  const saved = await read(root, tokensPath);
+  await rm(join(root, tokensPath));
+  const lost = run(root, ['gen']);
+  assert.equal(lost.status, 2, lost.stdout);
+  const missing = JSON.parse(lost.stdout).diagnostics.find((item) => item.code === 'output-required-for-load');
+  assert.ok(missing, lost.stdout);
+  assert.deepEqual([missing.severity, missing.file, missing.output], ['error', 'src/blocks/job/job.family.ts', tokensPath]);
+  assert.match(missing.message, /src\/blocks\/job\/job\.family\.ts/);
+  assert.match(missing.message, new RegExp(`gen --adopt ${tokensPath.replaceAll('.', '\\.')}`));
+  assert.equal(JSON.parse(lost.stdout).diagnostics.some((item) => item.code === 'unresolved-import'), false);
+  await assert.rejects(read(root, tokensPath), { code: 'ENOENT' });
+  await writeFile(join(root, tokensPath), saved);
+  const savedRegistry = await read(root, registryPath);
+  await rm(join(root, registryPath));
+  const lostRegistry = JSON.parse(run(root, ['gen', '--check']).stdout).diagnostics.find((item) => item.code === 'output-required-for-load');
+  assert.deepEqual([lostRegistry.file, lostRegistry.output], ['src/blocks/release/release.family.ts', registryPath]);
+  await writeFile(join(root, registryPath), savedRegistry);
+  assert.equal(run(root, ['gen', '--check']).status, 0, 'restoring both files settles the system again');
+});
+
+test('0.7.0: join links and per-family groups reach graph.json and the map, and families without new keys keep their bytes', async (t) => {
+  const root = await settled070(t);
+  json(root, ['update']);
+  const graph = JSON.parse(await read(root, '.blocks/view/graph.json'));
+  const blockNodes = graph.nodes.filter((node) => node.kind === 'block');
+  const nodeOf = (id) => blockNodes.find((node) => node.id === id);
+
+  // #36: task.tools (a scalar mode) joins to every tool whose modes[] holds it; no match, no edge.
+  const edges = graph.edges.filter((edge) => edge.link && edge.kind === 'can-use').map((edge) => [edge.from, edge.to, edge.fields]);
+  assert.deepEqual(edges, [
+    ['block:job:draft', 'block:tool:create-note', ['$.tools']], ['block:job:draft', 'block:tool:search', ['$.tools']],
+    ['block:job:summarise', 'block:tool:archive', ['$.tools']], ['block:job:summarise', 'block:tool:create-note', ['$.tools']],
+  ]);
+  assert.deepEqual(nodeOf('block:job:plain').dependencies, [], 'a value no tool serves links nothing');
+  assert.deepEqual(nodeOf('block:job:summarise').dependencies, ['block:tool:archive', 'block:tool:create-note']);
+  assert.deepEqual(graph.familyDiagnostics, []);
+  assert.deepEqual(graph.families.find((item) => item.id === 'job').linkKinds, ['can-use']);
+
+  // #37: each family groups its own floor: array-joined with an empty fallback, a scalar, and nested-nullable with empty and format.
+  const groups = (family) => Object.fromEntries(blockNodes.filter((node) => node.family === family).map((node) => [node.id.split(':')[2], node.group]));
+  assert.deepEqual(groups('tool'), { archive: 'assistant', 'create-note': 'assistant + chat', idle: 'no modes', search: 'chat' });
+  assert.deepEqual(groups('job'), { draft: 'fast', plain: 'slow', summarise: 'fast' });
+  assert.deepEqual(groups('release'), { v1: 'Area: core', v2: 'Area: unassigned', v3: 'Area: unassigned' });
+  assert.deepEqual(graph.families.find((item) => item.id === 'release').group, { field: 'meta.area', empty: 'unassigned', format: 'Area: {value}' });
+  const html = await read(root, '.blocks/view/index.html');
+  const labels = [...html.matchAll(/<text class="group-label"[^>]*>([^<]*)<\/text>/g)].map((match) => match[1]);
+  for (const label of ['fast · 2', 'slow · 1', 'assistant · 1', 'assistant + chat · 1', 'no modes · 1', 'chat · 1', 'Area: core · 1', 'Area: unassigned · 2']) assert.ok(labels.includes(label), `${label} in ${JSON.stringify(labels)}`);
+  assert.deepEqual([...html.matchAll(/class="floor-title" x="\d+" y="\d+">([^<]+)</g)].map((match) => match[1]), ['task', 'node', 'model', 'job', 'tool', 'release', 'Ordinary code']);
+
+  // Compatibility: the families that use none of the new keys keep the bytes the 0.6.0 part asserts.
+  for (const family of oldFamilies) assert.ok(blockNodes.filter((node) => node.family === family).every((node) => !Object.hasOwn(node, 'group')), `${family} gets no group key`);
+  for (const family of graph.families.filter((item) => oldFamilies.includes(item.id))) assert.equal(Object.hasOwn(family, 'group'), false);
+  const oldIndex = JSON.parse(await read(root, '.blocks/index.json')).filter((item) => oldFamilies.includes(item.family));
+  assert.equal(JSON.stringify(oldIndex, null, 2) + '\n', expectedIndex);
+  assert.equal(await read(root, 'src/blocks/coverage.json'), expectedCoverage);
+  const baseline = await adoptedProject(t);
+  assert.equal(json(baseline, ['gen']).ok, true);
+  json(baseline, ['update']);
+  for (const path of oldOutputs.slice(0, 3)) assert.equal(await read(root, path), await read(baseline, path), path);
+  const baseGraph = JSON.parse(await read(baseline, '.blocks/view/graph.json'));
+  const oldBlocks = (g) => g.nodes.filter((node) => node.kind === 'block' && oldFamilies.includes(node.family));
+  assert.deepEqual(oldBlocks(graph), oldBlocks(baseGraph));
+  const oldEdges = (g) => g.edges.filter((edge) => oldFamilies.some((family) => edge.from.startsWith(`block:${family}:`)));
+  assert.deepEqual(oldEdges(graph), oldEdges(baseGraph));
+
+  // The whole system settles and passes a strict audit.
+  commitAll(root, 'adopt 0.7.0 families');
+  const audit = run(root, ['audit', '--strict']);
+  assert.equal(audit.status, 0, audit.stdout + audit.stderr);
+  const report = JSON.parse(audit.stdout);
+  assert.equal(report.pass, true);
+  for (const id of ['config-valid', 'manifest-valid', 'family-valid', 'family-drift', 'view-fresh']) {
+    const rule = report.rules.find((item) => item.id === id);
+    assert.deepEqual([id, rule.pass, rule.skipped !== true, rule.findings], [id, true, true, []]);
+  }
+  assert.equal(run(root, ['gen', '--check']).status, 0);
+  assert.equal(git(root, 'status', '--short'), '');
+
+  // The failing side: a join path or group field that the schema does not have is rejected, naming the contract.
+  const original = await read(root, 'src/blocks/job/job.family.ts');
+  for (const [broken, field] of [[original.replace("match: 'modes[]'", "match: 'nope[]'"), /links\[0\]\.match/], [original.replace("group: { field: 'lane' }", "group: { field: 'nope' }"), /map\.group\.field/]]) {
+    await writeFile(join(root, 'src/blocks/job/job.family.ts'), broken);
+    const rejected = run(root, ['gen', '--check']);
+    assert.equal(rejected.status, 2, rejected.stdout);
+    const found = JSON.parse(rejected.stdout).diagnostics.filter((item) => item.file === 'src/blocks/job/job.family.ts');
+    assert.ok(found.length >= 1 && found.some((item) => field.test(item.field)), rejected.stdout);
+  }
+  await writeFile(join(root, 'src/blocks/job/job.family.ts'), original);
+  assert.equal(run(root, ['gen', '--check']).status, 0);
+});
+
+test('0.7.0: a README region and a derived history label follow the roadmap file without touching hand-written text', async (t) => {
+  const root = await settled070(t);
+  const badge = (milestone, blocks = 16) => `[${milestone}](./docs/roadmap.md) - ${blocks} blocks`;
+  const readmeWith = (text, before = '# Host\n\nHand-written intro.\n\n', after = '\n\nHand-written footer.\n') => `${before}<!-- block-beaver:region badge -->\n${text}\n<!-- /block-beaver:region badge -->${after}`;
+  const history = async () => JSON.parse(await read(root, '.blocks/history.json'));
+
+  // #39: gen filled only the region; the hand text and the markers kept their bytes and the file has no header.
+  assert.equal(await read(root, 'README.md'), readmeWith(badge('Milestone one')));
+  assert.deepEqual((await history()).entries.map((entry) => [entry.label, entry.source]), [['roadmap: Milestone one / 16 blocks', 'gen']], '#40: the first entry carries the derived label');
+
+  // Hand edits outside the region never drift.
+  const edited = readmeWith(badge('Milestone one'), '# Host, renamed\n\nA longer hand-written intro.\n\nWith another paragraph.\n\n', '\n\nChanged footer.\n');
+  await writeFile(join(root, 'README.md'), edited);
+  const quiet = run(root, ['gen', '--check']);
+  assert.equal(quiet.status, 0, quiet.stdout);
+  assert.deepEqual(JSON.parse(quiet.stdout).pending, []);
+  assert.deepEqual(json(root, ['gen']).written, []);
+  assert.equal(await read(root, 'README.md'), edited);
+
+  // A roadmap change drifts only the region, and gen rewrites only the region.
+  await writeFile(join(root, 'docs/roadmap.md'), 'Milestone two\n');
+  const drift = run(root, ['gen', '--check']);
+  assert.equal(drift.status, 2, drift.stdout);
+  assert.deepEqual(JSON.parse(drift.stdout).diagnostics.map((item) => [item.code, item.file, item.region]), [['output-stale', 'README.md', 'badge']]);
+  assert.equal(await read(root, 'README.md'), edited, 'check never writes');
+  const historyBytes = await read(root, '.blocks/history.json');
+  const written = json(root, ['gen']);
+  assert.equal(written.ok, true, JSON.stringify(written.diagnostics));
+  assert.deepEqual(written.written, ['README.md']);
+  assert.equal(await read(root, 'README.md'), readmeWith(badge('Milestone two'), '# Host, renamed\n\nA longer hand-written intro.\n\nWith another paragraph.\n\n', '\n\nChanged footer.\n'));
+  assert.equal(await read(root, '.blocks/history.json'), historyBytes, '#40: an unchanged block set appends nothing and keeps identical bytes');
+  assert.equal(run(root, ['gen', '--check']).status, 0);
+
+  // #40: a changed manifest appends one entry labelled from the roadmap as it is now.
+  await writeFile(join(root, 'src/blocks/job/manifests/plain.job.ts'), authored('job', 'plain', { tools: 'none', lane: 'slow', implementation: none, name: 'plain, renamed' }));
+  const changed = json(root, ['gen']);
+  assert.equal(changed.ok, true, JSON.stringify(changed.diagnostics));
+  assert.ok(changed.written.includes('.blocks/history.json') && changed.written.includes('.blocks/index.json'));
+  assert.deepEqual((await history()).entries.map((entry) => entry.label), ['roadmap: Milestone one / 16 blocks', 'roadmap: Milestone two / 16 blocks']);
+  const settledHistory = await read(root, '.blocks/history.json');
+  assert.deepEqual(json(root, ['gen']).written, []);
+  assert.equal(await read(root, '.blocks/history.json'), settledHistory, 'an unchanged set keeps exact bytes');
+  assert.equal(run(root, ['gen', '--check']).status, 0);
+  json(root, ['update']);
+  assert.deepEqual(JSON.parse(await read(root, '.blocks/view/graph.json')).history.map((entry) => entry.label), ['roadmap: Milestone one / 16 blocks', 'roadmap: Milestone two / 16 blocks']);
+
+  // Broken markers write nothing at all, not even the other outputs that would change.
+  const broken = (await read(root, 'README.md')).replace('<!-- /block-beaver:region badge -->', 'oops');
+  await writeFile(join(root, 'README.md'), broken);
+  await writeFile(join(root, 'docs/roadmap.md'), 'Milestone three\n');
+  const refused = run(root, ['gen']);
+  assert.equal(refused.status, 2, refused.stdout);
+  assert.deepEqual(JSON.parse(refused.stdout).diagnostics.map((item) => [item.code, item.file]), [['region-missing', 'README.md']]);
+  assert.equal(JSON.parse(refused.stdout).written.length, 0);
+  assert.equal(await read(root, 'README.md'), broken);
+  assert.equal(await read(root, '.blocks/history.json'), settledHistory);
+});
+
+test('0.7.0: a map-detail view export is far smaller than the full one, drops files and evidence, and fails under a too-small budget', async (t) => {
+  // Ordinary code behind the entry gives the full graph file-level nodes and evidence to carry.
+  const library = Object.fromEntries(Array.from({ length: 480 }, (_, index) => [`src/lib/m${index}.ts`, `${index ? `import { v${index - 1} } from './m${index - 1}.ts';\n` : ''}export const v${index} = ${index ? `v${index - 1} + 1` : 0};\n`]));
+  const root = await settled070(t, { ...library, 'src/main.ts': "import { reader } from './nodes/reader.ts';\nimport { v479 } from './lib/m479.ts';\nexport const main = [reader, v479];\n" });
+  const payload = async (path) => (await import(pathToFileURL(join(root, path)).href + `?${Math.random()}`)).BLOCK_BEAVER_VIEW;
+  const full = json(root, ['view', '--format', 'module', '--out', 'src/view-full.mjs']);
+  assert.equal(full.detail, 'full');
+  const fullView = await payload('src/view-full.mjs');
+  const limit = Math.floor(full.bytes / 4);
+  const map = json(root, ['view', '--format', 'module', '--out', 'src/view-map.mjs', '--detail', 'map', '--max-bytes', String(limit)]);
+  assert.equal(map.detail, 'map', JSON.stringify(map) + ' full ' + full.bytes);
+  assert.ok(map.bytes <= limit && map.bytes * 4 <= full.bytes, `map ${map.bytes} bytes against full ${full.bytes}`);
+  const mapView = await payload('src/view-map.mjs');
+  const embedded = (html) => JSON.parse(html.match(/<script type="application\/json" id="family-map-data"[^>]*>([\s\S]*?)<\/script>/)[1]);
+  const [fullData, mapData] = [embedded(fullView), embedded(mapView)];
+  assert.ok(fullData.nodes.some((node) => node.kind === 'file') && fullData.edges.some((edge) => edge.evidence?.text), 'the full export carries file nodes and evidence text');
+  assert.equal(mapData.nodes.some((node) => node.kind === 'file'), false, 'no file-level nodes in the map payload');
+  assert.equal(mapData.edges.some((edge) => edge.evidence?.text !== undefined), false, 'no evidence text in the map payload');
+  assert.ok(mapData.edges.length > 0 && mapData.edges.every((edge) => typeof edge.evidence?.file === 'string'), 'links keep their evidence file and line');
+  assert.deepEqual(mapData.nodes.filter((node) => node.kind === 'block').map((node) => [node.id, node.group]), fullData.nodes.filter((node) => node.kind === 'block').map((node) => [node.id, node.group]), 'the same blocks and groups');
+  assert.deepEqual(mapData.edges.map((edge) => [edge.from, edge.to, edge.kind]), fullData.edges.filter((edge) => edge.from.startsWith('block:') && edge.to.startsWith('block:')).map((edge) => [edge.from, edge.to, edge.kind]), 'the same links');
+  assert.deepEqual(JSON.parse(await read(root, '.blocks/view-exports.json')), [{ path: 'src/view-full.mjs', format: 'module' }, { path: 'src/view-map.mjs', format: 'module', detail: 'map' }]);
+
+  // What the map draws is the same: floors, bricks, group labels and links.
+  const floors = (html) => [...html.matchAll(/class="floor-title" x="\d+" y="\d+">([^<]+)</g)].map((match) => match[1]);
+  const bricks = (html) => [...html.matchAll(/data-map-id="(block:[^"]+)"/g)].map((match) => match[1]);
+  const groupLabels = (html) => [...html.matchAll(/<text class="group-label"[^>]*>([^<]*)<\/text>/g)].map((match) => match[1]);
+  const links = (html) => [...html.matchAll(/class="family-link[^"]*"[^>]*>/g)].length;
+  assert.deepEqual(floors(mapView), ['task', 'node', 'model', 'job', 'tool', 'release', 'Ordinary code']);
+  assert.deepEqual(floors(mapView), floors(fullView));
+  assert.equal(bricks(mapView).length, 16);
+  assert.deepEqual(bricks(mapView), bricks(fullView));
+  assert.deepEqual(groupLabels(mapView), groupLabels(fullView));
+  assert.ok(groupLabels(mapView).includes('Area: unassigned · 2'));
+  assert.equal(links(mapView), links(fullView));
+  assert.ok(links(mapView) >= 4, 'the join links are drawn');
+  for (const id of ['search', 'app-filter', 'cross-app-links']) assert.ok(mapView.includes(`id="${id}"`), id);
+
+  // A budget below the map's size fails deterministically and writes neither the module nor its registry entry.
+  const registry = await read(root, '.blocks/view-exports.json');
+  const tight = run(root, ['view', '--format', 'module', '--out', 'src/view-tiny.mjs', '--detail', 'map', '--max-bytes', String(map.bytes - 1)]);
+  assert.equal(tight.status, 2, tight.stdout + tight.stderr);
+  const failure = JSON.parse(tight.stdout);
+  assert.equal(failure.ok, false);
+  assert.equal(failure.error.code, 'view-too-large');
+  assert.deepEqual(failure.error.details, { output: 'src/view-tiny.mjs', bytes: map.bytes, limit: map.bytes - 1, detail: 'map' });
+  await assert.rejects(read(root, 'src/view-tiny.mjs'), { code: 'ENOENT' });
+  assert.equal(await read(root, '.blocks/view-exports.json'), registry);
+  assert.equal(run(root, ['view', '--format', 'module', '--out', 'src/view-tiny.mjs', '--detail', 'map', '--max-bytes', String(map.bytes - 1)]).stdout, tight.stdout, 'the same failure every time');
+
+  // gen keeps both registered modules at their recorded detail.
+  assert.equal(run(root, ['gen', '--check']).status, 0);
+  const again = json(root, ['view', '--format', 'module', '--out', 'src/view-map.mjs']);
+  assert.deepEqual([again.detail, again.bytes, again.changed], ['map', map.bytes, []]);
+});
+
+async function hookEnv(root) {
+  const bin = join(root, '..', 'shim-bin');
+  await mkdir(bin, { recursive: true });
+  await writeFile(join(bin, 'npx'), `#!/bin/sh\nshift 2\nexec "${process.execPath}" "${cli}" "$@"\n`);
+  await chmod(join(bin, 'npx'), 0o755);
+  return { ...process.env, PATH: `${bin}:${process.env.PATH}` };
+}
+const hookCommit = (root, env, message) => {
+  const result = spawnSync('git', ['-C', root, ...identity, 'commit', '-q', '-m', message], { env, encoding: 'utf8', timeout: 120_000 });
+  assert.equal(result.error, undefined, result.error?.message);
+  return { status: result.status, lines: `${result.stdout}${result.stderr}`.split('\n').filter((line) => line.trim() !== '') };
+};
+
+test('0.7.0: the managed pre-commit prints one line when a staged audit passes and each error once, with its rule id, when it fails', { skip: process.platform === 'win32' }, async (t) => {
+  const root = await settled070(t);
+  json(root, ['update']);
+  // A real host ignores node_modules; the staged snapshot only holds tracked files.
+  await writeFile(join(root, '.gitignore'), `${await read(root, '.gitignore').catch(() => '')}node_modules/\n`);
+  commitAll(root, 'adopt 0.7.0 families');
+  const env = await hookEnv(root);
+  assert.match(await read(root, '.git/hooks/pre-commit'), /audit --staged --format summary --root \./);
+
+  // A passing staged audit: the commit prints one line and nothing else.
+  await writeFile(join(root, 'notes.md'), 'one\n');
+  git(root, 'add', 'notes.md');
+  const passed = hookCommit(root, env, 'add notes');
+  assert.equal(passed.status, 0, passed.lines.join('\n'));
+  assert.equal(passed.lines.length, 1, passed.lines.join('\n'));
+  assert.match(passed.lines[0], /^block-beaver audit: pass \(\d+ files?, 0 errors\)$/);
+  assert.equal(git(root, 'log', '--format=%s', '-1').trim(), 'add notes');
+
+  // A failing one: kind "audio" is served by no model, so the cross-family check fails in the staged snapshot.
+  await writeFile(join(root, 'src/blocks/task/manifests/draw.task.ts'), authored('task', 'draw', { kind: 'audio', node: 'painter', implementation: none }));
+  git(root, 'add', 'src/blocks/task/manifests/draw.task.ts');
+  const failed = hookCommit(root, env, 'break draw');
+  assert.notEqual(failed.status, 0, 'a failing audit blocks the commit');
+  assert.equal(git(root, 'log', '--format=%s', '-1').trim(), 'add notes');
+  assert.match(failed.lines[0], /^block-beaver audit: fail \(\d+ files?, (\d+) errors?\)$/);
+  const errors = failed.lines.slice(1).filter((line) => !line.startsWith('warning · '));
+  assert.equal(errors.length, Number(failed.lines[0].match(/, (\d+) error/)[1]), 'one line per error');
+  assert.equal(new Set(failed.lines).size, failed.lines.length, `every line appears once: ${failed.lines.join('\n')}`);
+  assert.ok(errors.every((line) => /^[a-z][a-z-]* · /.test(line)), `each error starts with its rule id: ${errors.join('\n')}`);
+  const family = errors.filter((line) => line.startsWith('family-valid · '));
+  assert.equal(family.length, 1, errors.join('\n'));
+  assert.match(family[0], /src\/blocks\/task\/manifests\/draw\.task\.ts/);
+  assert.match(family[0], /no model serves/);
+  assert.equal(failed.lines.some((line) => /^\s*[{[]|"rules"/.test(line)), false, 'no JSON report in hook output');
+});

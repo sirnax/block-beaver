@@ -60,6 +60,13 @@ test('generated headers, manifests, contracts, generators, and allowed globs are
   assert.equal(lint(root, ['widget:alpha'], {}, 'src/main.ts', '// ordinary source\n').length, 1);
 });
 
+test('a configured history label module is skipped', async (t) => {
+  const root = await fixture(t);
+  await writeFile(join(root, '.blocks/config.json'), JSON.stringify({ history: { label: { module: 'tools/history-label.ts' } } }));
+  assert.equal(lint(root, ['widget:alpha'], {}, 'tools/history-label.ts').length, 0);
+  assert.equal(lint(root, ['widget:alpha'], {}, 'tools/other.ts').length, 1);
+});
+
 test('baseline suppresses only allowed occurrences and reports opportunities to lower counts', async (t) => {
   const root = await fixture(t);
   await writeFile(join(root, '.blocks/baseline.json'), JSON.stringify({ lint: { 'no-block-id-literal': { 'src/main.ts': 2 } } }));

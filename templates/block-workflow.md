@@ -33,6 +33,8 @@ Run `block-beaver update --root .` after source or registry changes and after in
 
 The view is gitignored by default, so the pre-commit audit regenerates it from the staged snapshot and a commit does not need a manual `update`; a committed view is still compared byte for byte. After adding `ignore` entries or covering legacy files, run `block-beaver baseline --lower --root .` (or `upgrade`) to record the lower ratchet counts; the baseline never rises.
 
+The managed pre-commit hook and CI print a one-line summary (`block-beaver audit: fail (N files, E errors)`, then one line per error with its fix). Run `block-beaver audit --root .` for the full JSON report.
+
 `block-beaver start --root .` installs the project integration if needed, serves the map locally, and refreshes it while the process runs. Keep that session running during development for automatic view updates. The HTML file can also be opened offline; reopen or reload it after an update. Report the affected block, verification results, and regenerated view when finishing a task.
 
 Use the app filter and health reports to inspect cross-app links and files shared by
@@ -48,6 +50,8 @@ all expected generated outputs in the reviewed change. `block-beaver kit validat
 reports manual steps, and then generates outputs; use `--dry-run` to inspect scaffold
 paths first. Use `block-beaver history import FILE --map MAPPING.json` only with an
 explicit mapping from old keys to `family:id`.
+
+Taking over an output that already exists: `gen` refuses a claimed output that has no Block Beaver header and reports `output-conflict`. Review with `block-beaver gen --adopt --dry-run`, then run `block-beaver gen --adopt PATH` (or bare `--adopt` for every conflicting output). `--check` never adopts. If a contract or check imports a generated output and the file was deleted, loading fails with `output-required-for-load` before `gen` can recreate it. Restore it with `git restore PATH`, then `gen --adopt PATH` if it predates Block Beaver. Do not delete outputs that contracts or checks import.
 
 ## Enforcement levels
 

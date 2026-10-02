@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { writeFile, mkdir, chmod, readFile } from 'node:fs/promises';
 import { join } from 'node:path';
-import { execFileSync } from 'node:child_process';
+import { execFileSync, spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { installProject } from '../src/install.mjs';
 import { auditProject } from '../src/compliance.mjs';
@@ -47,7 +47,11 @@ test('a pre-commit audit in a linked worktree leaves the host repository untouch
   await writeFile(join(worktree, 'notes.md'), 'two\n');
   run(worktree, 'add', 'notes.md');
   const status = run(root, 'status', '--porcelain');
-  commit(worktree, 'change in worktree', env);
+  const committed = spawnSync('git', ['-C', worktree, ...identity, 'commit', '-m', 'change in worktree'], { env, encoding: 'utf8' });
+  assert.equal(committed.status, 0, committed.stderr);
+  // git reports the hook's output on stderr; the summary is the only audit output and it is one line.
+  assert.deepEqual(`${committed.stdout}${committed.stderr}`.split('\n').filter((line) => line.includes('block-beaver audit')), ['block-beaver audit: pass (1 file, 0 errors)']);
+  assert.ok(!/unreviewed-source|"rules"/.test(`${committed.stdout}${committed.stderr}`));
   assert.equal(run(root, 'config', '--get', 'core.bare'), 'false');
   assert.equal(run(root, 'remote', 'get-url', 'origin'), origin);
   assert.equal(run(root, 'status', '--porcelain'), status);

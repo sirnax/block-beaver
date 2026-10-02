@@ -23,14 +23,15 @@ export function readCache(text) {
   const entries = {};
   for (const key of Object.keys(parsed.entries).sort(compare)) {
     const entry = parsed.entries[key];
-    if (object(entry) && typeof entry.inputsHash === 'string' && typeof entry.outHash === 'string') entries[key] = { inputsHash: entry.inputsHash, outHash: entry.outHash };
+    if (object(entry) && typeof entry.inputsHash === 'string' && typeof entry.outHash === 'string') entries[key] = { inputsHash: entry.inputsHash, outHash: entry.outHash, ...(typeof entry.out === 'string' ? { out: entry.out } : {}) };
   }
   return { ...empty, entries };
 }
 
 export function serializeCache(entries) {
   const sorted = {};
-  for (const key of Object.keys(entries).sort(compare)) sorted[key] = { inputsHash: entries[key].inputsHash, outHash: entries[key].outHash };
+  // `out` lets a later load that fails on a deleted output name it without running code.
+  for (const key of Object.keys(entries).sort(compare)) sorted[key] = { inputsHash: entries[key].inputsHash, outHash: entries[key].outHash, ...(typeof entries[key].out === 'string' ? { out: entries[key].out } : {}) };
   return `${JSON.stringify({ schemaVersion: 1, blockBeaver: blockBeaverVersion, entries: sorted }, null, 2)}\n`;
 }
 

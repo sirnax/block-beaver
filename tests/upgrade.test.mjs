@@ -1,10 +1,12 @@
 import test from 'node:test';
+import { createHash } from 'node:crypto';
 import assert from 'node:assert/strict';
 import { cp, mkdir, readFile, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { execFileSync } from 'node:child_process';
 import { installProject, upgradeProject } from '../src/install.mjs';
 import { auditProject } from '../src/compliance.mjs';
+import { initializeProject } from '../src/project-integration.mjs';
 import { installationFixture, packageRunner, snapshot } from './helpers/install-fixture.mjs';
 
 function withoutScanTime(files) {
@@ -248,4 +250,131 @@ test('upgrade lowers the baseline after an ignore entry, reports it in the plan 
   assert.deepEqual(restored.baseline.lowered, {});
   assert.equal(restored.changed.includes('.blocks/baseline.json'), false);
   assert.equal(JSON.parse(await readFile(join(root, '.blocks/baseline.json'), 'utf8')).coverage, initial.coverage - 2, 'Removing the ignore entry never raises the baseline.');
+});
+
+test('a 0.6.0 hash-trusted hook and CI workflow are rewritten to the summary format without a conflict', async (t) => {
+  const root = await installationFixture(t), runner = packageRunner(root);
+  await mkdir(join(root, '.github/workflows'), { recursive: true });
+  await writeFile(join(root, '.github/workflows/ci.yml'), 'on: push\n');
+  await installProject(root, { agents: ['codex'], version: '0.6.0', runner });
+  await upgradeProject(root, { version: '0.6.0', runner }); // the runner's lockfile now exists, so the CI install command settles
+  const paths = ['.git/hooks/pre-commit', '.github/workflows/block-beaver.yml'];
+  // The 0.6.0 bytes differ only by the missing flag, and the managed-region hash covers the region without its hash line.
+  const rehash = (text) => text.replace(/(# block-beaver:start\n)(# block-beaver:hash )[0-9a-f]{64}\n([\s\S]*?# block-beaver:end\n)/, (_, start, label, rest) => `${start}${label}${createHash('sha256').update(start + rest).digest('hex')}\n${rest}`);
+  const current = {};
+  for (const path of paths) {
+    current[path] = await readFile(join(root, path), 'utf8');
+    assert.equal(rehash(current[path]), current[path], `${path} hash helper matches the real hash`);
+    assert.match(current[path], /--format summary/);
+    const old = rehash(current[path].replaceAll(' --format summary', ''));
+    assert.ok(!old.includes('--format summary') && old !== current[path]);
+    await writeFile(join(root, path), old);
+  }
+  const upgraded = await upgradeProject(root, { version: '0.6.0', runner });
+  assert.deepEqual(upgraded.conflicts, []);
+  assert.equal(upgraded.complete, true);
+  for (const path of paths) assert.equal(await readFile(join(root, path), 'utf8'), current[path], path);
+  const repeat = await upgradeProject(root, { version: '0.6.0', runner });
+  assert.deepEqual(repeat.conflicts, []);
+  assert.deepEqual(repeat.changed, []);
+});
+
+test('an owner edit inside a 0.6.0 hook region still conflicts instead of being rewritten', async (t) => {
+  const root = await installationFixture(t), runner = packageRunner(root);
+  await installProject(root, { agents: ['codex'], version: '0.6.0', runner });
+  const hook = join(root, '.git/hooks/pre-commit');
+  const edited = (await readFile(hook, 'utf8')).replace(' --format summary', '').replace('# block-beaver:end', 'echo owner\n# block-beaver:end');
+  await writeFile(hook, edited);
+  const upgraded = await upgradeProject(root, { version: '0.6.0', runner });
+  assert.ok(upgraded.conflicts.some((conflict) => conflict.code === 'managed-edited' && conflict.path === '.git/hooks/pre-commit'));
+  assert.equal(await readFile(hook, 'utf8'), edited);
+});
+
+
+test('init and start leave an installed, hash-trusted hook and CI workflow alone, so upgrade stays conflict-free', async (t) => {
+  const root = await installationFixture(t), runner = packageRunner(root);
+  await mkdir(join(root, '.github/workflows'), { recursive: true });
+  await writeFile(join(root, '.github/workflows/ci.yml'), 'on: push\n');
+  await installProject(root, { agents: ['codex'], version: '0.7.0', runner });
+  commitAll(root, 'base');
+  const paths = ['.git/hooks/pre-commit', '.github/workflows/block-beaver.yml'];
+  const installed = {};
+  for (const path of paths) installed[path] = await readFile(join(root, path), 'utf8');
+  assert.match(installed[paths[0]], /audit --staged --format summary --root \./);
+  await initializeProject(root, { editor: 'agents' });
+  for (const path of paths) assert.equal(await readFile(join(root, path), 'utf8'), installed[path], path);
+  const upgraded = await upgradeProject(root, { version: '0.7.0', runner });
+  assert.deepEqual(upgraded.conflicts, []);
+  assert.match(await readFile(join(root, paths[0]), 'utf8'), /audit --staged --format summary/);
+});
+
+test('a plain init writes the summary-format hook and CI audit commands', async (t) => {
+  const root = await installationFixture(t);
+  await mkdir(join(root, '.github/workflows'), { recursive: true });
+  await writeFile(join(root, '.github/workflows/ci.yml'), 'on: push\n');
+  commitAll(root, 'base');
+  const result = await initializeProject(root, { editor: 'agents' });
+  assert.equal(result.enforcement.hook.status, 'installed', JSON.stringify(result.enforcement));
+  assert.match(await readFile(join(root, '.git/hooks/pre-commit'), 'utf8'), /block-beaver audit --staged --format summary --root \. \|\| exit \$\?/);
+  assert.match(await readFile(join(root, '.github/workflows/block-beaver.yml'), 'utf8'), /audit --root \. --base "[^"]+" --format summary\n/);
+});
+
+// Rebuilds the managed region of an installed file with another line ending or indent and a hash that matches those bytes.
+function restamp(text, { indent = '', eol = '\n' }) {
+  const lines = text.split('\n'), start = lines.findIndex((line) => line.trim() === '# block-beaver:start'), stop = lines.findIndex((line) => line.trim() === '# block-beaver:end');
+  const region = lines.slice(start, stop + 1).filter((line) => !line.includes('block-beaver:hash')).map((line) => indent + line);
+  const hash = createHash('sha256').update(region.map((line) => line + eol).join('')).digest('hex');
+  return lines.slice(0, start).map((line) => line + eol).join('') + region[0] + eol + `${indent}# block-beaver:hash ${hash}${eol}` + region.slice(1).map((line) => line + eol).join('') + lines.slice(stop + 1).join(eol);
+}
+const owned = {
+  // install-host's CI adoption needs the marker line to end in LF, so an intact CRLF workflow is a ci-collision on upgrade, as before.
+  crlf: { change: (text) => restamp(text, { eol: '\r\n' }), conflicts: 0, ci: 'ci-collision' },
+  indented: { change: (text) => restamp(text, { indent: '  ' }), conflicts: 0 },
+  'malformed hash': { change: (text) => text.replace(/block-beaver:hash [0-9a-f]{64}/, 'block-beaver:hash not-a-digest'), conflicts: 1 },
+  'edited body': { change: (text) => text.replace('# block-beaver:end', '# owner edit\n# block-beaver:end'), conflicts: 1 },
+};
+
+for (const [name, { change, conflicts, ci }] of Object.entries(owned)) {
+  test(`init leaves an installer-owned hook and CI workflow alone when the region is ${name}, and upgrade behaves as before`, async (t) => {
+    const root = await installationFixture(t), runner = packageRunner(root);
+    await mkdir(join(root, '.github/workflows'), { recursive: true });
+    await writeFile(join(root, '.github/workflows/ci.yml'), 'on: push\n');
+    await installProject(root, { agents: ['codex'], version: '0.7.0', runner });
+    commitAll(root, 'base');
+    const paths = ['.git/hooks/pre-commit', '.github/workflows/block-beaver.yml'], changed = {};
+    for (const path of paths) { changed[path] = change(await readFile(join(root, path), 'utf8')); await writeFile(join(root, path), changed[path]); }
+    const result = await initializeProject(root, { editor: 'agents' });
+    assert.equal(result.enforcement.hook.changed, false, JSON.stringify(result.enforcement.hook));
+    for (const path of paths) assert.equal(await readFile(join(root, path), 'utf8'), changed[path], path);
+    const upgraded = await upgradeProject(root, { version: '0.7.0', runner });
+    assert.deepEqual(upgraded.conflicts.filter((conflict) => paths.includes(conflict.path)).map((conflict) => `${conflict.code}:${conflict.path}`).sort(),
+      conflicts ? paths.map((path) => `managed-edited:${path}`).sort() : ci ? [`${ci}:${paths[1]}`] : []);
+    if (!conflicts) for (const path of ci ? paths.slice(0, 1) : paths) assert.match(await readFile(join(root, path), 'utf8'), /audit (--staged --format summary|--base merge-base --strict --format summary)/);
+  });
+}
+
+test('init leaves a GitLab job file and include region with a malformed hash alone', async (t) => {
+  const root = await installationFixture(t), runner = packageRunner(root);
+  await writeFile(join(root, '.gitlab-ci.yml'), 'stages:\n  - test\n');
+  await installProject(root, { agents: ['codex'], version: '0.7.0', runner });
+  commitAll(root, 'base');
+  const paths = ['.blocks/ci/gitlab.yml', '.gitlab-ci.yml'], changed = {};
+  for (const path of paths) { changed[path] = (await readFile(join(root, path), 'utf8')).replace(/block-beaver:hash [0-9a-f]{64}/, 'block-beaver:hash bad'); await writeFile(join(root, path), changed[path]); assert.match(changed[path], /hash bad/); }
+  await initializeProject(root, { editor: 'agents' });
+  for (const path of paths) assert.equal(await readFile(join(root, path), 'utf8'), changed[path], path);
+});
+
+test('init never overwrites a CI file or hook with ambiguous markers', async (t) => {
+  const root = await installationFixture(t);
+  await mkdir(join(root, '.github/workflows'), { recursive: true });
+  const workflow = '# block-beaver:managed-ci\n# block-beaver:start\n# block-beaver:start\nname: x\n# block-beaver:end\n';
+  await writeFile(join(root, '.github/workflows/block-beaver.yml'), workflow);
+  commitAll(root, 'base');
+  const hook = join(root, '.git/hooks/pre-commit'), owner = '#!/bin/sh\n# block-beaver:start\necho one\n# block-beaver:end\n# block-beaver:end\n';
+  await writeFile(hook, owner, { mode: 0o755 });
+  const result = await initializeProject(root, { editor: 'agents' });
+  assert.equal(result.enforcement.hook.status, 'incomplete');
+  assert.equal(result.enforcement.ci.github.status, 'incomplete');
+  assert.equal(await readFile(hook, 'utf8'), owner);
+  assert.equal(await readFile(join(root, '.github/workflows/block-beaver.yml'), 'utf8'), workflow);
 });

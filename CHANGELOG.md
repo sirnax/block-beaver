@@ -6,6 +6,35 @@ All notable user visible changes are recorded here. Releases follow semantic ver
 
 - No additional changes recorded.
 
+## 0.7.0 — 2026-10-02
+
+0.7.0 takes the next steps in adopting an existing family system: join links, per-family grouping, generator entries, taking over existing outputs, region outputs, history label modules, a map-only view export, and a one-line audit output for hooks and CI. Upgrading from 0.6.x is `block-beaver upgrade`. See the [0.7.0 plan](docs/tasks/2026-10-02-block-beaver-0.7.0-plan.md).
+
+**Compatibility notes**
+
+- **Hook and CI bytes change.** The managed pre-commit runs `audit --staged --format summary --root .`, lefthook does the same, and the managed GitHub and GitLab CI jobs run `audit --base merge-base --strict --format summary`. `upgrade` rewrites these hash-verified managed regions once, with no conflict; hand-edited regions still conflict. Besides the version stamps, `upgrade` also rewrites the managed `WORKFLOW.md` and the agent skill reference, which gain paragraphs on the one-line audit output, `gen --adopt` and restoring imported outputs.
+- **Other new keys are optional.** The new keys are link `match`, contract `map.group`, generator `region`, config `history.label` as `{ module }` and config `view.detail`. Leaving them out keeps 0.6.0 output bytes identical.
+- **Graph schema.** `graph.json` stays at schema 2.
+- **New codes.** `output-required-for-load`, `adopt-not-claimed`, `region-missing`, `region-duplicate`, `history-label-invalid` and `view-too-large`. `output-required-for-load` replaces `unresolved-import` when the missing file is a known claimed output, and the `output-conflict` message now mentions `gen --adopt`.
+- **`gen` arguments.** `gen` with stray positional arguments now fails with a usage error. Only `--adopt` takes paths.
+- **View exports registry.** `.blocks/view-exports.json` entries may carry `detail`. It is written only when the detail is not `full`, so existing entries keep their bytes.
+- **Generator cache.** A generator's cache context now includes each manifest's path and export name, and the cache records each generator's `out`. Every cached generator therefore re-runs once after upgrading.
+
+- **The family map is redrawn.** Blocks are isometric bricks on floor plates in an exploded tower, as in the original design, instead of flat tiles. The `data-*` hooks, element ids, the `map.skins` toggle and `graph.json` are unchanged, but the rendered map, the console view and exported view modules all change their bytes. Re-export any registered view module with `view --format module`, or run `gen`, and commit the result. Skin CSS that targeted `.family-block-slab` or the old `Ordinary code` slabs needs updating to the brick classes.
+
+**Changes**
+
+- The family map draws Lego-style bricks in an exploded tower with floor tags, link-count risers, a rail of ordinary code, per-family colours (`family-<id>` tokens), zoom, fit, pan and a history Play button. (#30)
+- Links can join on values: `{ field, to, match, kind }` adds an edge to every manifest of the target family whose `match` path shares a primitive value with the source field. The edges are ordinary link edges. (#36)
+- A contract's `map.group` groups blocks on the map by a field with a joiner, an `empty` fallback and a `{value}` format. It takes precedence over config `map.groupBy`. (#37)
+- `gen --adopt [PATH…]` takes over existing outputs that have no Block Beaver header, reports `status: "adopted"` and `bodyIdentical`, and works with `--dry-run`. Loading fails with `output-required-for-load` when a contract or check imports a deleted generated output; restore it with `git restore` instead of deleting it. (#38)
+- A generator with `region` owns the text between marker lines in a file and leaves the rest untouched. Missing or duplicate markers write nothing. (#39)
+- `history.label` can name a module that computes the label when an entry is appended. `--label` still overrides it. (#40)
+- Generators get `ctx.entries(family?)`, read-only `{ ref, family, id, path, exportName, hash, value }` records in `ctx.manifests` order. (#41)
+- `view --format module --detail map` embeds only what the family map draws, about 4% of the full size on a 174-block, 1800-file synthetic graph. `--max-bytes N` fails with `view-too-large`, and `view.detail` sets the default for new exports. (#42)
+- `audit --format summary` prints one line on a pass, and a short list of errors with their fixes on a failure. The managed hooks and CI use it. (#43)
+- Tracking issue for the 0.7.0 adoption goal. (#44)
+
 ## 0.6.0 — 2026-10-02
 
 0.6.0 lets a project with its own hand-built typed block system move onto Block Beaver families. Manifest data stays unchanged, JSON outputs stay byte-identical, and no map features are lost. Upgrading from 0.5.x is `block-beaver upgrade`. See the [0.6.0 plan](docs/tasks/2026-10-02-block-beaver-0.6.0-plan.md).

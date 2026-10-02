@@ -43,16 +43,19 @@ async function prepare(root, options) {
 /**
  * `block-beaver gen`: write every generated output. With `check` nothing is written (not even
  * the cache) and drift is reported; with `dryRun` the plan is made but nothing is written.
+ * `adopt` (true, or repository-relative output paths) takes over outputs that lack a header.
  */
-export async function generateProject(inputRoot, { check = false, label, dryRun = false, now, graph, paths, config, loadFamilies, extraOutputs } = {}) {
+export async function generateProject(inputRoot, { check = false, label, dryRun = false, now, graph, paths, config, loadFamilies, extraOutputs, adopt = false } = {}) {
+  if (check && adopt) throw new Error('gen --check never adopts; run gen --adopt without --check.');
+  const adopting = adopt === true ? true : adopt ? new Set(adopt) : null;
   const root = await realpath(resolve(inputRoot));
   const mode = check ? 'check' : dryRun ? 'dry-run' : 'write';
   const ready = await prepare(root, { config, graph, paths });
   if (!ready.config) return { ok: false, mode, outputs: [], written: [], pending: [], diagnostics: ready.diagnostics };
   const viewOutputs = extraOutputs ?? await registeredViewOutputs(root, ready.graph);
-  const plan = await planGeneration({ root, config: ready.config, graph: ready.graph, paths: ready.paths, label: label ?? null, now, extraOutputs: viewOutputs, loadFamilies });
-  const outputs = plan.outputs.map(({ key, out, status }) => ({ key, out, status }));
-  const pending = plan.outputs.filter((item) => item.status === 'stale' || item.status === 'missing').map((item) => item.out);
+  const plan = await planGeneration({ root, config: ready.config, graph: ready.graph, paths: ready.paths, label: label ?? null, now, extraOutputs: viewOutputs, loadFamilies, adopt: adopting, readOnly: check || dryRun });
+  const outputs = plan.outputs.map(({ key, out, status, bodyIdentical, regions }) => ({ key, out, status, ...(bodyIdentical === undefined ? {} : { bodyIdentical }), ...(regions ? { regions: regions.map(({ region, status: state }) => ({ region, status: state })) } : {}) }));
+  const pending = changedOutputs(plan);
   if (check) {
     const diagnostics = checkGeneration(plan);
     return { ok: !hasError(diagnostics), mode, outputs, written: [], pending, diagnostics };
@@ -63,11 +66,14 @@ export async function generateProject(inputRoot, { check = false, label, dryRun 
   // planning until a pass has nothing left to change (at most maxGenerationPasses plans).
   let passes = 1;
   let latest = plan;
+  // The first pass settled every listed path (adopted, already generated, or an error that stops
+  // the loop). Later plans omit view outputs, so only a bare --adopt carries over to them.
+  const laterAdopt = adopting === true || null;
   while (!hasError(applied.diagnostics) && changedOutputs(latest).length && passes < maxGenerationPasses) {
     // Without a caller-supplied graph, re-scan so generated files that did not exist yet are visible.
     const nextGraph = graph ? ready.graph : await projectGraph(root);
     latest = await planGeneration({ root, config: ready.config, graph: nextGraph, paths: graph || paths ? ready.paths : graphPaths(nextGraph), label: label ?? null, now,
-      extraOutputs: extraOutputs ?? [], loadFamilies });
+      extraOutputs: extraOutputs ?? [], loadFamilies, adopt: laterAdopt });
     passes += 1;
     const next = await applyGeneration(root, latest);
     applied.written = [...new Set([...applied.written, ...next.written])];
@@ -77,7 +83,7 @@ export async function generateProject(inputRoot, { check = false, label, dryRun 
     // The cap was reached with writes still happening; one read-only plan decides whether they settled.
     const verifyGraph = graph ? ready.graph : await projectGraph(root);
     const verify = await planGeneration({ root, config: ready.config, graph: verifyGraph, paths: graph || paths ? ready.paths : graphPaths(verifyGraph), label: label ?? null, now,
-      extraOutputs: extraOutputs ?? [], loadFamilies });
+      extraOutputs: extraOutputs ?? [], loadFamilies, adopt: laterAdopt });
     passes += 1;
     // A verification plan that errors (for example a generator throwing on the third write) is not convergence.
     if (hasError(verify.diagnostics)) applied.diagnostics = [...applied.diagnostics, ...verify.diagnostics];
@@ -89,8 +95,10 @@ export async function generateProject(inputRoot, { check = false, label, dryRun 
     const { updateProject } = await import('../block-map.mjs');
     const refreshed = await updateProject(root);
     const finalViews = await registeredViewOutputs(root, refreshed.graph);
+    // Listed paths that are not view outputs were settled by the passes above.
+    const viewAdopt = adopting instanceof Set ? new Set(finalViews.map((view) => view.out).filter((out) => adopting.has(out))) : adopting;
     const viewPlan = await planGeneration({ root, config: ready.config, graph: refreshed.graph, now,
-      extraOutputs: finalViews, loadFamilies: async () => ({ families: [], manifests: [], generators: [], diagnostics: [] }) });
+      extraOutputs: finalViews, loadFamilies: async () => ({ families: [], manifests: [], generators: [], diagnostics: [] }), adopt: viewAdopt });
     // This view-only pass must not prune custom-generator cache entries.
     viewPlan.cacheUpdate = null;
     const final = await applyGeneration(root, viewPlan);

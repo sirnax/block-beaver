@@ -206,6 +206,35 @@ test('cache tracks imported source changes and generation always runs in a fresh
   assert.equal(output.label, 'test');
 });
 
+test('a history label module is a tracked input, and a label-only config still reaches the generate pass', async (t) => {
+  const label = { module: '.blocks/history-label.mjs' };
+  const data = await fixture(t, { '.blocks/history-label.mjs': "export default () => 'one';\n" }, configFor({ history: { label } }));
+  const first = await loadFamilies(data);
+  assert.equal((await loadFamilies(data)).key, first.key);
+  await writeFile(join(data.root, '.blocks/history-label.mjs'), "export default () => 'two';\n");
+  assert.notEqual((await loadFamilies(data)).key, first.key, 'editing the module invalidates the cached load');
+
+  const only = await fixture(t, { '.blocks/history-label.mjs': "export default (ctx) => 'only ' + ctx.blocks().length;\n" }, { schemaVersion: 1, history: { label } });
+  const run = await loadFamilies({ ...only, generate: { keys: [], graph: { nodes: [] }, label: null, labelModule: label.module } });
+  assert.deepEqual([run.diagnostics, run.label], [[], 'only 0'], 'no families or generators, but the label module still ran');
+  const plain = await loadFamilies({ ...only, generate: { keys: [], graph: { nodes: [] }, label: null } });
+  assert.equal(plain.label, undefined, 'without labelModule in the request nothing is evaluated');
+});
+
+test('what a label module imports or declares as inputs stays tracked across ordinary loads', async (t) => {
+  const label = { module: '.blocks/history-label.mjs' };
+  const files = { '.blocks/history-label.mjs': "import { word } from './label-helper.mjs';\nexport default () => word;\nexport const inputs = ['ROADMAP.md'];\n", '.blocks/label-helper.mjs': "export const word = 'one';\n", 'ROADMAP.md': 'step 1\n' };
+  const data = await fixture(t, files, configFor({ history: { label } }));
+  await loadFamilies({ ...data, generate: { keys: [], graph: { nodes: [] }, label: null, labelModule: label.module } });
+  const first = await loadFamilies(data);
+  assert.equal((await loadFamilies(data)).key, first.key);
+  await writeFile(join(data.root, '.blocks/label-helper.mjs'), "export const word = 'two';\n");
+  const helper = await loadFamilies(data);
+  assert.notEqual(helper.key, first.key, 'editing a helper the module imports moves the key without evaluating the module');
+  await writeFile(join(data.root, 'ROADMAP.md'), 'step 2\n');
+  assert.notEqual((await loadFamilies(data)).key, helper.key, 'editing a declared input moves the key');
+});
+
 test('configured loader uses its package and does not install Block Beaver hooks', async (t) => {
   const config = configFor({ loader: 'fixture-loader' });
   const data = await fixture(t, {
@@ -587,4 +616,131 @@ test('a checks-only config still loads its check modules, so a missing module is
 test('map.bindings names must be strings', () => {
   const parsed = parseFamiliesConfig({ families: [family], map: { bindings: [{ family: 'widget', call: true, registry: 'units' }, { family: 'widget', call: 'render', registry: ['units'] }] } });
   assert.deepEqual(parsed.diagnostics.map((item) => item.field), ['$.map.bindings[0]', '$.map.bindings[1]']);
+});
+
+const joinFamilies = [{ id: 'task', contract: 'definitions/task.family.ts', manifests: 'catalog/tasks/*.item.ts' }, { id: 'tool', contract: 'definitions/tool.family.ts', manifests: 'catalog/tools/*.item.ts' }];
+const joinContract = (id, fields, links = '') => `import { defineFamily, s } from 'block-beaver/kernel';
+export default defineFamily({id:'${id}',fields:s.object({${fields}}),implementation:['none'],${links}});\n`;
+const joinManifest = (id, family, extra) => `export default ${JSON.stringify({ ...value(id, { family, ...extra }), tag: undefined })};\n`;
+const joinFiles = (taskLinks, extra = {}) => ({
+  'definitions/task.family.ts': joinContract('task', 'tools:s.string()', taskLinks), 'definitions/tool.family.ts': joinContract('tool', 'modes:s.array(s.string())'),
+  'catalog/tasks/summarise.item.ts': joinManifest('summarise', 'task', { tools: 'assistant' }), 'catalog/tools/create-note.item.ts': joinManifest('create-note', 'tool', { modes: ['assistant', 'chat'] }),
+  ...extra,
+});
+const joinLoad = async (t, taskLinks, extra) => loadFamilies(await fixture(t, joinFiles(taskLinks, extra), configFor({ families: joinFamilies })));
+
+test('join links load against the target family fields and become graph edges', async (t) => {
+  const load = await joinLoad(t, `links:[{field:'tools',to:'tool',match:'modes[]',kind:'can-use'}],`);
+  assert.deepEqual(load.diagnostics, [], JSON.stringify(load.diagnostics));
+  assert.equal(load.families.find((item) => item.id === 'task').links[0].match, 'modes[]');
+  const graph = { schemaVersion: 2, root: '.', fingerprint: 'source', apps: [], summary: {}, nodes: [], edges: [] };
+  attachFamilies(graph, { load, project: { resolveImport() { throw new Error('unexpected'); } } });
+  assert.deepEqual(graph.edges.filter((edge) => edge.link).map((edge) => [edge.from, edge.to, edge.kind, edge.fields]), [['block:task:summarise', 'block:tool:create-note', 'can-use', ['$.tools']]]);
+});
+
+test('join link contracts reject bad match paths, several targets and non-string match, dropping only that family', async (t) => {
+  const bad = {
+    "links:[{field:'tools',to:'tool',match:'missing[]',kind:'can-use'}],": ['link-path-invalid', '$.links[0].match'],
+    "links:[{field:'tools',to:'tool',match:'modes',kind:'can-use'}],": ['link-path-invalid', '$.links[0].match'],
+    "links:[{field:'tools',to:'tool',match:3,kind:'can-use'}],": ['link-path-invalid', '$.links[0].match'],
+    "links:[{field:'tools',to:['tool','task'],match:'modes[]',kind:'can-use'}],": ['link-target-family', '$.links[0].to'],
+  };
+  for (const [links, [code, field]] of Object.entries(bad)) {
+    const load = await joinLoad(t, links);
+    assert.ok(load.diagnostics.some((item) => item.code === code && item.field === field && item.family === 'task' && item.rule === 'manifest-valid' && item.severity === 'error'), `${links} ${JSON.stringify(load.diagnostics)}`);
+    assert.deepEqual(load.families.map((item) => item.id), ['tool']);
+    assert.deepEqual(load.manifests.map((item) => item.ref), ['tool:create-note']);
+  }
+});
+
+test('join link match validation waits for the target and is skipped when the target failed to load', async (t) => {
+  const load = await joinLoad(t, `links:[{field:'tools',to:'tool',match:'modes[]',kind:'can-use'}],`, { 'definitions/tool.family.ts': 'export const nothing = 1;' });
+  assert.ok(load.diagnostics.some((item) => item.code === 'contract-default-missing' && item.family === 'tool'));
+  assert.ok(!load.diagnostics.some((item) => item.code === 'link-path-invalid'), JSON.stringify(load.diagnostics));
+  assert.deepEqual(load.families.map((item) => item.id), ['task']);
+});
+
+const groupFamilies = ['capability', 'tool', 'node', 'command', 'plain'].map((id) => ({ id, contract: `definitions/${id}.family.ts`, manifests: `catalog/${id}/*.item.ts` }));
+const groupContract = (id, fields, group) => `import { defineFamily, s } from 'block-beaver/kernel';
+export default defineFamily({id:'${id}',fields:s.object({${fields}}),implementation:['none'],${group ? `map:{title:'${id} floor',group:${group}},` : ''}});\n`;
+const groupManifest = (family, id, extra = {}) => [`catalog/${family}/${id}.item.ts`, `export default ${JSON.stringify({ ...value(id, { family, ...extra }), tag: undefined })};\n`];
+const groupFiles = (overrides = {}) => ({
+  'definitions/capability.family.ts': groupContract('capability', 'access:s.string()', `{field:'access'}`),
+  'definitions/tool.family.ts': groupContract('tool', 'modes:s.array(s.string())', `{field:'modes[]',join:' + ',empty:'internal'}`),
+  'definitions/node.family.ts': groupContract('node', 'sizing:s.optional(s.nullable(s.object({kind:s.string()})))', `{field:'sizing.kind',empty:'fixed',format:'{value} size'}`),
+  'definitions/command.family.ts': groupContract('command', 'surface:s.optional(s.string())'),
+  'definitions/plain.family.ts': groupContract('plain', 'note:s.optional(s.string())'),
+  ...Object.fromEntries([
+    groupManifest('capability', 'a', { access: 'read' }), groupManifest('capability', 'b', { access: 'write' }), groupManifest('capability', 'c', { access: 'read' }),
+    groupManifest('tool', 'a', { modes: ['assistant', 'chat'] }), groupManifest('tool', 'b', { modes: [] }), groupManifest('tool', 'c', { modes: ['chat'] }),
+    groupManifest('node', 'a', { sizing: { kind: 'flex' } }), groupManifest('node', 'b', { sizing: null }), groupManifest('node', 'c'),
+    groupManifest('command', 'a', { surface: 'cli' }), groupManifest('command', 'b'), groupManifest('plain', 'a'),
+  ]),
+  ...overrides,
+});
+const groupLoad = async (t, overrides) => loadFamilies(await fixture(t, groupFiles(overrides), configFor({ families: groupFamilies })));
+const groupGraph = (load, groupBy) => attachFamilies({ schemaVersion: 2, root: '.', fingerprint: 'source', apps: [], summary: {}, nodes: [], edges: [] }, { load, project: { resolveImport() { throw new Error('unexpected'); } }, groupBy });
+const groupsOf = (graph, family) => graph.nodes.filter((node) => node.family === family).sort((a, b) => a.id < b.id ? -1 : 1).map((node) => Object.hasOwn(node, 'group') ? node.group : 'NO-GROUP');
+
+test('per-family map.group clusters each family by its own field, array, nullable path, empty fallback and format', async (t) => {
+  const { renderFamilyMap } = await import('../src/families/map-render.mjs');
+  const load = await groupLoad(t);
+  assert.deepEqual(load.diagnostics, [], JSON.stringify(load.diagnostics));
+  const graph = groupGraph(load, 'surface');
+  assert.deepEqual(groupsOf(graph, 'capability'), ['read', 'write', 'read']);
+  assert.deepEqual(groupsOf(graph, 'tool'), ['assistant + chat', 'internal', 'chat']);
+  assert.deepEqual(groupsOf(graph, 'node'), ['flex size', 'fixed size', 'fixed size']);
+  assert.deepEqual(groupsOf(graph, 'command'), ['cli', null], 'a family without a rule falls back to config groupBy');
+  assert.deepEqual(groupsOf(graph, 'plain'), [null]);
+  assert.deepEqual(graph.families.find((item) => item.id === 'tool').group, { field: 'modes[]', join: ' + ', empty: 'internal' });
+  assert.ok(!Object.hasOwn(graph.families.find((item) => item.id === 'plain'), 'group'));
+  const html = renderFamilyMap(graph);
+  const labels = [...html.matchAll(/<text class="group-label"[^>]*>([^<]*)<\/text>/g)].map((match) => match[1]);
+  assert.deepEqual(labels, ['read · 2', 'write · 1', 'assistant + chat · 1', 'chat · 1', 'internal · 1', 'fixed size · 2', 'flex size · 1', 'cli · 1', 'Ungrouped · 1', 'Ungrouped · 1']);
+  for (const group of ['read', 'assistant + chat', 'internal', 'fixed size', 'flex size', 'cli']) assert.ok(html.includes(`data-map-group="${group}"`), group);
+  const none = groupGraph(load);
+  assert.deepEqual(groupsOf(none, 'capability'), ['read', 'write', 'read'], 'a family rule needs no config groupBy');
+  assert.deepEqual(groupsOf(none, 'command'), ['NO-GROUP', 'NO-GROUP'], 'no rule and no groupBy keeps no group property');
+  assert.deepEqual(groupsOf(none, 'plain'), ['NO-GROUP']);
+  assert.ok(!/data-map-group="[^"]*"[^>]*data-family-block="block:plain/.test(renderFamilyMap(none)));
+});
+
+test('map.group without empty gives no group for missing values and skips format; graphs without map.group keep their bytes', async (t) => {
+  const withRule = await groupLoad(t, { 'definitions/node.family.ts': groupContract('node', 'sizing:s.optional(s.nullable(s.object({kind:s.string()})))', `{field:'sizing.kind',format:'{value} size'}`) });
+  assert.deepEqual(groupsOf(groupGraph(withRule), 'node'), ['flex size', null, null]);
+  const plainFiles = Object.fromEntries(groupFamilies.map(({ id }) => [`definitions/${id}.family.ts`, groupContract(id, id === 'capability' ? 'access:s.string()' : id === 'tool' ? 'modes:s.array(s.string())' : id === 'node' ? 'sizing:s.optional(s.nullable(s.object({kind:s.string()})))' : id === 'command' ? 'surface:s.optional(s.string())' : 'note:s.optional(s.string())')]));
+  const plain = groupGraph(await groupLoad(t, plainFiles));
+  assert.ok(plain.nodes.every((node) => !Object.hasOwn(node, 'group')));
+  assert.deepEqual(plain.families.map((item) => Object.keys(item)), plain.families.map(() => ['id', 'floor', 'title', 'blurb', 'linkKinds', 'count']));
+  assert.ok(!JSON.stringify(plain).includes('"group"'));
+});
+
+test('the graph fingerprint changes when only a family group rule changes', async (t) => {
+  const rule = (extra) => groupLoad(t, { 'definitions/capability.family.ts': groupContract('capability', 'access:s.string()', `{field:'access'${extra}}`) });
+  const [one, same, other] = [groupGraph(await rule('')), groupGraph(await rule('')), groupGraph(await rule(`,format:'{value}!'`))];
+  assert.equal(one.fingerprint, same.fingerprint);
+  assert.notEqual(one.fingerprint, other.fingerprint);
+});
+
+test('contracts reject a bad map.group as contract-invalid at its own path and drop only that family', async (t) => {
+  const bad = {
+    "{field:'missing'}": '$.map.group.field',
+    "{field:'modes'}": '$.map.group.field',
+    '{field:3}': '$.map.group.field',
+    "{}": '$.map.group.field',
+    "{field:'access',join:3}": '$.map.group.join',
+    "{field:'access',empty:true}": '$.map.group.empty',
+    "{field:'access',format:'no placeholder'}": '$.map.group.format',
+    "{field:'access',format:'{value} {value}'}": '$.map.group.format',
+    "{field:'access',format:5}": '$.map.group.format',
+    "{field:'access',other:1}": '$.map.group',
+    "'access'": '$.map.group',
+    '[]': '$.map.group',
+  };
+  for (const [group, field] of Object.entries(bad)) {
+    const load = await groupLoad(t, { 'definitions/capability.family.ts': groupContract('capability', 'access:s.string(),modes:s.array(s.string())', group) });
+    assert.ok(load.diagnostics.some((item) => item.code === 'contract-invalid' && item.field === field && item.family === 'capability' && item.severity === 'error'), `${group} ${JSON.stringify(load.diagnostics)}`);
+    assert.ok(!load.families.some((item) => item.id === 'capability'), group);
+    assert.ok(load.families.some((item) => item.id === 'tool'), group);
+  }
 });

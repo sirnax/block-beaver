@@ -5,6 +5,7 @@ import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { extractLinks, attachFamilies, findUnclaimed } from '../src/families/graph.mjs';
 import { loadProjectModel } from '../src/project-model.mjs';
+import { valuesAt } from '../src/families/paths.mjs';
 
 const family = (id, extras = {}) => ({ id, floor: 0, config: { contract: `definitions/${id}.ts`, manifests: `blocks/${id}/*.ts` }, ...extras });
 const manifest = (family, id, extras = {}) => ({ id, family, version: 1, name: id, description: id, rationale: 'A fixture boundary', implementation: { kind: 'none' }, ...extras });
@@ -158,4 +159,76 @@ test('implementation aliases resolve using the manifest home app and expose cros
     assert.equal(result.apps[0].counts.blocks, 1);
     assert.equal(result.edges.find((edge) => edge.link).crossApp, true);
   } finally { await rm(root, { recursive: true, force: true }); }
+});
+
+const joinTask = family('task', { links: [{ field: 'tools', to: 'tool', match: 'modes[]', kind: 'can-use' }] });
+const joinGraph = (families, manifests) => attachFamilies(graph(), { project: noResolve, load: { families, manifests: manifests.map((item) => loaded(item)) } });
+const canUse = (result) => result.edges.filter((edge) => edge.link).map((edge) => [edge.from, edge.to, edge.kind, edge.fields]);
+
+test('valuesAt walks . and [] paths to concrete fields and skips null', () => {
+  const value = { groups: [{ routes: [{ handler: 'a' }, { handler: null }, {}] }, null, { routes: null }], one: { two: 2 }, list: ['x', null, 'y'], nested: [['p'], null, ['q', 'r']] };
+  assert.deepEqual(valuesAt(value, 'groups[].routes[].handler'), [{ field: '$.groups[0].routes[0].handler', value: 'a' }]);
+  assert.deepEqual(valuesAt(value, 'one.two'), [{ field: '$.one.two', value: 2 }]);
+  assert.deepEqual(valuesAt(value, 'list[]'), [{ field: '$.list[0]', value: 'x' }, { field: '$.list[2]', value: 'y' }]);
+  assert.deepEqual(valuesAt(value, 'nested[][]').map((entry) => entry.field), ['$.nested[0][0]', '$.nested[2][0]', '$.nested[2][1]']);
+  assert.deepEqual(valuesAt(value, 'absent.deeper'), []);
+  assert.deepEqual(valuesAt(value, 'one.two.three'), []);
+  assert.deepEqual(valuesAt(null, 'a'), []);
+});
+
+test('join links connect a scalar field to every target whose array field holds the value', () => {
+  const result = joinGraph([joinTask, family('tool', { floor: 1 })], [
+    manifest('task', 'summarise', { tools: 'assistant' }), manifest('task', 'plain', { tools: 'none' }), manifest('task', 'absent'),
+    manifest('tool', 'search', { modes: ['chat'] }), manifest('tool', 'create-note', { modes: ['assistant', 'chat'] }), manifest('tool', 'archive', { modes: ['assistant'] }),
+  ]);
+  assert.deepEqual(canUse(result), [['block:task:summarise', 'block:tool:archive', 'can-use', ['$.tools']], ['block:task:summarise', 'block:tool:create-note', 'can-use', ['$.tools']]]);
+  assert.deepEqual(result.edges.find((edge) => edge.link), { from: 'block:task:summarise', to: 'block:tool:archive', kind: 'can-use', link: true, fields: ['$.tools'], evidence: { file: 'blocks/task/summarise.ts', line: 1, column: 1, text: '$.tools ↔ tool.$.modes[] → tool:archive' } });
+  assert.deepEqual(result.nodes.find((node) => node.id === 'block:task:summarise').dependencies, ['block:tool:archive', 'block:tool:create-note']);
+  assert.deepEqual(result.nodes.find((node) => node.id === 'block:task:plain').dependencies, []);
+  assert.deepEqual(result.familyDiagnostics, []);
+  assert.deepEqual(result.families.find((item) => item.id === 'task').linkKinds, ['can-use']);
+});
+
+test('join links match array fields on both sides, dedupe per target and kind, and merge fields', () => {
+  const definition = family('task', { links: [{ field: 'tools[]', to: 'tool', match: 'modes[]', kind: 'can-use' }, { field: 'primary', to: 'tool', match: 'modes[]', kind: 'can-use' }] });
+  const result = joinGraph([definition, family('tool', { floor: 1 })], [
+    manifest('task', 'one', { tools: ['chat', 'assistant', 'none'], primary: 'chat' }),
+    manifest('tool', 'zeta', { modes: ['assistant', 'chat'] }), manifest('tool', 'alpha', { modes: ['chat'] }), manifest('tool', 'omega', { modes: [] }),
+  ]);
+  assert.deepEqual(canUse(result), [['block:task:one', 'block:tool:alpha', 'can-use', ['$.primary', '$.tools[0]']], ['block:task:one', 'block:tool:zeta', 'can-use', ['$.primary', '$.tools[0]', '$.tools[1]']]]);
+  assert.equal(result.edges.find((edge) => edge.link).evidence.text, '$.primary, $.tools[0] ↔ tool.$.modes[] → tool:alpha');
+  assert.equal(JSON.stringify(joinGraph([definition, family('tool', { floor: 1 })], [manifest('tool', 'alpha', { modes: ['chat'] }), manifest('tool', 'zeta', { modes: ['assistant', 'chat'] }), manifest('task', 'one', { tools: ['chat', 'assistant', 'none'], primary: 'chat' })]).edges), JSON.stringify(result.edges));
+});
+
+test('join links compare by type, ignore non-primitive values and never link a block to itself', () => {
+  const definition = family('task', { links: [{ field: 'level', to: 'task', match: 'levels[]', kind: 'peers' }, { field: 'level', to: 'tool', match: 'levels[]', kind: 'can-use' }] });
+  const result = joinGraph([definition, family('tool', { floor: 1 })], [
+    manifest('task', 'one', { level: 1, levels: [1, 2] }), manifest('task', 'two', { level: '1', levels: ['1', 1] }), manifest('task', 'objects', { level: { a: 1 }, levels: [{ a: 1 }, null, [1]] }),
+    manifest('tool', 'number', { levels: [1] }), manifest('tool', 'string', { levels: ['1'] }), manifest('tool', 'flag', { levels: [true] }),
+  ]);
+  assert.deepEqual(canUse(result), [
+    ['block:task:one', 'block:task:two', 'peers', ['$.level']], ['block:task:one', 'block:tool:number', 'can-use', ['$.level']],
+    ['block:task:two', 'block:tool:string', 'can-use', ['$.level']],
+  ]);
+  assert.deepEqual(result.familyDiagnostics, []);
+});
+
+test('join and id links of one kind to the same block share one edge, and id-only graphs keep their edge bytes', () => {
+  const mixed = family('task', { links: [{ field: 'tool', to: 'tool', kind: 'can-use' }, { field: 'tools', to: 'tool', match: 'modes[]', kind: 'can-use' }] });
+  const result = joinGraph([mixed, family('tool', { floor: 1 })], [manifest('task', 'one', { tool: 'a', tools: 'chat' }), manifest('tool', 'a', { modes: ['chat'] }), manifest('tool', 'b', { modes: ['chat'] })]);
+  assert.deepEqual(canUse(result), [['block:task:one', 'block:tool:a', 'can-use', ['$.tool', '$.tools']], ['block:task:one', 'block:tool:b', 'can-use', ['$.tools']]]);
+  assert.equal(result.edges[0].evidence.text, '$.tool, $.tools ↔ tool.$.modes[] → tool:a');
+  const plain = joinGraph([family('task', { links: [{ field: 'tool', to: 'tool', kind: 'can-use' }] }), family('tool', { floor: 1 })], [manifest('task', 'one', { tool: 'a', modes: ['x'] }), manifest('tool', 'a', { modes: ['x'] })]);
+  assert.deepEqual(plain.edges, [{ from: 'block:task:one', to: 'block:tool:a', kind: 'can-use', link: true, fields: ['$.tool'], evidence: { file: 'blocks/task/one.ts', line: 1, column: 1, text: '$.tool → tool:a' } }]);
+});
+
+test('join links skip a target family that has no manifests and add no diagnostics', () => {
+  const result = joinGraph([joinTask, family('tool', { floor: 1 })], [manifest('task', 'one', { tools: 'chat' })]);
+  assert.deepEqual(canUse(result), []);
+  assert.deepEqual(result.familyDiagnostics, []);
+});
+
+test('id links keep 0.6.0 behaviour for nested-array paths, which never produced edges', () => {
+  const definition = family('alpha', { links: [{ field: 'refs[][]', to: 'beta', kind: 'uses' }] });
+  assert.deepEqual(extractLinks(definition, manifest('alpha', 'one', { refs: [['two']] })), { links: [], diagnostics: [] });
 });

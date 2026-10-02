@@ -377,9 +377,9 @@ async function structuralRules(root, { strict, familyDrift, mode, priorBaseline,
   // Derived (ignored, uncommitted) view artifacts are regenerated inside the snapshot from its own
   // graph, so they are fresh by construction and family drift sees the same bytes update would write.
   if (derivedView.size) {
-    const modules = new Set((await registeredViewOutputs(root, graph)).map((output) => output.out));
+    const modules = new Map((await registeredViewOutputs(root, graph)).map((output) => [output.out, output.detail]));
     const rendered = (path) => path === '.blocks/view/graph.json' ? JSON.stringify(graph, null, 2) + '\n'
-      : path === '.blocks/view/index.html' ? renderBlockMap(graph) : modules.has(path) ? renderViewModule(graph) : null;
+      : path === '.blocks/view/index.html' ? renderBlockMap(graph) : modules.has(path) ? renderViewModule(graph, { detail: modules.get(path) }) : null;
     await writeProjectFiles(root, [...derivedView].map((path) => ({ path, before: null, content: rendered(path) })).filter((file) => file.content !== null));
   }
   const viewFindings = [];
@@ -392,8 +392,8 @@ async function structuralRules(root, { strict, familyDrift, mode, priorBaseline,
     if (!exports.present) exports = await readJson(root, '.blocks/view/exports.json');
     for (const entry of Array.isArray(exports.value) ? exports.value : []) {
       if (!validPath(entry.path)) { viewFindings.push({ message: 'Unsafe view export path.' }); continue; }
-      const expected = renderViewModule(graph);
-      if (entry.format === 'module' && await readProjectFile(root, entry.path) !== expected) viewFindings.push({ path: entry.path, message: 'Exported view module is stale.', remediation: 'block-beaver view --format module' });
+      const expected = renderViewModule(graph, { detail: entry.detail });
+      if (entry.format === 'module' && await readProjectFile(root, entry.path) !== expected) viewFindings.push({ path: entry.path, message: 'Exported view module is stale.', remediation: `block-beaver view --format module${entry.detail === 'map' ? ' --detail map' : ''}` });
     }
   }
   let familyFindings = [];
@@ -405,7 +405,7 @@ async function structuralRules(root, { strict, familyDrift, mode, priorBaseline,
   else if (familyEnabled) {
     try {
       const { planGeneration, checkGeneration } = await import('./families/generate.mjs');
-      const plan = await planGeneration({ root, config: configDocument.value || {}, graph, paths: Object.keys(graph.hashes || {}), extraOutputs });
+      const plan = await planGeneration({ root, config: configDocument.value || {}, graph, paths: Object.keys(graph.hashes || {}), extraOutputs, readOnly: true });
       const generationDiagnostics = checkGeneration(plan).filter((entry) => !entry.severity || entry.severity === 'error');
       // Loader/config errors remain in their structural rule, including errors
       // discovered only when preparing generators. Drift owns output differences.

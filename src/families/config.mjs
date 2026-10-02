@@ -19,6 +19,9 @@ export function isFamilyGlob(pattern) {
   try { globRegex(pattern); return true; } catch { return false; }
 }
 
+/** The repository path of a configured history label module, or null for a string, absent or invalid label. */
+export const historyLabelModule = (config) => { const label = config?.history?.label; return object(label) && Object.keys(label).length === 1 && isFamilyPath(label.module) ? label.module : null; };
+
 /** Parse additions to schemaVersion 1 without imposing domain names or folder conventions. */
 export function parseFamiliesConfig(config) {
   const diagnostics = [], families = [], generators = [];
@@ -55,7 +58,13 @@ export function parseFamiliesConfig(config) {
     if (typeof config.loader !== 'string' || !/^(?:@[a-z0-9._-]+\/)?[a-z0-9][a-z0-9._-]*(?:\/[a-zA-Z0-9._/-]+)?$/.test(config.loader) || config.loader.split('/').some((part) => part === '..' || part === '.')) issue('loader-package-missing', 'loader must name a package or a package subpath', '$.loader');
     else loader = config.loader;
   }
-  if (config.history !== undefined && (!object(config.history) || (config.history.label !== undefined && typeof config.history.label !== 'string'))) issue('family-path-invalid', 'history.label must be a string', '$.history.label');
+  if (config.history !== undefined && !object(config.history)) issue('family-path-invalid', 'history.label must be a string or { module }', '$.history.label');
+  else if (config.history?.label !== undefined && typeof config.history.label !== 'string') {
+    const label = config.history.label;
+    if (!object(label)) issue('family-path-invalid', 'history.label must be a string or { module }', '$.history.label');
+    else if (Object.keys(label).some((key) => key !== 'module')) issue('family-path-invalid', 'history.label accepts only a module key', '$.history.label');
+    else if (!isFamilyPath(label.module)) issue('family-path-invalid', 'history.label.module must be a repository-relative path', '$.history.label.module');
+  }
   if (config.map !== undefined) {
     if (!object(config.map)) issue('family-path-invalid', 'map must be an object', '$.map');
     else {
@@ -87,6 +96,10 @@ export function parseFamiliesConfig(config) {
         }
       }
     }
+  }
+  if (config.view !== undefined) {
+    if (!object(config.view)) issue('family-path-invalid', 'view must be an object', '$.view');
+    else if (config.view.detail !== undefined && !['full', 'map'].includes(config.view.detail)) issue('family-path-invalid', 'view.detail must be full or map', '$.view.detail');
   }
   return { families, generators, diagnostics, ...(loader ? { loader } : {}) };
 }
