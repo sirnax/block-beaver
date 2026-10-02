@@ -209,7 +209,7 @@ The project can then delete its own codegen, map and kit scripts.
 
 **Checks.**
 - `npm run check` passes locally on Node 26.10.0 with 447 tests, 0 failures. The kernel is 4738 of 6144 gzip bytes.
-- The other Node versions run in CI on the release PR.
+- **CI on PR #34 at `33bf661`:** all checks pass. That covers Node 22.18.0, 22, 24 and 26, macOS and Windows, the dependency audit, Gitleaks and CodeQL. CodeQL had flagged `js/bad-tag-filter` in three test nonce checks; those regexes now match tags case-insensitively.
 
 **Cross-family review (GPT reviews Claude work).**
 - **Review 1:** gpt-6.1-sol, xhigh effort, covering slices 0, A–E, F1 and G. Fixed in `eeb54f6`:
