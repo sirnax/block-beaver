@@ -221,6 +221,20 @@ test('a history label module is a tracked input, and a label-only config still r
   assert.equal(plain.label, undefined, 'without labelModule in the request nothing is evaluated');
 });
 
+test('what a label module imports or declares as inputs stays tracked across ordinary loads', async (t) => {
+  const label = { module: '.blocks/history-label.mjs' };
+  const files = { '.blocks/history-label.mjs': "import { word } from './label-helper.mjs';\nexport default () => word;\nexport const inputs = ['ROADMAP.md'];\n", '.blocks/label-helper.mjs': "export const word = 'one';\n", 'ROADMAP.md': 'step 1\n' };
+  const data = await fixture(t, files, configFor({ history: { label } }));
+  await loadFamilies({ ...data, generate: { keys: [], graph: { nodes: [] }, label: null, labelModule: label.module } });
+  const first = await loadFamilies(data);
+  assert.equal((await loadFamilies(data)).key, first.key);
+  await writeFile(join(data.root, '.blocks/label-helper.mjs'), "export const word = 'two';\n");
+  const helper = await loadFamilies(data);
+  assert.notEqual(helper.key, first.key, 'editing a helper the module imports moves the key without evaluating the module');
+  await writeFile(join(data.root, 'ROADMAP.md'), 'step 2\n');
+  assert.notEqual((await loadFamilies(data)).key, helper.key, 'editing a declared input moves the key');
+});
+
 test('configured loader uses its package and does not install Block Beaver hooks', async (t) => {
   const config = configFor({ loader: 'fixture-loader' });
   const data = await fixture(t, {

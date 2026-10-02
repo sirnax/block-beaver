@@ -300,7 +300,7 @@ async function execute(message) {
       catch (error) { contextError = new TypeError(`Generator context must contain only JSON data: ${error.message}`); }
       // A derived history label runs first, fresh in this child, and becomes ctx.label for every generator below.
       if (generate.labelModule && !contextError) {
-        const path = generate.labelModule;
+        const path = generate.labelModule, before = new Set(loadedFiles);
         try {
           const exports = await importSource(path);
           if (typeof exports.default !== 'function') throw new TypeError('its default export must be a function (ctx) => string | null');
@@ -311,6 +311,8 @@ async function execute(message) {
           result.label = value;
           ctx = buildContext(value);
         } catch (error) { diagnostic('history-label-invalid', `History label module ${path} is invalid: ${error?.message || String(error)}`, { file: path, field: '$.history.label.module' }, 'family-drift'); }
+        // Files only the label module reached (its import closure and declared inputs), so ordinary loads can keep tracking them.
+        result.labelFiles = [...loadedFiles].filter((file) => !before.has(file));
       }
       for (const info of result.generators) {
         if (info.source !== 'custom' || !selected.has(info.key)) continue;

@@ -83,7 +83,7 @@ function unsafeReason(claim, protectedPaths) {
  * family order, index, family generators, top-level generators, extra outputs, history.
  * `adopt` (true, or output paths) takes over existing outputs that lack a header.
  */
-export async function planGeneration({ root, config = {}, graph, paths, label = null, now, extraOutputs = [], loadFamilies, adopt = null } = {}) {
+export async function planGeneration({ root, config = {}, graph, paths, label = null, now, extraOutputs = [], loadFamilies, adopt = null, readOnly = false } = {}) {
   const stamp = toDate(now);
   const load = loadFamilies ?? (await import('./loader.mjs')).loadFamilies;
   const base = { root, config, paths, fileHashes: fileHashesOf(graph), ...(graph?.resolutionSignature ? { resolutionSignature: graph.resolutionSignature } : {}) };
@@ -155,9 +155,10 @@ export async function planGeneration({ root, config = {}, graph, paths, label = 
     } else { currents.set(claim.key, read.text); readable.push(claim); }
   }
 
-  // 3b. A label module runs (in the generate pass) only when an entry will really be appended and no --label was given.
+  // 3b. A label module runs (in the generate pass) only when an entry will really be appended: not for a read-only
+  // plan (--check, --dry-run, audit), not once the plan already has an error (nothing is written), and not with --label.
   let labelModule = null;
-  if (label === null && historyLabelModule(config) && currents.has('history')) {
+  if (label === null && !readOnly && !diagnostics.some((item) => item.severity === 'error') && historyLabelModule(config) && currents.has('history')) {
     try { if (appendHistory(readHistory(currents.get('history')), new Map(manifests.map((item) => [item.ref, item.hash])), { now: stamp }).changed) labelModule = historyLabelModule(config); }
     catch { /* an unreadable history is reported when it is rendered */ }
   }

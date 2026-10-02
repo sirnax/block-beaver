@@ -307,8 +307,15 @@ test('a label module derives the label of an appended entry from a repo file, an
 
   await writeFile(join(root, 'catalog/alpha.entry.ts'), unitManifest('Alpha two'));
   const check = await generateProject(root, { check: true });
-  assert.deepEqual([check.ok, check.diagnostics.map((item) => item.code), await calls(root)], [false, ['history-stale'], 'xx'], 'check evaluates read-only and writes nothing');
+  assert.deepEqual([check.ok, check.diagnostics.map((item) => item.code), await calls(root)], [false, ['history-stale'], 'x'], 'check reports the stale history but never evaluates the module');
+  const dry = await generateProject(root, { dryRun: true, now: NOW });
+  assert.deepEqual([dry.ok, dry.written, await calls(root)], [true, [], 'x'], 'dry-run does not evaluate the module either');
   assert.equal((await historyOf(root)).entries.length, 1);
+  await writeFile(join(root, 'catalog/broken.entry.ts'), "export const broken = {id:'broken',family:'unit'} as const;\n");
+  const fatal = await generateProject(root, { now: NOW });
+  assert.equal(fatal.ok, false);
+  assert.deepEqual([fatal.written, await calls(root), (await historyOf(root)).entries.length], [[], 'x', 1], 'a plan with an error never evaluates the module and writes nothing');
+  await rm(join(root, 'catalog/broken.entry.ts'));
   const changed = await generateProject(root, { now: NOW });
   assert.equal(changed.ok, true, JSON.stringify(changed.diagnostics));
   assert.deepEqual((await historyOf(root)).entries.map((item) => item.label), ['at step 1 1', 'at step 2 1']);

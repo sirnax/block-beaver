@@ -119,7 +119,8 @@ export async function loadFamilies({ root: inputRoot, config, paths, resolutionS
   let loaderUrl;
   try { loaderUrl = await resolveLoader(root, parsed.loader); }
   catch (error) { return { key: '', ...empty([...parsed.diagnostics, { rule: 'config-valid', code: 'loader-package-missing', severity: 'error', file: '.blocks/config.json', field: '$.loader', message: `Cannot resolve loader package ${config.loader}: ${error.message}` }]) }; }
-  const tracked = [...new Set([...state.loadedFiles, ...direct])].sort();
+  const labelFiles = historyLabelModule(config) ? state.labelFiles ?? [] : [];
+  const tracked = [...new Set([...state.loadedFiles, ...labelFiles, ...direct])].sort();
   const hashes = await contentHashes(root, tracked, fileHashes);
   const key = cacheKey({ config, resolutionSignature, matched, hashes, loaderUrl, paths: matchingPaths });
   if (!generate && state.results.has(key)) return structuredClone(state.results.get(key));
@@ -132,9 +133,11 @@ export async function loadFamilies({ root: inputRoot, config, paths, resolutionS
     // The hook hashes the exact bytes supplied to Node. Re-reading here could
     // cache an older evaluated value under newer bytes saved while it was loading.
     const initialHashes = new Map(hashes.map((item) => [item[0], item]));
-    const finalHashes = [...new Set([...direct, ...state.loadedFiles])].sort().map((path) => [path, result.fileHashes?.[path] ?? initialHashes.get(path)?.[1] ?? 'missing:unread', fileHashes[path] ?? null]);
+    const finalHashes = [...new Set([...direct, ...labelFiles, ...state.loadedFiles])].sort().map((path) => [path, result.fileHashes?.[path] ?? initialHashes.get(path)?.[1] ?? 'missing:unread', fileHashes[path] ?? null]);
     const finalKey = cacheKey({ config, resolutionSignature, matched, hashes: finalHashes, loaderUrl, paths: matchingPaths });
-    const { cacheable, ...publicResult } = result;
+    const { cacheable, labelFiles: reachedByLabel, ...publicResult } = result;
+    // Kept across ordinary loads: the label module is only evaluated in a generate pass, but editing what it reads must move the key.
+    if (reachedByLabel) state.labelFiles = reachedByLabel;
     const completed = { key: finalKey, ...publicResult, discoveredFiles: matchingPaths };
     if (!generate && cacheable !== false) {
       state.results.set(finalKey, structuredClone(completed));
