@@ -1,4 +1,5 @@
 import test from 'node:test';
+import { createHash } from 'node:crypto';
 import assert from 'node:assert/strict';
 import { cp, mkdir, readFile, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
@@ -248,4 +249,42 @@ test('upgrade lowers the baseline after an ignore entry, reports it in the plan 
   assert.deepEqual(restored.baseline.lowered, {});
   assert.equal(restored.changed.includes('.blocks/baseline.json'), false);
   assert.equal(JSON.parse(await readFile(join(root, '.blocks/baseline.json'), 'utf8')).coverage, initial.coverage - 2, 'Removing the ignore entry never raises the baseline.');
+});
+
+test('a 0.6.0 hash-trusted hook and CI workflow are rewritten to the summary format without a conflict', async (t) => {
+  const root = await installationFixture(t), runner = packageRunner(root);
+  await mkdir(join(root, '.github/workflows'), { recursive: true });
+  await writeFile(join(root, '.github/workflows/ci.yml'), 'on: push\n');
+  await installProject(root, { agents: ['codex'], version: '0.6.0', runner });
+  await upgradeProject(root, { version: '0.6.0', runner }); // the runner's lockfile now exists, so the CI install command settles
+  const paths = ['.git/hooks/pre-commit', '.github/workflows/block-beaver.yml'];
+  // The 0.6.0 bytes differ only by the missing flag, and the managed-region hash covers the region without its hash line.
+  const rehash = (text) => text.replace(/(# block-beaver:start\n)(# block-beaver:hash )[0-9a-f]{64}\n([\s\S]*?# block-beaver:end\n)/, (_, start, label, rest) => `${start}${label}${createHash('sha256').update(start + rest).digest('hex')}\n${rest}`);
+  const current = {};
+  for (const path of paths) {
+    current[path] = await readFile(join(root, path), 'utf8');
+    assert.equal(rehash(current[path]), current[path], `${path} hash helper matches the real hash`);
+    assert.match(current[path], /--format summary/);
+    const old = rehash(current[path].replaceAll(' --format summary', ''));
+    assert.ok(!old.includes('--format summary') && old !== current[path]);
+    await writeFile(join(root, path), old);
+  }
+  const upgraded = await upgradeProject(root, { version: '0.6.0', runner });
+  assert.deepEqual(upgraded.conflicts, []);
+  assert.equal(upgraded.complete, true);
+  for (const path of paths) assert.equal(await readFile(join(root, path), 'utf8'), current[path], path);
+  const repeat = await upgradeProject(root, { version: '0.6.0', runner });
+  assert.deepEqual(repeat.conflicts, []);
+  assert.deepEqual(repeat.changed, []);
+});
+
+test('an owner edit inside a 0.6.0 hook region still conflicts instead of being rewritten', async (t) => {
+  const root = await installationFixture(t), runner = packageRunner(root);
+  await installProject(root, { agents: ['codex'], version: '0.6.0', runner });
+  const hook = join(root, '.git/hooks/pre-commit');
+  const edited = (await readFile(hook, 'utf8')).replace(' --format summary', '').replace('# block-beaver:end', 'echo owner\n# block-beaver:end');
+  await writeFile(hook, edited);
+  const upgraded = await upgradeProject(root, { version: '0.6.0', runner });
+  assert.ok(upgraded.conflicts.some((conflict) => conflict.code === 'managed-edited' && conflict.path === '.git/hooks/pre-commit'));
+  assert.equal(await readFile(hook, 'utf8'), edited);
 });

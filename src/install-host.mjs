@@ -492,14 +492,14 @@ function githubWorkflow(ctx, pm, legacy = false) {
   const refresh = legacy ? '' : `      - name: Regenerate the block view\n        run: ${local} update --root .\n`;
   // Unmarked 0.1.x and 0.4.0 files carry the old bytes; they are matched exactly so they can be adopted.
   const [actionMajor, nodeLine] = legacy ? ['v4', 'node-version: 22'] : ['v7', (ctx.nodeSetup ?? nodeSetupFrom()).yaml];
-  return `${ciMarker}\n${legacy ? '' : `${begin}\n`}${versionLine(ctx)}name: Block Beaver audit\non:\n  pull_request:\n    types: [opened, synchronize, reopened]\npermissions:\n  contents: read\njobs:\n  block-beaver-audit:\n    runs-on: ubuntu-latest\n    steps:\n      - uses: actions/checkout@${actionMajor}\n        with:\n          fetch-depth: 0\n      - uses: actions/setup-node@${actionMajor}\n        with:\n          ${nodeLine}\n${steps.join('\n')}\n      - name: Fetch the pull request base\n        env:\n          BASE_REF: \${{ github.base_ref }}\n        run: git fetch --no-tags origin "+refs/heads/\${BASE_REF}:refs/remotes/origin/\${BASE_REF}"\n${refresh}      - name: Audit against the merge base\n        env:\n          BLOCK_BEAVER_BASE_REF: origin/\${{ github.base_ref }}\n        run: ${local} audit --base merge-base --strict\n${legacy ? '' : `${end}\n`}`;
+  return `${ciMarker}\n${legacy ? '' : `${begin}\n`}${versionLine(ctx)}name: Block Beaver audit\non:\n  pull_request:\n    types: [opened, synchronize, reopened]\npermissions:\n  contents: read\njobs:\n  block-beaver-audit:\n    runs-on: ubuntu-latest\n    steps:\n      - uses: actions/checkout@${actionMajor}\n        with:\n          fetch-depth: 0\n      - uses: actions/setup-node@${actionMajor}\n        with:\n          ${nodeLine}\n${steps.join('\n')}\n      - name: Fetch the pull request base\n        env:\n          BASE_REF: \${{ github.base_ref }}\n        run: git fetch --no-tags origin "+refs/heads/\${BASE_REF}:refs/remotes/origin/\${BASE_REF}"\n${refresh}      - name: Audit against the merge base\n        env:\n          BLOCK_BEAVER_BASE_REF: origin/\${{ github.base_ref }}\n        run: ${local} audit --base merge-base --strict${legacy ? '' : ' --format summary'}\n${legacy ? '' : `${end}\n`}`;
 }
 
 function gitlabJob(ctx, pm, legacy = false) {
   const install = installCommands(pm, { runner: 'gitlab' }).map((command) => `    - ${command}`).join('\n');
   const local = legacy ? 'npx --no-install block-beaver' : localBlockBeaverCommand(pm);
   const image = legacy ? '22' : ((ctx.nodeSetup ?? nodeSetupFrom()).image ?? DEFAULT_CI_NODE);
-  return `${ciMarker}\n${legacy ? '' : `${begin}\n`}${versionLine(ctx)}block_beaver_audit:\n  image: node:${image}\n  stage: .pre\n  variables:\n    GIT_DEPTH: '0'\n  rules:\n    - if: '$CI_PIPELINE_SOURCE == "merge_request_event"'\n  script:\n${install}\n    - git fetch --no-tags origin "+refs/heads/$CI_MERGE_REQUEST_TARGET_BRANCH_NAME:refs/remotes/origin/$CI_MERGE_REQUEST_TARGET_BRANCH_NAME"\n${legacy ? '' : `    - ${local} update --root .\n`}    - BLOCK_BEAVER_BASE_REF="origin/$CI_MERGE_REQUEST_TARGET_BRANCH_NAME" ${local} audit --base merge-base --strict\n${legacy ? '' : `${end}\n`}`;
+  return `${ciMarker}\n${legacy ? '' : `${begin}\n`}${versionLine(ctx)}block_beaver_audit:\n  image: node:${image}\n  stage: .pre\n  variables:\n    GIT_DEPTH: '0'\n  rules:\n    - if: '$CI_PIPELINE_SOURCE == "merge_request_event"'\n  script:\n${install}\n    - git fetch --no-tags origin "+refs/heads/$CI_MERGE_REQUEST_TARGET_BRANCH_NAME:refs/remotes/origin/$CI_MERGE_REQUEST_TARGET_BRANCH_NAME"\n${legacy ? '' : `    - ${local} update --root .\n`}    - BLOCK_BEAVER_BASE_REF="origin/$CI_MERGE_REQUEST_TARGET_BRANCH_NAME" ${local} audit --base merge-base --strict${legacy ? '' : ' --format summary'}\n${legacy ? '' : `${end}\n`}`;
 }
 
 function ciContent(ctx, path, before, desired, pm, render) {
@@ -1038,7 +1038,7 @@ export async function planHostSetup(root, { config, agents = [], fixIgnores = fa
   ctx.manifest = await readManifest(ctx);
   ctx.work = resolveWork(ctx);
   ctx.pm = await detectPackageManager(ctx);
-  ctx.auditStaged = `${localBlockBeaverCommand(ctx.pm.id || 'npm')} audit --staged --root .`;
+  ctx.auditStaged = `${localBlockBeaverCommand(ctx.pm.id || 'npm')} audit --staged --format summary --root .`;
 
   await planHooks(ctx);
   await planCi(ctx);
