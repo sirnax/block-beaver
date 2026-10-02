@@ -5,6 +5,7 @@ import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { symlink } from 'node:fs/promises';
 import { fileURLToPath } from 'node:url';
+import { spawnSync } from 'node:child_process';
 import { generateProject, importProjectHistory } from '../src/families/commands.mjs';
 import { parseFamiliesConfig } from '../src/families/config.mjs';
 import { HistoryError, appendHistory, historySnapshots, importHistory, readHistory, replayHistory, serializeHistory } from '../src/families/history.mjs';
@@ -333,18 +334,46 @@ test('--label overrides the module, which then never runs; a string history.labe
   assert.deepEqual((await historyOf(plain)).entries.map((item) => item.label), ['static']);
 });
 
-test('custom generators see the derived label in the pass that appends the entry, and null once nothing is appended', async (t) => {
-  const generator = ['generators/seen.mjs', `import { appendFileSync } from 'node:fs'; import { defineGenerator } from 'block-beaver/kernel'; export default defineGenerator({out:'generated/seen.json',inputs:['catalog/*.entry.ts'],generate:(ctx)=>{ appendFileSync('seen.log', String(ctx.label) + '\\n'); return JSON.stringify({label:ctx.label}); }});\n`];
-  const root = await labelRepo(t, { generators: [generator] });
+const labelGenerator = ['generators/seen.mjs', `import { appendFileSync } from 'node:fs'; import { defineGenerator } from 'block-beaver/kernel'; export default defineGenerator({out:'generated/seen.json',inputs:['catalog/*.entry.ts'],generate:(ctx)=>{ appendFileSync('seen.log', String(ctx.label) + '\\n'); return JSON.stringify({label:ctx.label}); }});\n`];
+
+test('the derived label labels the history entry only: generators never see it, and gen settles with a clean check', async (t) => {
+  const root = await labelRepo(t, { generators: [labelGenerator] });
   const seen = async () => (await readFile(join(root, 'seen.log'), 'utf8')).trim().split('\n');
-  assert.equal((await generateProject(root, { now: NOW })).ok, true);
-  assert.equal((await seen())[0], 'at step 1 1', 'the first generator pass already had the derived label');
+  const first = await generateProject(root, { now: NOW });
+  assert.equal(first.ok, true, JSON.stringify(first.diagnostics));
+  const baseline = await labelRepo(t, { label: 'static', module: null, generators: [labelGenerator] });
+  assert.equal((await generateProject(baseline, { now: NOW })).ok, true);
+  const plain = (await readFile(join(baseline, 'seen.log'), 'utf8')).trim().split('\n').length;
+  assert.deepEqual(await seen(), Array(plain).fill('null'), 'as many generator passes as a plain string label needs, never the derived label');
+  assert.deepEqual(JSON.parse(await readFile(join(root, 'generated/seen.json'), 'utf8')), { label: null });
   assert.equal((await generateProject(root, { check: true })).ok, true, 'a settled repository checks clean');
+
   await writeFile(join(root, 'catalog/alpha.entry.ts'), unitManifest('Alpha two'));
   await writeFile(join(root, 'ROADMAP.md'), 'step 2\n');
-  assert.equal((await generateProject(root, { now: NOW })).ok, true);
-  assert.ok((await seen()).includes('at step 2 1'));
+  const again = await generateProject(root, { now: NOW });
+  assert.equal(again.ok, true, JSON.stringify(again.diagnostics));
+  await writeFile(join(baseline, 'catalog/alpha.entry.ts'), unitManifest('Alpha two'));
+  assert.equal((await generateProject(baseline, { now: NOW })).ok, true);
+  const plainTotal = (await readFile(join(baseline, 'seen.log'), 'utf8')).trim().split('\n').length;
+  assert.equal((await seen()).length, plainTotal, 'the same number of generator passes as a plain string label');
+  assert.ok((await seen()).every((item) => item === 'null'));
+  assert.deepEqual(again.written.sort(), ['.blocks/history.json'].sort(), 'only the history was written; the generator output stayed fresh');
   assert.deepEqual((await historyOf(root)).entries.map((item) => item.label), ['at step 1 1', 'at step 2 1']);
+  assert.equal((await generateProject(root, { check: true })).ok, true);
+});
+
+test('kit create with a label module persists no derived label in generator output', async (t) => {
+  const contract = `import { defineFamily, s } from 'block-beaver/kernel'; export default defineFamily({id:'unit',fields:s.object({tag:s.string()}),implementation:['none'],generators:['history'],scaffold:{files:[{path:'catalog/{{id}}.entry.ts',template:'export default { id: {{json.id}}, family: {{json.family}}, version: 1, name: {{json.name}}, description: {{json.description}}, rationale: {{json.rationale}}, implementation: { kind: "none" }, tag: "green" };\\n'}]}});\n`;
+  const root = await labelRepo(t, { generators: [labelGenerator], extra: { 'definitions/unit.ts': contract } });
+  const cli = (...args) => spawnSync(process.execPath, [join(packageRoot, 'bin/block-beaver.mjs'), ...args, '--root', root], { encoding: 'utf8', timeout: 60000 });
+  assert.equal(JSON.parse(cli('gen').stdout).ok, true);
+  const created = cli('kit', 'create', 'unit', 'beta', '--json', '{"name":"Beta","description":"Second","rationale":"Because"}');
+  assert.equal(created.status, 0, created.stdout + created.stderr);
+  assert.deepEqual(JSON.parse(await readFile(join(root, 'generated/seen.json'), 'utf8')), { label: null });
+  assert.equal((await historyOf(root)).entries.length, 2, 'the new block appended an entry');
+  const check = cli('gen', '--check');
+  assert.equal(check.status, 0, check.stdout + check.stderr);
+  assert.equal(JSON.parse(check.stdout).ok, true);
 });
 
 test('an invalid label module is a history-label-invalid error and nothing is written', async (t) => {

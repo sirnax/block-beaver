@@ -298,7 +298,7 @@ async function execute(message) {
       const buildContext = (label) => readonly({ config: jsonCopy(config), families: jsonCopy(result.families), manifests: (family) => readonly(manifests.filter((item) => item.family === family)), blocks: () => manifests, entries: (family) => family === undefined ? entries : readonly(entries.filter((item) => item.family === family)), graph: jsonCopy(generate.graph), resolve: (from, spec) => readonly(project.resolveImport(from, spec, { mode: 'import' })), label });
       try { ctx = buildContext(generate.label ?? null); }
       catch (error) { contextError = new TypeError(`Generator context must contain only JSON data: ${error.message}`); }
-      // A derived history label runs first, fresh in this child, and becomes ctx.label for every generator below.
+      // A derived history label labels the history entry only; ctx.label stays the non-derived value for every generator.
       if (generate.labelModule && !contextError) {
         const path = generate.labelModule, before = new Set(loadedFiles);
         try {
@@ -309,7 +309,6 @@ async function execute(message) {
           if (value !== null && typeof value !== 'string') throw new TypeError(`it returned ${typeof value}; the label must be a string or null`);
           for (const input of matchGlobs(discovered, exports.inputs ?? [])) loadedFiles.add(input);
           result.label = value;
-          ctx = buildContext(value);
         } catch (error) { diagnostic('history-label-invalid', `History label module ${path} is invalid: ${error?.message || String(error)}`, { file: path, field: '$.history.label.module' }, 'family-drift'); }
         // Files only the label module reached (its import closure and declared inputs), so ordinary loads can keep tracking them.
         result.labelFiles = [...loadedFiles].filter((file) => !before.has(file));
