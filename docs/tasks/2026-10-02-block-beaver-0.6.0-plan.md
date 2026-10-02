@@ -74,7 +74,8 @@ The project can then delete its own codegen, map and kit scripts.
 - **Acceptance:** each example rule reports under `family-valid`, with a stable code and the offending file paths, in both commands.
 
 ### C — Decouple floor order (#29)
-- **Purpose:** map floor order (`map.floors`, bottom to top) is independent of index, registry and `ctx.blocks()` order. Those still follow `families[]`.
+- **Purpose:** map floor order (`map.floors`) is independent of index, registry and `ctx.blocks()` order. Those still follow `families[]`.
+- **Decision during integration:** `map.floors` lists floors top first, the direction the map already draws `families`. #29 says bottom to top, but following it would have changed every existing map.
 - **Boundary:**
   - split `floor` from the config index in `src/families/config.mjs`, `src/families/load-worker.mjs`, `src/families/generate.mjs`, `src/families/builtin-generators.mjs`, `src/families/graph.mjs` and `src/families/map-render.mjs`;
   - tests in `tests/family-map.test.mjs` and `tests/family-generation.test.mjs`.
@@ -177,8 +178,80 @@ The project can then delete its own codegen, map and kit scripts.
 
 ## Known limits
 
-- Recorded as slices land.
+- `block-beaver audit` in a repository with no commits fails with a git error instead of a JSON result. `main` (0.5.1) behaves the same, so this is outside 0.6.0.
+- A view that is ignored only through `.git/info/exclude` or a global excludes file is not visible inside the staged snapshot. It is compared against the working copy, as in 0.5.1.
+- `baseline --lower` lowers coverage and resolution counts. It does not lower lint allowances, because those counts need ESLint.
+- Grouping with `map.groupBy` starts a new row for each group, so many small groups make a floor tall.
+- The family map appears in the console's Map view. The Blocks view lists blocks with unused, reach and group chips.
 
 ## Evidence
 
-- Recorded as slices land: commits, checks per Node version, review findings, tarball runs, CI and the live editor gate.
+**Commits on `release/0.6.0`:**
+
+| Commit | Slice |
+| --- | --- |
+| `69c3d1d` | Plan and docs |
+| `ec915e1` | 0: config groundwork |
+| `a4b3c63` | E: stable generation (#32) |
+| `0e600d8` | D: unclaimed honours ignore and exclude (#31) |
+| `86faab3` | C: `map.floors` (#29) |
+| `3b34397` | A: implementation arms (#27) |
+| `cdbd299` | B: set-wide checks (#28) |
+| `1332072` | F1: map parity data (#30) |
+| `d6bfdaf` | G: staged view regeneration and `baseline --lower` (#26) |
+| `06e2c8a` | H: README, config reference, CHANGELOG, version 0.6.0 |
+| `b77ad7b` | H: adoption fixture (#33) |
+| `eeb54f6` | Fixes from the first review |
+| `1b3cde4` | F2: map parity rendering (#30) |
+| `aa3d348` | Fixes from the second review |
+
+**Workers.** Claude Sonnet 5.5 built A–E and the adoption fixture. Claude Opus 5.5 built F1, F2 and G. Each worked in its own worktree. Several worktrees started at `965e22f` instead of `release/0.6.0`, so slices were applied as three-way patches, and conflicts in `load-worker.mjs`, `loader.mjs` and the appended tests were resolved by hand.
+
+**Checks.**
+- `npm run check` passes locally on Node 26.10.0 with 447 tests, 0 failures. The kernel is 4738 of 6144 gzip bytes.
+- The other Node versions run in CI on the release PR.
+
+**Cross-family review (GPT reviews Claude work).**
+- **Review 1:** gpt-6.1-sol, xhigh effort, covering slices 0, A–E, F1 and G. Fixed in `eeb54f6`:
+  - P1: a checks-only config skipped every check module.
+  - P2: `gen` reported a false `generator-unstable` after the third write.
+  - P2: config `checks` modules took a different signature from `checkAll`.
+  - P2: `checkAll` lacked types (already fixed in `06e2c8a`).
+  - P2: callback types excluded data kinds.
+  - P2: commented-out calls counted as binding reach. This is now matched through the TypeScript AST.
+  - P2: non-string binding names crashed the scan.
+  - P2: audit findings dropped `code` and `field`.
+- **Review 2:** gpt-6.1-sol, xhigh effort, covering F2 and `eeb54f6`. No P1 or P3, and no F2 findings. Fixed in `aa3d348`:
+  - P2: errors from the verification plan were discarded.
+  - P2: `config-valid` findings still lost `code` and `field`.
+  - P2: the widened callback types broke existing narrowing on `kind === 'module'`. `LoadedManifest` is now opt-in.
+- **Review 3:** gpt-6.1-sol, high effort, on `aa3d348`. No P1, P2 or P3 findings; all three fixes confirmed.
+
+**Adoption fixture (`tests/adoption.test.mjs`).** The fixture has three families, one with extended module arms. It also has a cross-family `checks` module, suffix-sharing fixtures excluded with `exclude`, a manifest that imports a generated registry, and `map.floors` in a different order from `families`.
+- The JSON index and coverage outputs match hand-built literals byte for byte.
+- `gen` is followed by a clean `gen --check`, and `audit --strict` passes.
+- A failing variant reports `family-valid` with the manifest path in both `gen --check` and `audit`.
+
+**Packed tarball.** `block-beaver-0.6.0.tgz` has shasum `14c2b962…d4a0` and 71 files. It was tested in a disposable npm repository outside this checkout:
+- The install commit went through the managed pre-commit hook.
+- **#26:** a source edit was committed through the hook without `update`, and the working view was not modified.
+- After `ignore: ["legacy/**"]`, `upgrade` lowered `baseline.json` coverage from 3 to 2. A later `audit --strict` passed.
+- `npm publish --dry-run --access public` reported `block-beaver@0.6.0`, 71 files and the same shasum.
+
+**Map view (Playwright).** The test was a fixture with 3 families and 15 blocks, `map.floors`, `groupBy`, a binding, two skins, and history with two removed blocks, served through `prepareView` under a strict nonce CSP. It produced no console errors. In the generated view:
+- Focusing `src/pages` drew six reach lines and lit six blocks across three floors.
+- At the first history snapshot, only the blocks that existed then were shown, plus the two ghost bricks.
+- The skin choice and slider position were restored after a reload.
+
+The console's Map view showed the same map. Its Blocks view showed the unused, reach and group chips.
+
+**Live editor gate.** The candidate fingerprint is `8492c275311a32bc99c3f4b2a26d2860c113306f697580ff802d19705f9407a8`, at `aa3d348`.
+
+| Case | Claude (claude-sonnet-5-5) | Codex (trusted hooks) |
+| --- | --- | --- |
+| normal | pass | pending |
+| bypass | pass | pending |
+| failed | pass | pending |
+| drift | pass | pending |
+
+An earlier Claude run passed all four cases at fingerprint `e1285f49…`, before `aa3d348`. The Codex cases need `--codex-hook-trust`, and the owner must trust the hook interactively in the Codex UI.
