@@ -12,13 +12,13 @@ All notable user visible changes are recorded here. Releases follow semantic ver
 
 **Compatibility notes**
 
-- **Hook and CI bytes change.** The managed pre-commit runs `audit --staged --format summary --root .`, lefthook does the same, and the managed GitHub and GitLab CI jobs run `audit --base merge-base --strict --format summary`. `upgrade` rewrites these hash-verified managed regions once, with no conflict; hand-edited regions still conflict. This is the one case where upgrading from 0.6.0 does more than update the version stamp.
+- **Hook and CI bytes change.** The managed pre-commit runs `audit --staged --format summary --root .`, lefthook does the same, and the managed GitHub and GitLab CI jobs run `audit --base merge-base --strict --format summary`. `upgrade` rewrites these hash-verified managed regions once, with no conflict; hand-edited regions still conflict. Besides the version stamps, `upgrade` also rewrites the managed `WORKFLOW.md` and the agent skill reference, which gain paragraphs on the one-line audit output, `gen --adopt` and restoring imported outputs.
 - **Other new keys are optional.** The new keys are link `match`, contract `map.group`, generator `region`, config `history.label` as `{ module }` and config `view.detail`. Leaving them out keeps 0.6.0 output bytes identical.
 - **Graph schema.** `graph.json` stays at schema 2.
 - **New codes.** `output-required-for-load`, `adopt-not-claimed`, `region-missing`, `region-duplicate`, `history-label-invalid` and `view-too-large`. `output-required-for-load` replaces `unresolved-import` when the missing file is a known claimed output, and the `output-conflict` message now mentions `gen --adopt`.
 - **`gen` arguments.** `gen` with stray positional arguments now fails with a usage error. Only `--adopt` takes paths.
 - **View exports registry.** `.blocks/view-exports.json` entries may carry `detail`. It is written only when the detail is not `full`, so existing entries keep their bytes.
-- **Generator cache.** The cache now records each generator's `out`, so every cached generator re-runs once after upgrading.
+- **Generator cache.** A generator's cache context now includes each manifest's path and export name, and the cache records each generator's `out`. Every cached generator therefore re-runs once after upgrading.
 
 **Changes**
 
