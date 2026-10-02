@@ -71,7 +71,7 @@ test('history is replayed into graph snapshots and duplicate blocks fail without
   ] } });
   assert.equal(result.nodes.length, 1);
   assert.equal(result.familyDiagnostics[0].code, 'block-duplicate');
-  assert.deepEqual(result.history, [{ date: '2026-10-01', label: 'first', blocks: ['block:alpha:one'] }, { date: '2026-10-02', label: null, blocks: ['block:alpha:two'] }]);
+  assert.deepEqual(result.history, [{ date: '2026-10-01', label: 'first', blocks: ['block:alpha:one'], gone: [] }, { date: '2026-10-02', label: null, blocks: ['block:alpha:two'], gone: [{ id: 'block:alpha:one', family: 'alpha', name: 'one' }] }]);
 });
 
 test('family attachment reports unclaimed sibling folders from scanned and discovered files', () => {

@@ -74,8 +74,87 @@ export function findUnclaimed(families, filePaths, { isIgnored = () => false } =
   return [...folders.values()];
 }
 
+const identifier = /^[A-Za-z_$][\w$]*$/;
+const blockId = /^[A-Za-z0-9][A-Za-z0-9._-]*$/;
+const literal = (name) => name.replace(/\$/g, '\\$');
+
+/**
+ * Map parity data (0.6.0, schema 2, additive; only written when families are configured).
+ *
+ * `graph.codeReach`: `[{ app, folder, block, via, files }]`, sorted by app ('' for null),
+ * folder, block, then via. A folder reaches a block when one of its files
+ * - `via: 'import'`: imports or re-exports a file that the block is `implemented-by`
+ *   (its implementation module or a declared `files` entry), or
+ * - `via: 'binding'`: calls `call(registry.<id>, …)`, `call(registry['<id>'], …)` or
+ *   `call(registry["<id>"], …)` for a configured `map.bindings` entry `{ family, call, registry }`
+ *   and `block:<family>:<id>` exists.
+ * `app` is the file's app id or null; `folder` is the file's directory relative to its app
+ * root ('.' at the root), the same grouping key as the map's ordinary-code slabs; `files` are
+ * sorted project-relative paths. Files inside the reached block's own boundary, family
+ * manifests, contracts, generators and block-beaver generated files never count as reach.
+ *
+ * `graph.unused`: sorted block node ids with no incoming edge from a different block (typed
+ * family links or local `depends-on`) and no `codeReach` entry. Outgoing links do not count:
+ * a block that only depends on others but that nothing links to or reaches is unused.
+ */
+export function attachMapParity(graph, { bindings = [], sourceText } = {}) {
+  const nodes = new Map(graph.nodes.map((node) => [node.id, node]));
+  const appRoots = new Map((graph.apps || []).map((app) => [app.id, app.root]));
+  const boundaries = new Map();
+  for (const edge of graph.edges) {
+    if (edge.kind !== 'implemented-by' || nodes.get(edge.from)?.kind !== 'block' || !edge.to.startsWith('file:')) continue;
+    if (!boundaries.has(edge.from)) boundaries.set(edge.from, new Set());
+    boundaries.get(edge.from).add(edge.to);
+  }
+  const excluded = (file) => !file || file.kind !== 'file' || file.generated === true || ['manifest', 'contract', 'generator'].includes(file.familyRole);
+  const reach = new Map();
+  const add = (file, block, via) => {
+    if (excluded(file) || boundaries.get(block)?.has(file.id)) return;
+    const root = appRoots.get(file.app);
+    const relative = root && root !== '.' && file.path.startsWith(`${root}/`) ? file.path.slice(root.length + 1) : file.path;
+    const folder = relative.split('/').slice(0, -1).join('/') || '.';
+    const app = file.app ?? null;
+    const key = `${app ?? ''}\0${folder}\0${block}\0${via}`;
+    if (!reach.has(key)) reach.set(key, { app, folder, block, via, files: new Set() });
+    reach.get(key).files.add(file.path);
+  };
+  const implementers = new Map();
+  for (const [block, files] of boundaries) for (const file of files) {
+    if (!implementers.has(file)) implementers.set(file, []);
+    implementers.get(file).push(block);
+  }
+  for (const edge of graph.edges) {
+    if (!['imports', 'reexports'].includes(edge.kind) || !edge.from.startsWith('file:')) continue;
+    for (const block of implementers.get(edge.to) || []) add(nodes.get(edge.from), block, 'import');
+  }
+  const valid = (Array.isArray(bindings) ? bindings : []).filter((entry) => entry && typeof entry.family === 'string' && identifier.test(entry.call ?? '') && identifier.test(entry.registry ?? ''));
+  if (valid.length && typeof sourceText === 'function') {
+    const patterns = valid.map((entry) => ({ family: entry.family, call: entry.call, pattern: new RegExp(`(?<![\\w$])${literal(entry.call)}\\s*\\(\\s*${literal(entry.registry)}\\s*(?:\\.\\s*([A-Za-z_$][\\w$]*)|\\[\\s*(['"\`])([A-Za-z0-9][A-Za-z0-9._-]*)\\2\\s*\\])`, 'g') }));
+    for (const file of graph.nodes.filter((node) => node.kind === 'file').sort((a, b) => compare(a.path, b.path))) {
+      if (excluded(file)) continue;
+      const text = sourceText(file.path);
+      if (typeof text !== 'string') continue;
+      for (const { family, call, pattern } of patterns) {
+        if (!text.includes(call)) continue;
+        for (const match of text.matchAll(pattern)) {
+          const id = match[1] ?? match[3];
+          const block = graphId(`${family}:${id}`);
+          if (blockId.test(id) && nodes.get(block)?.kind === 'block') add(file, block, 'binding');
+        }
+      }
+    }
+  }
+  graph.codeReach = [...reach.values()]
+    .map((entry) => ({ ...entry, files: sorted(entry.files) }))
+    .sort((a, b) => compare(a.app ?? '', b.app ?? '') || compare(a.folder, b.folder) || compare(a.block, b.block) || compare(a.via, b.via));
+  const touched = new Set(graph.codeReach.map((entry) => entry.block));
+  for (const edge of graph.edges) if (edge.from !== edge.to && nodes.get(edge.from)?.kind === 'block' && nodes.get(edge.to)?.kind === 'block') touched.add(edge.to);
+  graph.unused = sorted(graph.nodes.filter((node) => node.kind === 'block' && !touched.has(node.id)).map((node) => node.id));
+  return graph;
+}
+
 /** Add validated family manifests to the existing project graph in place. */
-export function attachFamilies(graph, { load, project, history }) {
+export function attachFamilies(graph, { load, project, history, bindings, sourceText }) {
   const families = load.families || [], manifests = load.manifests || [];
   const diagnostics = [...(load.diagnostics || [])];
   const nodes = new Map(graph.nodes.map((node) => [node.id, node]));
@@ -155,6 +234,9 @@ export function attachFamilies(graph, { load, project, history }) {
   for (const app of graph.apps || []) app.counts.blocks = graph.nodes.filter((node) => node.kind === 'block' && node.app === app.id).length;
   graph.summary.blocks = graph.nodes.filter((node) => node.kind === 'block').length;
   graph.summary.relationships = graph.edges.length;
+  // Map parity fields exist only for family projects, so other graphs keep their 0.5.1 bytes.
+  const mapBindings = Array.isArray(bindings) ? bindings : [];
+  if (families.length) attachMapParity(graph, { bindings: mapBindings, sourceText });
   if (families.length || diagnostics.length) {
     // The loader cache key includes absolute resolver paths and process identity.
     // Persist only project-relative content so audit snapshots agree across checkouts.
@@ -167,6 +249,8 @@ export function attachFamilies(graph, { load, project, history }) {
       loadedHashes,
       history: graph.history ?? null,
       diagnostics,
+      // Bindings change codeReach without changing a source or manifest hash.
+      ...(mapBindings.length ? { bindings: mapBindings } : {}),
     };
     graph.fingerprint = createHash('sha256').update(canonicalJson(content)).digest('hex').slice(0, 16);
   }
