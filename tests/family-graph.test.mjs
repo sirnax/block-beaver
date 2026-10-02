@@ -79,6 +79,29 @@ test('family attachment reports unclaimed sibling folders from scanned and disco
   assert.deepEqual(result.familyDiagnostics.map((issue) => [issue.code, issue.file]), [['family-unclaimed', '.blocks/unclaimed'], ['family-unclaimed', 'blocks/beta']]);
 });
 
+test('unclaimed discovery skips excluded and ignored files and downgrades fixture and test strays to warnings', () => {
+  const task = { manifests: 'src/blocks/task/manifests/*.task.ts' };
+  const files = ['src/blocks/task/manifests/a.task.ts', 'src/blocks/task/fixtures/b.task.ts', 'src/blocks/task/drafts/c.task.ts', 'src/blocks/task/__fixtures__/d.task.ts', 'src/blocks/task/tests/e.task.ts', 'src/blocks/task/scratch/f.task.ts'];
+  const summary = (items) => items.map((item) => [item.file, item.severity]);
+  // No exclude or ignore keeps strays reported; only fixture and test folders soften.
+  assert.deepEqual(summary(findUnclaimed([task], files)), [['src/blocks/task/__fixtures__', 'warning'], ['src/blocks/task/drafts', 'error'], ['src/blocks/task/fixtures', 'warning'], ['src/blocks/task/scratch', 'error'], ['src/blocks/task/tests', 'warning']]);
+  // Excluded files are neither manifests nor strays.
+  assert.deepEqual(summary(findUnclaimed([{ ...task, exclude: ['src/blocks/task/fixtures/*.task.ts', 'src/blocks/task/drafts/*.task.ts'] }], files)), [['src/blocks/task/__fixtures__', 'warning'], ['src/blocks/task/scratch', 'error'], ['src/blocks/task/tests', 'warning']]);
+  // Ignored files are skipped through the project matcher.
+  assert.deepEqual(summary(findUnclaimed([task], files, { isIgnored: (path) => /\/(?:fixtures|__fixtures__|tests|drafts)\//.test(path) })), [['src/blocks/task/scratch', 'error']]);
+  assert.deepEqual(findUnclaimed([task], ['src/blocks/task/manifests/a.task.ts']), []);
+});
+
+test('family attachment honours project ignore and tolerates projects without isIgnored', () => {
+  const families = [family('alpha', { config: { contract: 'definitions/alpha.ts', manifests: 'blocks/alpha/*.ts' } })];
+  const files = [['blocks/alpha/one.ts'], ['blocks/stray/two.ts'], ['blocks/fixtures/three.ts']];
+  const stub = { ...noResolve, isIgnored: (path) => path.startsWith('blocks/stray/') };
+  const ignored = attachFamilies(graph(files), { project: stub, load: { families, manifests: [] } });
+  assert.deepEqual(ignored.familyDiagnostics.map((issue) => [issue.file, issue.severity]), [['blocks/fixtures', 'warning']]);
+  const plain = attachFamilies(graph(files), { project: noResolve, load: { families, manifests: [] } });
+  assert.deepEqual(plain.familyDiagnostics.map((issue) => [issue.file, issue.severity]), [['blocks/fixtures', 'warning'], ['blocks/stray', 'error']]);
+});
+
 test('invalid history shapes report diagnostics while attachment continues', () => {
   for (const history of [null, {}, { schemaVersion: 1, entries: {} }, { schemaVersion: 1, entries: [null] }, { schemaVersion: 1, entries: [{ date: '2026-10-01', source: 'gen', changes: {} }] }]) {
     const result = attachFamilies(graph(), { project: noResolve, load: { families: [family('alpha')], manifests: [loaded(manifest('alpha', 'one'))] }, history });

@@ -7,7 +7,7 @@ import { fileURLToPath } from 'node:url';
 import { promisify } from 'node:util';
 import { canonicalJson } from './canonical.mjs';
 import { parseFamiliesConfig } from './config.mjs';
-import { discoverFiles, matchGlobs } from './glob.mjs';
+import { discoverFiles, matchManifests } from './glob.mjs';
 
 const cliVersion = createRequire(import.meta.url)('../../package.json').version;
 const workerPath = fileURLToPath(new URL('./load-worker.mjs', import.meta.url));
@@ -110,7 +110,10 @@ export async function loadFamilies({ root: inputRoot, config, paths, resolutionS
   catch (error) { return { key: '', ...empty([...parsed.diagnostics, { rule: 'manifest-valid', code: error.code === 'FAMILY_FILE_LIMIT' ? 'loader-file-limit' : 'load-failed', severity: 'error', file: '.', message: error.message }]), ...(generate ? { outputs: [] } : {}) }; }
   const matchingPaths = [...new Set([...discovered, ...(paths || [])])].sort();
   const resolverPaths = paths === undefined ? discovered : paths;
-  const matched = parsed.families.flatMap((entry) => matchGlobs(matchingPaths, [entry.manifests]));
+  // Config ignore keeps ignored files from loading as manifests; the project-model matcher is only needed when patterns exist.
+  const ignored = Array.isArray(config?.ignore) && config.ignore.length ? (await import('../project-model.mjs')).ignoreMatcher(config.ignore) : () => false;
+  const manifestCandidates = matchingPaths.filter((path) => !ignored(path));
+  const matched = parsed.families.flatMap((entry) => matchManifests(manifestCandidates, entry));
   const direct = [...parsed.families.map((entry) => entry.contract), ...parsed.families.flatMap((entry) => entry.generators || []), ...parsed.generators, ...matched];
   const state = rootCache(root);
   let loaderUrl;

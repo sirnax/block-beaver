@@ -45,9 +45,16 @@ export function extractLinks(family, manifest) {
   return { links, diagnostics };
 }
 
-/** Find sibling manifest folders that have not been assigned a configured family. */
-export function findUnclaimed(families, filePaths) {
+const fixtureSegments = new Set(['fixtures', '__fixtures__', 'test', 'tests']);
+
+/**
+ * Find sibling manifest folders that have not been assigned a configured family.
+ * Files matching a family's `exclude` or the project's `ignore` are skipped; strays in fixture or test folders warn.
+ */
+export function findUnclaimed(families, filePaths, { isIgnored = () => false } = {}) {
   const patterns = families.map((family) => family.manifests);
+  // A family's exclude globs remove files from its manifest neighbourhood, so they are never strays.
+  const excluded = families.flatMap((family) => (Array.isArray(family.exclude) ? family.exclude : []).filter((pattern) => typeof pattern === 'string' && pattern));
   const shapes = sorted(patterns.flatMap((pattern) => {
     const parts = pattern.split('/'), first = parts.findIndex((part) => /[*?{[]/.test(part));
     // No preceding static folder means there is no discovery neighbourhood.
@@ -57,9 +64,12 @@ export function findUnclaimed(families, filePaths) {
   }));
   const folders = new Map();
   for (const file of [...filePaths].sort(compare)) {
-    if (patterns.some((pattern) => matchGlob(file, pattern)) || !shapes.some((shape) => matchGlob(file, shape))) continue;
+    if (isIgnored(file) || patterns.some((pattern) => matchGlob(file, pattern)) || excluded.some((pattern) => matchGlob(file, pattern)) || !shapes.some((shape) => matchGlob(file, shape))) continue;
     const folder = posix.dirname(file);
-    if (!folders.has(folder)) folders.set(folder, diagnostic('family-unclaimed', `Manifest folder '${folder}' belongs to no configured family`, { file: folder }));
+    if (!folders.has(folder)) {
+      const stray = folder.split('/').some((segment) => fixtureSegments.has(segment));
+      folders.set(folder, { ...diagnostic('family-unclaimed', `Manifest folder '${folder}' belongs to no configured family`, { file: folder }), ...(stray ? { severity: 'warning' } : {}) });
+    }
   }
   return [...folders.values()];
 }
@@ -71,7 +81,7 @@ export function attachFamilies(graph, { load, project, history }) {
   const nodes = new Map(graph.nodes.map((node) => [node.id, node]));
   const fileNodes = new Map(graph.nodes.filter((node) => node.kind === 'file').map((node) => [node.path, node]));
   const familyConfigs = families.map((family) => family.config).filter((config) => typeof config?.manifests === 'string');
-  diagnostics.push(...findUnclaimed(familyConfigs, sorted([...fileNodes.keys(), ...(load.discoveredFiles || [])])));
+  diagnostics.push(...findUnclaimed(familyConfigs, sorted([...fileNodes.keys(), ...(load.discoveredFiles || [])]), { isIgnored: typeof project?.isIgnored === 'function' ? (path) => project.isIgnored(path) : undefined }));
   const familyById = new Map(families.map((family) => [family.id, family]));
   const accepted = [];
   for (const item of manifests) {

@@ -442,3 +442,34 @@ test('the discovery limit returns a located diagnostic through loadFamilies', as
   assert.equal(result.diagnostics[0].file, '.');
   assert.equal(result.manifests.length, 0);
 });
+
+test('family exclude and config ignore keep files from loading as manifests', async (t) => {
+  const widget = { ...family, manifests: 'catalog/**/*.item.ts' };
+  const files = { 'catalog/fixtures/beta.item.ts': manifest('beta'), 'catalog/skipped/gamma.item.ts': manifest('gamma'), 'catalog/tests/delta.item.ts': manifest('delta') };
+  const ids = (result) => result.manifests.map((item) => item.id).sort();
+  // Without exclude or ignore every matching file loads.
+  const plain = await fixture(t, files, configFor({ families: [widget] }));
+  assert.deepEqual(ids(await loadFamilies(plain)), ['alpha', 'beta', 'delta', 'gamma']);
+  // A per-family exclude removes fixtures from the manifest set.
+  const excluded = await fixture(t, files, configFor({ families: [{ ...widget, exclude: ['catalog/fixtures/**', 'catalog/tests/**'] }] }));
+  const excludedResult = await loadFamilies(excluded);
+  assert.deepEqual(ids(excludedResult), ['alpha', 'gamma']);
+  assert.deepEqual(excludedResult.diagnostics, []);
+  // Config ignore keeps ignored files from loading, even when the scanner would have listed them.
+  const ignored = await fixture(t, files, configFor({ families: [widget], ignore: ['catalog/skipped/**'] }));
+  const ignoredResult = await loadFamilies(ignored);
+  assert.deepEqual(ids(ignoredResult), ['alpha', 'beta', 'delta']);
+  assert.equal(ignoredResult.discoveredFiles.includes('catalog/skipped/gamma.item.ts'), true);
+});
+
+test('excluded and ignored fixture folders are not family-unclaimed after attachment', async (t) => {
+  const task = { id: 'widget', contract: 'definitions/widget.family.ts', manifests: 'catalog/widgets/manifests/*.item.ts', exclude: ['catalog/widgets/fixtures/*.item.ts'] };
+  const files = { 'catalog/widgets/manifests/alpha.item.ts': manifest(), 'catalog/widgets/fixtures/sample.item.ts': manifest('sample'), 'catalog/widgets/ignored/skip.item.ts': manifest('skip'), 'catalog/widgets/stray/other.item.ts': manifest('other'), 'catalog/widgets/tests/t.item.ts': manifest('t') };
+  const data = await fixture(t, files, configFor({ families: [task], ignore: ['catalog/widgets/ignored/**'] }));
+  const load = await loadFamilies({ ...data, paths: undefined });
+  const graph = { schemaVersion: 2, root: '.', fingerprint: 'x', apps: [], summary: {}, nodes: [], edges: [] };
+  const project = { isIgnored: (path) => path.startsWith('catalog/widgets/ignored/'), resolveImport() { throw new Error('unexpected'); } };
+  attachFamilies(graph, { load, project });
+  assert.deepEqual(load.manifests.map((item) => item.id), ['alpha']);
+  assert.deepEqual(graph.familyDiagnostics.map((item) => [item.code, item.file, item.severity]), [['family-unclaimed', 'catalog/widgets/stray', 'error'], ['family-unclaimed', 'catalog/widgets/tests', 'warning']]);
+});

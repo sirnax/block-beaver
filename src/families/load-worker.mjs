@@ -6,10 +6,10 @@ import { isDeepStrictEqual } from 'node:util';
 import { pathToFileURL } from 'node:url';
 import ts from 'typescript';
 import { isSchema, validateManifest } from '../kernel/index.mjs';
-import { loadProjectModel } from '../project-model.mjs';
+import { ignoreMatcher, loadProjectModel } from '../project-model.mjs';
 import { parseFamiliesConfig, isFamilyGlob, isFamilyPath } from './config.mjs';
 import { canonicalJson, manifestHash } from './canonical.mjs';
-import { captureManifestId, discoverFiles, matchGlobs } from './glob.mjs';
+import { captureManifestId, discoverFiles, matchManifests } from './glob.mjs';
 import { assertSafeSource, installFamilyHooks, runtimeSourcePath } from './hooks.mjs';
 
 const coreKeys = new Set(['id', 'family', 'version', 'name', 'description', 'rationale', 'implementation', 'files']);
@@ -107,6 +107,7 @@ async function execute(message) {
   const discovered = await discoverFiles(root);
   const paths = message.paths ?? discovered;
   const manifestPaths = [...new Set([...discovered, ...paths])].sort();
+  const ignored = ignoreMatcher(config?.ignore);
   const diagnostic = (code, message, context = {}, rule = 'manifest-valid') => {
     const item = { rule, code, severity: 'error', message, ...context };
     result.diagnostics.push(item);
@@ -150,7 +151,7 @@ async function execute(message) {
         result.families.push({ ...jsonCopy(metadata), hasCheck: typeof check === 'function', config: familyConfig, floor });
       } catch (error) { errorDiagnostic(error, { file: entry.contract, family: entry.id }); }
     }
-    const candidates = parsed.families.flatMap((entry) => matchGlobs(manifestPaths, [entry.manifests]).map((path) => ({ entry, path }))).sort((a, b) => compare(a.path, b.path) || a.entry.floor - b.entry.floor);
+    const candidates = parsed.families.flatMap((entry) => matchManifests(manifestPaths.filter((path) => !ignored(path)), entry).map((path) => ({ entry, path }))).sort((a, b) => compare(a.path, b.path) || a.entry.floor - b.entry.floor);
     const manifestRefs = new Set();
     for (const { entry, path } of candidates) {
       const definition = definitions.get(entry.id);
