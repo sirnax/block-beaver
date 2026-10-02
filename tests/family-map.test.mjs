@@ -376,3 +376,59 @@ test('hostile text in reach, unused, ghost and group data is escaped', () => {
   assert.match(html, /&lt;img src=x onerror=alert\(1\)&gt;&quot;&#39;/);
   assert.match(html, /aria-label="&lt;img src=x onerror=alert\(1\)&gt;&quot;&#39; reaches 1 block"/);
 });
+
+const mapDetailFixture = () => {
+  const graph = parityFixture();
+  graph.edges = [
+    { from: 'file:src/main.ts', to: 'file:apps/admin/lib/main.ts', kind: 'imports', crossApp: true, evidence: { file: 'src/main.ts', line: 1, column: 9, text: 'import "../apps/admin/lib/main"' } },
+    ...graph.edges,
+    { from: 'block:record:second', to: 'file:src/main.ts', kind: 'implemented-by' },
+  ];
+  return graph;
+};
+const payload = (html) => JSON.parse(html.match(/<script type="application\/json" id="family-map-data"[^>]*>([\s\S]*?)<\/script>/)[1]);
+// The cross-app evidence list (data-map-history-*) is page detail, not the drawing; edge indices are compared separately.
+const mapAttributes = (html) => [...html.matchAll(/ (data-(?:map|family|floor|reach)[\w-]*)="([^"]*)"/g)].map(([, name, value]) => `${name}=${value}`).filter((pair) => !/^data-map-(?:edge|history-)/.test(pair));
+
+test('map detail embeds only what the family map draws and keeps the same drawing', () => {
+  const graph = mapDetailFixture();
+  const full = renderBlockMap(graph), slim = renderBlockMap(graph, { detail: 'map' });
+  assert.equal(renderBlockMap(graph, { detail: 'full' }), full);
+  const data = payload(slim), fullData = payload(full);
+  assert.deepEqual(data.edges.map((edge) => edge.kind), ['displays'], 'link edges only');
+  assert.equal(fullData.edges.length, 3);
+  assert.deepEqual(data.edges[0].evidence, { file: 'blocks/screens/main.ts', line: 1 }, 'evidence keeps file and line, never text or column');
+  assert.ok(!/"text"/.test(JSON.stringify(data.edges)) && !slim.includes('record → first') && !slim.includes('../apps/admin/lib/main"'));
+  assert.ok(data.nodes.every((node) => node.kind === 'block'), 'no file-level nodes');
+  assert.equal(fullData.nodes.filter((node) => node.kind === 'file').length, 2);
+  assert.ok(data.history.length === 3 && data.history.every((snapshot) => !('gone' in snapshot)));
+  assert.ok(fullData.history.every((snapshot) => 'gone' in snapshot));
+  assert.deepEqual(data.codeReach, graph.codeReach);
+  assert.deepEqual(mapAttributes(slim), mapAttributes(full), 'same floors, bricks, links, slabs and reach lines');
+  assert.deepEqual(renderFamilyMap(graph, { edges: graph.edges.filter((edge) => edge.link) }).replace(/data-map-edge="\d+"/, ''), renderFamilyMap(graph).replace(/data-map-edge="\d+"/, ''));
+  assert.doesNotMatch(slim, / data-map-history-from="/);
+  assert.match(full, /data-map-edge="1"/);
+  assert.match(slim, /data-map-edge="0"/, 'edge indices follow the embedded list');
+  assert.ok(slim.length < full.length);
+});
+
+test('the controller resolves renumbered edge indices against the trimmed payload', (t) => {
+  withBrowserGlobals(t);
+  const slim = renderBlockMap(mapDetailFixture(), { detail: 'map' });
+  const dom = fakeDocument(slim);
+  const search = { value: '' }, app = { value: 'all' };
+  const controller = installFamilyMap(dom, payload(slim), { filters: () => ({ query: search.value, app: app.value }) });
+  const path = dom.querySelector('[data-map-edge]');
+  assert.equal(path.dataset.mapEdge, '0');
+  dom.listeners.get('click')({ type: 'click', target: { closest: () => path } });
+  const panel = dom.querySelector('#family-evidence');
+  assert.equal(panel.hidden, false);
+  assert.match(panel.innerHTML, /<strong>displays<\/strong><p>Main screen → First record<\/p><p><code>blocks\/screens\/main\.ts:1<\/code><\/p>/);
+  assert.match(panel.innerHTML, /<pre><\/pre>/, 'missing evidence text renders empty, not "undefined"');
+  assert.doesNotMatch(panel.innerHTML, /undefined/);
+  app.value = 'cross'; controller.update();
+  assert.equal(path.hasAttribute('hidden'), false, 'cross-app filter reads the trimmed edge');
+  app.value = 'all'; search.value = 'nomatch'; controller.update();
+  assert.equal(path.hasAttribute('hidden'), true);
+  controller.dispose();
+});

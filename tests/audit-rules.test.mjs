@@ -304,7 +304,7 @@ test('family drift checks registered modules without families and never writes o
 });
 
 test('malformed export registries return structured audit failures and CLI exit 2', async (t) => {
-  for (const [name, registry] of [['JSON', '{'], ['shape', { exports: [] }], ['path', [{ path: '../escaped.mjs', format: 'module' }]]]) {
+  for (const [name, registry] of [['JSON', '{'], ['shape', { exports: [] }], ['path', [{ path: '../escaped.mjs', format: 'module' }]], ['detail', [{ path: 'snapshot.mjs', format: 'module', detail: 'tiny' }]]]) {
     await t.test(name, async (t) => {
       const { root, put } = await fixture(t);
       await put('.blocks/view-exports.json', registry);
@@ -432,4 +432,68 @@ test('config-valid findings keep the diagnostic code and field path', () => {
   assert.equal(findings.length, 1);
   assert.equal(findings[0].field, '$.map.bindings[0]');
   assert.equal(findings[0].code, 'family-path-invalid');
+});
+
+test('view.detail is validated under config-valid with a field path', () => {
+  for (const detail of ['full', 'map']) assert.deepEqual(parseFamiliesConfig({ schemaVersion: 1, apps: [], view: { detail } }).diagnostics, []);
+  assert.deepEqual(parseFamiliesConfig({ schemaVersion: 1, apps: [] }).diagnostics, []);
+  for (const view of [{ detail: 'tiny' }, { detail: 3 }, 'map', []]) {
+    const [diagnostic, ...rest] = parseFamiliesConfig({ schemaVersion: 1, apps: [], view }).diagnostics;
+    assert.equal(rest.length, 0);
+    assert.equal(diagnostic.rule, 'config-valid');
+    assert.equal(diagnostic.field, typeof view === 'object' && !Array.isArray(view) ? '$.view.detail' : '$.view');
+  }
+  const failing = evaluateAuditRules({ ...context(), config: { schemaVersion: 1, apps: [], view: { detail: 'tiny' } } }).find((rule) => rule.id === 'config-valid');
+  assert.equal(failing.pass, false);
+  assert.ok(failing.findings.some((finding) => finding.field === '$.view.detail' && /view\.detail must be full or map/.test(finding.message)));
+  assert.equal(evaluateAuditRules({ ...context(), config: { schemaVersion: 1, apps: [], view: { detail: 'map' } } }).find((rule) => rule.id === 'config-valid').pass, true);
+});
+
+test('family drift renders each registered module at its recorded detail', async (t) => {
+  const { root, put } = await fixture(t);
+  const { scanRepository } = await import('../src/scanner.mjs');
+  const { attachProjectRegistry } = await import('../src/adapter.mjs');
+  const { renderViewModule } = await import('../src/view-exports.mjs');
+  await put('.blocks/view-exports.json', [{ path: 'map.mjs', format: 'module', detail: 'map' }, { path: 'full.mjs', format: 'module' }]);
+  const graph = await attachProjectRegistry(await scanRepository(root, { writeConfig: false }));
+  await put('map.mjs', renderViewModule(graph, { detail: 'map' }));
+  await put('full.mjs', renderViewModule(graph));
+  const drift = async () => (await auditProject(root)).rules.find((rule) => rule.id === 'family-drift');
+  assert.equal((await drift()).pass, true, JSON.stringify(await drift()));
+  await put('map.mjs', renderViewModule(graph));
+  const stale = await drift();
+  assert.equal(stale.pass, false, 'a map-detail module holding full-detail bytes is stale');
+  assert.deepEqual(stale.findings.map((finding) => finding.path), ['map.mjs']);
+});
+
+test('view-fresh checks exported modules at their recorded detail and names --detail map in the remediation', { skip: process.platform === 'win32' }, async (t) => {
+  const { installationFixture, packageRunner } = await import('./helpers/install-fixture.mjs');
+  const { installProject } = await import('../src/install.mjs');
+  const root = await installationFixture(t);
+  const { version } = JSON.parse(await readFile(new URL('../package.json', import.meta.url), 'utf8'));
+  const cliPath = fileURLToPath(new URL('../bin/block-beaver.mjs', import.meta.url));
+  git(root, 'add', '.');
+  git(root, '-c', 'user.name=Test', '-c', 'user.email=test@example.com', 'commit', '-qm', 'base');
+  await installProject(root, { version, agents: [], runner: packageRunner(root) });
+  const view = (...args) => execFileSync(process.execPath, [cliPath, 'view', '--format', 'module', '--out', 'snapshot.mjs', ...args, '--root', root], { stdio: 'pipe' });
+  const fresh = async () => (await auditProject(root, { mode: 'working' })).rules.find((rule) => rule.id === 'view-fresh');
+  view('--detail', 'map');
+  assert.equal((await fresh()).pass, true, JSON.stringify(await fresh()));
+  await writeFile(join(root, 'src/extra.ts'), 'export const extra = 1;\n');
+  execFileSync(process.execPath, [cliPath, 'update', '--root', root], { stdio: 'pipe' });
+  const stale = await fresh();
+  assert.equal(stale.pass, false);
+  const finding = stale.findings.find((entry) => entry.path === 'snapshot.mjs');
+  assert.equal(finding.remediation, 'block-beaver view --format module --detail map');
+  const before = await readFile(join(root, 'snapshot.mjs'), 'utf8');
+  assert.equal((await fresh()).pass, false);
+  assert.equal(await readFile(join(root, 'snapshot.mjs'), 'utf8'), before, 'audit is read-only');
+  view('--detail', 'map');
+  assert.equal((await fresh()).pass, true, 'regenerating at the recorded detail restores freshness');
+  view('--detail', 'full');
+  assert.equal((await fresh()).pass, true);
+  await writeFile(join(root, '.blocks/view-exports.json'), JSON.stringify([{ path: 'snapshot.mjs', format: 'module', detail: 'map' }]));
+  const mismatch = await fresh();
+  assert.equal(mismatch.pass, false, 'a full-detail module under a map-detail entry is stale');
+  assert.equal(mismatch.findings.find((entry) => entry.path === 'snapshot.mjs').remediation, 'block-beaver view --format module --detail map');
 });

@@ -72,7 +72,7 @@ function ghostBlocks(graph, nodes) {
   return [...ghosts.values()].sort((a, b) => order(a.id, b.id));
 }
 
-export function renderFamilyMap(graph) {
+export function renderFamilyMap(graph, { edges = graph.edges } = {}) {
   if (!graph.families?.length) return '';
   const nodes = new Map(graph.nodes.map((node) => [node.id, node]));
   const points = new Map();
@@ -148,7 +148,7 @@ export function renderFamilyMap(graph) {
     }
     return `<g class="ordinary-code reaches" tabindex="0" role="button" aria-label="${escape(`${group.folder} reaches ${reached.length} ${reached.length === 1 ? 'block' : 'blocks'}`)}" data-map-reach="${index}" data-map-folder="${escape(group.folder)}" data-map-app="${escape(group.app)}" data-map-search="${escape(group.files.map((file) => file.path).join(' ').toLowerCase())}">${shape}<text class="reach-count" x="${x + 195}" y="${top - 5}" text-anchor="end">reaches ${reached.length} ${reached.length === 1 ? 'block' : 'blocks'}</text></g>`;
   }).join('');
-  const links = graph.edges.flatMap((edge, index) => {
+  const links = edges.flatMap((edge, index) => {
     if (!edge.link || !points.has(edge.from) || !points.has(edge.to)) return [];
     const from = points.get(edge.from), to = points.get(edge.to);
     const color = linkColor(edge.kind);
