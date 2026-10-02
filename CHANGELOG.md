@@ -4,7 +4,7 @@ All notable user visible changes are recorded here. Releases follow semantic ver
 
 ## Unreleased
 
-- No additional changes recorded.
+- 0.6.0 is in progress on `release/0.6.0`. See the [0.6.0 plan](docs/tasks/2026-10-02-block-beaver-0.6.0-plan.md).
 
 ## 0.5.1 — 2026-10-01
 

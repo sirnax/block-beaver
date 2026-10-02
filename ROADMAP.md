@@ -6,6 +6,8 @@ Implementation branch: `codex/block-beaver-v0.4-design` (merged). Development ch
 
 ## Status
 
+**0.6.0, adopting an existing family system (#26–#33), is planned on `release/0.6.0`.** See [the 0.6.0 plan](docs/tasks/2026-10-02-block-beaver-0.6.0-plan.md).
+
 **0.5.0 first-use fixes (#14–#18) and CodeQL chores (#10, #11) are integrated on `fix/0.5.0-first-use`** and pending release. See [the task record](docs/tasks/2026-10-01-block-beaver-0.5.0-fixes.md).
 
 **A–C and release readiness are complete at 0.4.0.** Remote Linux/macOS/Windows CI, trusted native Codex execution, package checks and independent release reviews passed. Block Beaver 0.4.0 is published to npm and GitHub. Fresh public-registry installation and complete onboarding checks passed. E remains deferred.
