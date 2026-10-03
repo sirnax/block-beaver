@@ -243,4 +243,41 @@ The goal is to fix all of them and release **0.8.0**:
 
 ## Release gate record
 
-_Filled in during release: CI run, live editor gate fingerprint, tarball integrity._
+**Candidate.** `release/0.8.0` at `d914ab4` (PR #57). Every slice was built in a worktree on `feat/0.8.0-<slug>` by a Sonnet worker and reviewed and merged by the integration owner. The `sonnet-high` agent type was not loaded in the session, so workers ran as general-purpose agents on Sonnet with the same worker rules.
+
+**Integration changes made during review**
+- **U (#52):** config `view.*` and `map.railLimit` validated but never reached the renderer. `attachProjectRegistry` now passes them through, but only when they are set, so other graphs keep their bytes.
+- **R (#55):** contracts and generators were skipped by guessing from filenames, which breaks when config puts them elsewhere. The check now uses the graph's `familyRole`.
+
+**Checks**
+- **Full check:** `BLOCK_BEAVER_REQUIRE_ESBUILD=1 npm run check` passed 618/618 tests on the commit before the last CodeQL fix. After that fix, `tests/kit-cli.test.mjs` passed 10/10, and CI covers the full matrix. Kernel gzip is 5545/6144. `node scripts/release-notes.mjs v0.8.0` passes.
+- **Packed tarball:** packed from the candidate and installed into disposable git repositories. The exact `0.8.0` pin is simulated in the lockfile because the version is not on the registry yet. All 16 smoke checks pass:
+  - `install --agents claude,codex`, then `--check` exits 2 before narrowing;
+  - `--dry-run` lists `removed` and writes nothing;
+  - narrowing to `claude` removes `.agents/` and `.codex/` and keeps owner text in `AGENTS.md`;
+  - `--check` exits 0 afterwards;
+  - the `runtime-import-dev-dependency` warning names `src/app/reg.ts:1` but not a type-only import or a test file;
+  - a gitignored `out/bundle.ts` is absent from the scan and from `graph.json`;
+  - staged and strict audits fail only with the expected `coverage-ratchet` for the deliberately undeclared smoke files;
+  - an import of a view export raises no resolution finding;
+  - `install --runtime` plans `npm install --save-prod --save-exact block-beaver@0.8.0`.
+- **Upgrade from the published 0.7.0:** `upgrade` changes only the managed hash and version stamps in 14 files, and `audit` then passes.
+- **Browser check:** Chromium, through `block-beaver start` under the strict nonce CSP, with dark `map.tokens` on a family project with 26 folders, a rail limit of 5 and custom page text:
+  - no element has a computed white background;
+  - the custom title, eyebrow, heading and escaped intro render;
+  - "Show all 26 folders" expands;
+  - ligatures are off;
+  - the console has no errors or warnings.
+- **Live editor gate:** `node scripts/live-editor-battle.mjs claude normal|bypass|failed|drift` all pass on head `d914ab4`, source fingerprint `7276becb6367d352cb791cb76197d4d976ce8664bd4a4954bfd2978fc82d9b7e`. The gate ran from a frozen worktree with Sonnet 5.5 at high effort.
+
+**Findings fixed before release**
+- **#56:** after narrowing `--agents`, Block Beaver's own setup exception still named the deleted files, so `exception-valid` failed the next audit. Narrowing now removes those paths from Block Beaver setup exceptions, and deletes an exception left with none.
+- **#52:** under a dark skin, the page's block cards and resolution report stayed white. They now use `--bb-panel-surface` and `--bb-control-border`, and a test rejects any literal white background.
+- **#51:** CodeQL `js/file-system-race` fired on `kit create --input-file`, which checked the size and then read the file separately. It now reads through one file handle.
+- **Gate re-runs:** an earlier gate run was blocked because the source changed during the run (`candidate-source-stable`). The final runs use a frozen worktree.
+
+**Known limits**
+- Git-aware scanning needs at least one tracked file. A fresh `git init` with nothing tracked uses the plain walk, which is the staged-audit snapshot's behaviour.
+- A failed `kit create` rollback removes the files it created but can leave the empty directories made for them.
+- `runtime-import-dev-dependency` reads the root `package.json`. The project model has no mapping from a file to its nearest `package.json`.
+- The overflow folders in the rail are plain list items, with no reach lines.
