@@ -54,9 +54,14 @@ export type FamilyDefinition = {id:string;fields:ObjectNode;implementation:reado
   /** `match` makes a join link: an edge to every `to` manifest whose `match` path (on that one family) shares a value with `field`. */
   links?:readonly {field:string;to:string|readonly string[];kind:string;match?:string}[];generators?:readonly ('registry'|'index'|'history')[];
   /** `group` clusters this family's map floor by a schema path (`.`/`[]`): array values are joined with `join` (default `', '`), no value gives `empty` (default no group), and `format` wraps the label around one `{value}`. It wins over config `map.groupBy`. */
-  map?:{title?:string;blurb?:string;group?:{field:string;join?:string;empty?:string;format?:string}};scaffold?:{files:readonly {path:string;template:string}[];manualSteps?:readonly string[]};
+  map?:{title?:string;blurb?:string;group?:{field:string;join?:string;empty?:string;format?:string}};scaffold?:ScaffoldDefinition;
   check?:(manifest:CoreManifest & Record<string,unknown>,ctx:{family:string;get(ref:string):unknown}) => readonly {path:string;message:string;code?:string}[] | void;
   checkAll?:(manifests:readonly (CoreManifest & Record<string,unknown>)[],ctx:SetCheckContext) => SetCheckIssues | Promise<SetCheckIssues>;};
+/** A computed scaffold: `plan` runs in the load worker; `readFile` reads project files (null when missing) and rejects paths that escape the root or follow symlinks. `all` and `entries` are this family's manifests. */
+export interface ScaffoldPlanContext {all:readonly (CoreManifest & Record<string,unknown>)[];entries:readonly {ref:string;family:string;id:string;path:string;exportName:string;hash:string;value:CoreManifest & Record<string,unknown>}[];readFile(path:string):Promise<string|null>;id:string;family:string;}
+/** `files` are created (exactly one must be the manifest); `updates` replace an existing file and are refused unless its current sha256 equals `before`. */
+export interface ScaffoldPlan {files:readonly {path:string;content:string}[];updates?:readonly {path:string;content:string;before:`sha256:${string}`}[];manualSteps?:readonly string[];}
+export interface ScaffoldDefinition {files?:readonly {path:string;template:string}[];manualSteps?:readonly string[];plan?:(input:Record<string,unknown>,ctx:ScaffoldPlanContext) => ScaffoldPlan | Promise<ScaffoldPlan>;}
 /** Context for a family's `checkAll` and for config-level `checks` modules (default export `(manifests, ctx) => issues`, where `manifests` spans every family). */
 export type SetCheckContext = {families:readonly {id:string}[];get(ref:string):unknown;all(familyId:string):readonly (CoreManifest & Record<string,unknown>)[]};
 export type SetCheckIssues = readonly {message:string;block?:string;field?:string;path?:string;code?:string}[] | void;

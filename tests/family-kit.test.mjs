@@ -111,13 +111,15 @@ test('create rejects unsafe paths, symlinks, unknown tokens and missing rational
   assert.equal((await runKit(root,'create',['sample','new'],options({input:{rationale:'Reason'},dryRun:true}))).error.code,'output-unsafe');
 });
 
-test('generation failures report already created files and never pretend manual steps happened', async (t) => {
+test('generation failures roll back created files and never pretend manual steps happened', async (t) => {
   const root = await fixture(t);
   const result = await runKit(root,'create',['sample','new'],options({input:{rationale:'Reason'},planGeneration:async () => ({diagnostics:[{severity:'error',code:'output-collision'}]})}));
   assert.equal(result.ok,false);
   assert.equal(result.error.code,'generator-failed');
-  assert.equal(result.error.details.written.length,2);
-  assert.equal(await readFile(join(root,'units/new.entry.ts'),'utf8'),'export default "Reason";\n');
+  assert.deepEqual(result.error.details.written,[]);
+  assert.equal(result.error.details.rolledBack,true);
+  await assert.rejects(readFile(join(root,'units/new.entry.ts')),{code:'ENOENT'});
+  await assert.rejects(readFile(join(root,'source/new.ts')),{code:'ENOENT'});
 });
 
 test('real loader validates proposed scaffolds in dry-run and generators see family blocks', async (t) => {

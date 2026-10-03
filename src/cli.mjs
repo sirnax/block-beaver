@@ -45,7 +45,7 @@ try {
   if (option('parseError')) throw new Error(option('parseError'));
   if (!command || command === 'help') {
     process.stdout.write('Project integration\n  start [--root PATH] [--editor all|agents|claude|cursor|copilot] [--port 4175]\n  init [--root PATH] [--editor all|agents|claude|cursor|copilot]\n  update [--root PATH]\n  detect [--root PATH] [--write]\n  view --format module --out PATH [--detail full|map] [--max-bytes N] [--root PATH]\n  install [--agents claude,codex,cursor,copilot] [--dry-run | --check]\n  upgrade [--dry-run] [--force]\n  baseline --lower [--root PATH] [--dry-run]\n  uninstall [--dry-run] [--remove-data --yes]\n  audit [--staged | --base SHA] [--strict] [--format json|summary]\n  integrate ROADMAP BLOCK\n  exception ID --reason TEXT --paths PATHS --check COMMAND\n\n');
-    process.stdout.write('Block Beaver\n  scan [--root PATH] [--full true]\n  inspect ID [--root PATH]\n  search QUERY [--root PATH] [--kind KIND]\n  kit list|describe|validate|compose|create [ARGS] [--json JSON] [--dry-run] [--root PATH]\n  gen [--check] [--format json|summary] [--label TEXT] [--adopt [PATH…]]\n  history import FILE --map MAPPING.json\n  agent --exec PATH [--scope file1,file2] [--create new1,new2] [--root PATH]\n  plan ROADMAP_ID [--scope file1,file2] [--create new1,new2] [--root PATH] [--title TITLE]\n  propose ROADMAP_ID PROPOSAL.json [--root PATH]\n  repair ROADMAP_ID SLICE_ID PROPOSAL.json [--root PATH]\n  check ROADMAP_ID SLICE_ID [--root PATH]\n  review ROADMAP_ID SLICE_ID [--root PATH]\n  approve ROADMAP_ID SLICE_ID [--root PATH]\n  reject ROADMAP_ID SLICE_ID --reason TEXT [--root PATH]\n  resume ROADMAP_ID [--root PATH]\n');
+    process.stdout.write('Block Beaver\n  scan [--root PATH] [--full true]\n  inspect ID [--root PATH]\n  search QUERY [--root PATH] [--kind KIND]\n  kit list|describe|validate|compose|create [ARGS] [--json JSON | --input JSON | --input-file PATH] [--dry-run] [--root PATH]\n  gen [--check] [--format json|summary] [--label TEXT] [--adopt [PATH…]]\n  history import FILE --map MAPPING.json\n  agent --exec PATH [--scope file1,file2] [--create new1,new2] [--root PATH]\n  plan ROADMAP_ID [--scope file1,file2] [--create new1,new2] [--root PATH] [--title TITLE]\n  propose ROADMAP_ID PROPOSAL.json [--root PATH]\n  repair ROADMAP_ID SLICE_ID PROPOSAL.json [--root PATH]\n  check ROADMAP_ID SLICE_ID [--root PATH]\n  review ROADMAP_ID SLICE_ID [--root PATH]\n  approve ROADMAP_ID SLICE_ID [--root PATH]\n  reject ROADMAP_ID SLICE_ID --reason TEXT [--root PATH]\n  resume ROADMAP_ID [--root PATH]\n');
     await exit(0);
   }
   if (command === 'init') { print(await initializeProject(root, { editor: option('editor', 'all') })); await exit(0); }
@@ -109,8 +109,13 @@ try {
     const { runKit } = await import('./families/kit.mjs');
     let input;
     try {
-      let json = option('json', '{}');
-      if (json === '-') { json = ''; for await (const chunk of process.stdin) { json += chunk; if (Buffer.byteLength(json) > 1_000_000) throw new Error('Kit input exceeds 1MB.'); } }
+      let json = option('input', option('json', '{}'));
+      if (option('input-file')) {
+        const { stat, readFile } = await import('node:fs/promises');
+        const file = resolve(root, option('input-file'));
+        if ((await stat(file)).size > 1_000_000) throw new Error('Kit input exceeds 1MB.');
+        json = await readFile(file, 'utf8');
+      } else if (json === '-') { json = ''; for await (const chunk of process.stdin) { json += chunk; if (Buffer.byteLength(json) > 1_000_000) throw new Error('Kit input exceeds 1MB.'); } }
       input = JSON.parse(json);
     } catch (error) {
       print({ ok: false, error: { code: 'kit-input-invalid', message: error.message } });
