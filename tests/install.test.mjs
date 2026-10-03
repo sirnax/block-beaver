@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { mkdir, writeFile, readFile, rm, symlink, stat, chmod } from 'node:fs/promises';
 import { join } from 'node:path';
-import { execFileSync } from 'node:child_process';
+import { execFileSync, spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { installProject, upgradeProject } from '../src/install.mjs';
 import { auditProject, recordException } from '../src/compliance.mjs';
@@ -486,4 +486,90 @@ test('ignoring a tracked managed file in the change that deletes it still fails 
   execFileSync('git', ['-C', root, ...identity, 'commit', '--no-verify', '-qm', 'drop hooks'], { stdio: 'pipe' });
   const range = await auditProject(root, { mode: 'range', base: baseHash });
   assert.ok(rule(range, 'managed-current').findings.some((entry) => entry.path === '.claude/settings.json'), JSON.stringify(rule(range, 'managed-current')));
+});
+
+const exists = (root, path) => stat(join(root, path)).then(() => true, () => false);
+const cli = fileURLToPath(new URL('../bin/block-beaver.mjs', import.meta.url));
+
+async function twoAgents(t) {
+  const root = await installationFixture(t), runner = packageRunner(root);
+  await writeFile(join(root, 'AGENTS.md'), '# Owner rules\n');
+  await installProject(root, { agents: ['claude', 'codex'], runner });
+  return { root, runner };
+}
+
+test('a narrower --agents list removes the dropped agent\'s managed files and records the new set', async (t) => {
+  const { root, runner } = await twoAgents(t);
+  assert.ok(await exists(root, '.agents/skills/block-beaver/SKILL.md'));
+  assert.ok(await exists(root, '.codex/hooks.json'));
+  const result = await installProject(root, { agents: ['claude'], runner });
+  assert.equal(result.complete, true);
+  for (const path of ['.agents/skills/block-beaver/SKILL.md', '.codex/hooks.json', '.codex/config.toml']) assert.ok(result.removed.includes(path), path);
+  for (const path of ['.agents', '.codex', '.agents/skills/block-beaver/SKILL.md', '.codex/hooks.json', '.codex/config.toml']) assert.equal(await exists(root, path), false, path);
+  const agents = await readFile(join(root, 'AGENTS.md'), 'utf8');
+  assert.match(agents, /Owner rules/);
+  assert.doesNotMatch(agents, /block-beaver:start/);
+  assert.ok(await exists(root, '.claude/skills/block-beaver/SKILL.md'));
+  const marker = JSON.parse(await readFile(join(root, '.blocks/install.json'), 'utf8'));
+  assert.deepEqual(marker.agents, ['claude']);
+  assert.ok(marker.paths.includes('CLAUDE.md'));
+  assert.ok(!marker.paths.some((path) => path === 'AGENTS.md' || path.startsWith('.codex/') || path.startsWith('.agents/')));
+  const state = JSON.parse(await readFile(join(root, '.blocks/managed-files.json'), 'utf8'));
+  assert.deepEqual(Object.keys(state.hooks), ['claude']);
+  const again = await installProject(root, { agents: ['claude'], runner });
+  assert.deepEqual(again.removed, []);
+  assert.deepEqual(again.changed, []);
+});
+
+test('an edited managed section of a dropped agent is a conflict unless --force', async (t) => {
+  const { root, runner } = await twoAgents(t);
+  const agents = await readFile(join(root, 'AGENTS.md'), 'utf8');
+  await writeFile(join(root, 'AGENTS.md'), agents.replace('Read and follow', 'Read, then maybe follow'));
+  const before = await snapshot(root);
+  const blocked = await installProject(root, { agents: ['claude'], runner });
+  assert.ok(blocked.conflicts.some((item) => item.path === 'AGENTS.md'));
+  assert.equal(blocked.complete, false);
+  assert.deepEqual(await snapshot(root), before);
+  const forced = await installProject(root, { agents: ['claude'], force: true, runner });
+  assert.equal(forced.complete, true);
+  assert.equal(await exists(root, '.codex/hooks.json'), false);
+  assert.doesNotMatch(await readFile(join(root, 'AGENTS.md'), 'utf8'), /block-beaver:start/);
+});
+
+test('files in a dropped agent\'s folders that Block Beaver does not manage are reported and kept', async (t) => {
+  const { root, runner } = await twoAgents(t);
+  await mkdir(join(root, '.codex/agents'), { recursive: true });
+  await writeFile(join(root, '.codex/agents/x.toml'), 'name = "x"\n');
+  const result = await installProject(root, { agents: ['claude'], runner });
+  assert.equal(result.complete, true);
+  assert.ok(result.diagnostics.some((item) => item.code === 'unmanaged-left' && item.path === '.codex/agents/x.toml'));
+  assert.equal(await readFile(join(root, '.codex/agents/x.toml'), 'utf8'), 'name = "x"\n');
+  assert.equal(await exists(root, '.codex/hooks.json'), false);
+  assert.equal(await exists(root, '.agents'), false);
+});
+
+test('dry-run lists removals without writing, and --check exits 2 until the change is applied', async (t) => {
+  const { root, runner } = await twoAgents(t);
+  const before = await snapshot(root);
+  const preview = await installProject(root, { agents: ['claude'], dryRun: true, runner });
+  assert.ok(preview.removed.includes('.codex/hooks.json'));
+  assert.deepEqual(await snapshot(root), before);
+  const spawn = (...args) => spawnSync(process.execPath, [cli, 'install', '--root', root, ...args], { encoding: 'utf8' });
+  const pending = spawn('--agents', 'claude', '--check');
+  assert.equal(pending.status, 2, pending.stderr);
+  assert.deepEqual(await snapshot(root), before);
+  await installProject(root, { agents: ['claude'], runner });
+  const settled = spawn('--agents', 'claude', '--check');
+  assert.equal(settled.status, 0, settled.stdout + settled.stderr);
+});
+
+test('auto-detected agents never remove anything', async (t) => {
+  const { root, runner } = await twoAgents(t);
+  await rm(join(root, 'AGENTS.md'));
+  await rm(join(root, '.codex'), { recursive: true });
+  await rm(join(root, '.agents'), { recursive: true });
+  const result = await installProject(root, { runner });
+  assert.deepEqual(result.removed, []);
+  assert.deepEqual(result.agents, ['claude', 'codex']);
+  assert.ok(await exists(root, '.claude/skills/block-beaver/SKILL.md'));
 });
