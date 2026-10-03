@@ -20,6 +20,7 @@ Contributor policies and current release notes remain at the repository root: [c
 ## Task plans
 
 - [0.7.0 plan](tasks/2026-10-02-block-beaver-0.7.0-plan.md) covers adopting an existing family system, part 2 (#36–#44), with its evidence and publication record.
+- [0.8.0 plan](tasks/2026-10-03-block-beaver-0.8.0-plan.md) covers fixing what the finished adoption exposed (#47–#56), with its evidence and publication record.
 - [0.6.0 plan](tasks/2026-10-02-block-beaver-0.6.0-plan.md) covers adopting an existing family system (#26–#33), with its evidence and publication record.
 - [Keystone](tasks/keystone.md) is the plan for the next implementation task.
 - [Block Studio](tasks/block-studio.md) is the earlier product direction and build sequence.
