@@ -243,14 +243,14 @@ The goal is to fix all of them and release **0.8.0**:
 
 ## Release gate record
 
-**Candidate.** `release/0.8.0` at `d914ab4` (PR #57). Every slice was built in a worktree on `feat/0.8.0-<slug>` by a Sonnet worker and reviewed and merged by the integration owner. The `sonnet-high` agent type was not loaded in the session, so workers ran as general-purpose agents on Sonnet with the same worker rules.
+**Candidate.** `release/0.8.0` at `2776b00` (PR #57). Every slice was built in a worktree on `feat/0.8.0-<slug>` by a Sonnet worker and reviewed and merged by the integration owner. The `sonnet-high` agent type was not loaded in the session, so workers ran as general-purpose agents on Sonnet with the same worker rules.
 
 **Integration changes made during review**
 - **U (#52):** config `view.*` and `map.railLimit` validated but never reached the renderer. `attachProjectRegistry` now passes them through, but only when they are set, so other graphs keep their bytes.
 - **R (#55):** contracts and generators were skipped by guessing from filenames, which breaks when config puts them elsewhere. The check now uses the graph's `familyRole`.
 
 **Checks**
-- **Full check:** `BLOCK_BEAVER_REQUIRE_ESBUILD=1 npm run check` passed 618/618 tests on the commit before the last CodeQL fix. After that fix, `tests/kit-cli.test.mjs` passed 10/10, and CI covers the full matrix. Kernel gzip is 5545/6144. `node scripts/release-notes.mjs v0.8.0` passes.
+- **Full check:** `BLOCK_BEAVER_REQUIRE_ESBUILD=1 npm run check` passes 619/619 tests on `2776b00`. Kernel gzip is 5545/6144. `node scripts/release-notes.mjs v0.8.0` passes.
 - **Packed tarball:** packed from the candidate and installed into disposable git repositories. The exact `0.8.0` pin is simulated in the lockfile because the version is not on the registry yet. All 16 smoke checks pass:
   - `install --agents claude,codex`, then `--check` exits 2 before narrowing;
   - `--dry-run` lists `removed` and writes nothing;
@@ -268,12 +268,17 @@ The goal is to fix all of them and release **0.8.0**:
   - "Show all 26 folders" expands;
   - ligatures are off;
   - the console has no errors or warnings.
-- **Live editor gate:** `node scripts/live-editor-battle.mjs claude normal|bypass|failed|drift` all pass on head `d914ab4`, source fingerprint `7276becb6367d352cb791cb76197d4d976ce8664bd4a4954bfd2978fc82d9b7e`. The gate ran from a frozen worktree with Sonnet 5.5 at high effort.
+- **Live editor gate:** `node scripts/live-editor-battle.mjs claude normal|bypass|failed|drift` all pass on head `2776b00`, source fingerprint `5e6c846b22d820d35656f26b3af6263a7a580d621cf0187f7939ae6e48dd6411`. The gate ran from a frozen worktree with Sonnet 5.5 at high effort.
 
 **Findings fixed before release**
 - **#56:** after narrowing `--agents`, Block Beaver's own setup exception still named the deleted files, so `exception-valid` failed the next audit. Narrowing now removes those paths from Block Beaver setup exceptions, and deletes an exception left with none.
 - **#52:** under a dark skin, the page's block cards and resolution report stayed white. They now use `--bb-panel-surface` and `--bb-control-border`, and a test rejects any literal white background.
 - **#51:** CodeQL `js/file-system-race` fired on `kit create --input-file`, which checked the size and then read the file separately. It now reads through one file handle.
+- **#49 performance:** the git-aware scan ran `git ls-files` up to 8 times per command: in the scanner, the project model, the loader and every load-worker process. That slowed CI, most of all on Windows.
+  - Git is now asked once per command, for the ignored paths only, and the load worker reuses the parent's listing. `update`, `audit` and `gen --check` each list once.
+  - Files created later in the same command are still scanned, a `.gitignore` write clears the cached listing, and each live refresh lists afresh.
+  - The local suite went from 162 s to 151 s against the previous candidate.
+- **Windows-only test bug:** the `update` hint test built the CLI path from a URL pathname.
 - **Gate re-runs:** an earlier gate run was blocked because the source changed during the run (`candidate-source-stable`). The final runs use a frozen worktree.
 
 **Known limits**
