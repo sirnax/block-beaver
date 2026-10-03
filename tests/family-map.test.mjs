@@ -737,3 +737,10 @@ test('registry-reach entries with import evidence draw like other reach and carr
   assert.equal(data.codeReach.length, 3);
   assert.equal(data.codeReach.filter((entry) => entry.via === 'registry').length, 1);
 });
+
+test('no page or map rule hard-codes a white background, so a dark skin themes every panel and control', () => {
+  const html = renderBlockMap(familyMapFixture());
+  const styles = [...html.matchAll(/<style[^>]*>([\s\S]*?)<\/style>/g)].map((match) => match[1]).join('\n');
+  assert.match(styles, /\.block\{[^}]*background:var\(--bb-panel-surface,white\)/);
+  assert.doesNotMatch(styles, /[;{]background(?:-color)?:(?:white|#fff(?:fff)?)\s*[;}]/i);
+});
