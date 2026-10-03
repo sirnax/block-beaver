@@ -124,10 +124,13 @@ try {
     try {
       let json = option('input', option('json', '{}'));
       if (option('input-file')) {
-        const { stat, readFile } = await import('node:fs/promises');
-        const file = resolve(root, option('input-file'));
-        if ((await stat(file)).size > 1_000_000) throw new Error('Kit input exceeds 1MB.');
-        json = await readFile(file, 'utf8');
+        const { open } = await import('node:fs/promises');
+        // One handle for the size check and the read, so the file cannot change in between.
+        const handle = await open(resolve(root, option('input-file')), 'r');
+        try {
+          if ((await handle.stat()).size > 1_000_000) throw new Error('Kit input exceeds 1MB.');
+          json = await handle.readFile('utf8');
+        } finally { await handle.close(); }
       } else if (json === '-') { json = ''; for await (const chunk of process.stdin) { json += chunk; if (Buffer.byteLength(json) > 1_000_000) throw new Error('Kit input exceeds 1MB.'); } }
       input = JSON.parse(json);
     } catch (error) {
