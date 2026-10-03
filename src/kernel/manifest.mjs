@@ -28,7 +28,8 @@ export function validateManifest(manifest, {mode = 'build', family} = {}) {
   if (family?.fields.unknown !== undefined) schema.unknown = family.fields.unknown;
   const result = validate(schema,manifest);
   if (result.errors.some(error => error.code === 'not-json')) return result;
-  const errors = [...result.errors];
+  const kind = manifest?.implementation?.kind, hint = family?.dataKinds?.includes(kind);
+  const errors = result.errors.map(e => hint && e.code === 'unknown-key' && e.path.startsWith('$.implementation.') ? {...e,message:`Unknown key; declare \`${e.path.slice(17)}\` in implementationFields.${kind}`} : e);
   if (manifest && typeof manifest === 'object') {
     if (family && manifest.family !== family.id) errors.push({path:'$.family',code:'literal',message:`Expected family ${family.id}`});
     if (family && manifest.implementation && !family.implementation.includes(manifest.implementation.kind) && !errors.some(error => error.path === '$.implementation.kind')) errors.push({path:'$.implementation.kind',code:'enum',message:'Implementation kind is not allowed by this family'});
