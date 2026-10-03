@@ -104,6 +104,8 @@ function contractProblems(definition, entry, configured) {
     }
   }
   if (definition.map !== undefined && (!object(definition.map) || ['title', 'blurb'].some((key) => definition.map[key] !== undefined && typeof definition.map[key] !== 'string'))) issue('contract-invalid', 'map title and blurb must be strings', '$.map');
+  else if (definition.map?.unused !== undefined && typeof definition.map.unused !== 'boolean') issue('contract-invalid', 'map.unused must be a boolean (false stops the family being flagged unused)', '$.map.unused');
+  else if (definition.map?.reach !== undefined && definition.map.reach !== 'registry') issue('contract-invalid', "map.reach must be 'registry'", '$.map.reach');
   else if (definition.map?.group !== undefined) {
     const group = definition.map.group;
     if (!object(group) || Object.keys(group).some((key) => !['field', 'join', 'empty', 'format'].includes(key))) issue('contract-invalid', 'map.group must be an object with only field, join, empty and format', '$.map.group');

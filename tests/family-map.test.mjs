@@ -726,3 +726,14 @@ test('config view text and map.railLimit reach the rendered page through the ada
   assert.equal(graph.mapStyle.railLimit, 3);
   assert.match(renderBlockMap(graph), /<title>Atlas &lt;x&gt;<\/title>/);
 });
+
+test('registry-reach entries with import evidence draw like other reach and carry their evidence in the data', () => {
+  const graph = parityFixture();
+  const evidence = [{ file: 'src/menu.ts', line: 3, text: "import { UNITS } from './gen';" }];
+  graph.codeReach = graph.codeReach.map((entry, index) => index === 0 ? { ...entry, via: 'registry', evidence } : entry);
+  const html = renderBlockMap(graph);
+  assert.match(renderFamilyMap(graph), /reach-line/);
+  const data = JSON.parse(html.match(/<script type="application\/json" id="family-map-data"[^>]*>([\s\S]*?)<\/script>/)[1]);
+  assert.equal(data.codeReach.length, 3);
+  assert.equal(data.codeReach.filter((entry) => entry.via === 'registry').length, 1);
+});

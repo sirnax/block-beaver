@@ -93,7 +93,11 @@ export function parseFamiliesConfig(config) {
         const binding = /^[A-Za-z_$][\w$]*$/;
         if (!Array.isArray(config.map.bindings)) issue('family-path-invalid', 'map.bindings must be an array', '$.map.bindings');
         else for (const [index, entry] of config.map.bindings.entries()) {
-          if (!object(entry) || !ids.has(entry.family) || typeof entry.call !== 'string' || typeof entry.registry !== 'string' || !binding.test(entry.call) || !binding.test(entry.registry)) issue('family-path-invalid', 'Each binding needs a configured family and identifier call and registry names', `$.map.bindings[${index}]`);
+          if (object(entry) && entry.argKey !== undefined) {
+            if (typeof entry.argKey !== 'string' || !entry.argKey) issue('family-path-invalid', 'binding argKey must be a non-empty string', `$.map.bindings[${index}].argKey`);
+            else if (entry.registry !== undefined) issue('family-path-invalid', 'A binding takes either registry or argKey, not both', `$.map.bindings[${index}]`);
+            else if (!ids.has(entry.family) || typeof entry.call !== 'string' || !binding.test(entry.call)) issue('family-path-invalid', 'Each binding needs a configured family and an identifier call name', `$.map.bindings[${index}]`);
+          } else if (!object(entry) || !ids.has(entry.family) || typeof entry.call !== 'string' || typeof entry.registry !== 'string' || !binding.test(entry.call) || !binding.test(entry.registry)) issue('family-path-invalid', 'Each binding needs a configured family and identifier call and registry names', `$.map.bindings[${index}]`);
         }
       }
     }
