@@ -117,13 +117,40 @@ function contractProblems(definition, entry, configured) {
   }
   if (definition.scaffold !== undefined) {
     const scaffold = definition.scaffold;
-    if (!object(scaffold) || !Array.isArray(scaffold.files) || !scaffold.files.length || scaffold.files.some((file) => !object(file) || !isFamilyPath(file.path) || typeof file.template !== 'string') || (scaffold.manualSteps !== undefined && (!Array.isArray(scaffold.manualSteps) || scaffold.manualSteps.some((step) => typeof step !== 'string')))) issue('contract-invalid', 'scaffold must contain safe file paths, templates and optional string manual steps', '$.scaffold');
+    const planned = object(scaffold) && scaffold.plan !== undefined;
+    if (planned && typeof scaffold.plan !== 'function') issue('contract-invalid', 'scaffold.plan must be a function', '$.scaffold.plan');
+    else if (!object(scaffold) || (scaffold.files === undefined ? !planned : (!Array.isArray(scaffold.files) || (!scaffold.files.length && !planned) || scaffold.files.some((file) => !object(file) || !isFamilyPath(file.path) || typeof file.template !== 'string'))) || (scaffold.manualSteps !== undefined && (!Array.isArray(scaffold.manualSteps) || scaffold.manualSteps.some((step) => typeof step !== 'string')))) issue('contract-invalid', 'scaffold must contain safe file paths, templates and optional string manual steps, or a plan function', '$.scaffold');
   }
   try {
     const { check, checkAll, ...serializable } = definition;
+    if (object(serializable.scaffold)) serializable.scaffold = scaffoldMetadata(serializable.scaffold);
     jsonCopy(serializable);
-  } catch { issue('contract-invalid', 'Contract metadata other than check and checkAll must contain only JSON data', '$'); }
+  } catch { issue('contract-invalid', 'Contract metadata other than check, checkAll and scaffold.plan must contain only JSON data', '$'); }
   return issues;
+}
+
+/** The scaffold plan is a function and never crosses the JSON boundary. */
+const scaffoldMetadata = ({ plan, ...rest }) => rest;
+const sha256Pattern = /^sha256:[0-9a-f]{64}$/;
+
+/** Run a contract's scaffold.plan against the loaded family state; returns the validated plan or throws. */
+async function runScaffoldPlan(root, request, planFunction, result) {
+  const own = result.manifests.filter((item) => item.family === request.family);
+  const all = readonly(own.map((item) => jsonCopy(item.value)));
+  const entries = readonly(own.map(({ ref, family, id, path, exportName, hash, value }) => ({ ref, family, id, path, exportName, hash, value: jsonCopy(value) })));
+  const readProjectFile = async (path) => {
+    let absolute;
+    try { absolute = assertSafeSource(root, path); }
+    catch (error) { if (error.code === 'ENOENT') return null; throw error; }
+    return readFile(absolute, 'utf8');
+  };
+  const planned = await planFunction(jsonCopy(request.input), readonly({ all, entries, readFile: readProjectFile, id: request.id, family: request.family }));
+  if (!object(planned)) throw new TypeError('scaffold.plan must return an object {files,updates?,manualSteps?}');
+  const { files = [], updates = [], manualSteps = [] } = planned;
+  if (!Array.isArray(files) || files.some((file) => !object(file) || typeof file.path !== 'string' || typeof file.content !== 'string')) throw new TypeError('scaffold.plan files must be [{path,content}] strings');
+  if (!Array.isArray(updates) || updates.some((file) => !object(file) || typeof file.path !== 'string' || typeof file.content !== 'string' || !sha256Pattern.test(file.before))) throw new TypeError("scaffold.plan updates must be [{path,content,before:'sha256:<hex>'}]");
+  if (!Array.isArray(manualSteps) || manualSteps.some((step) => typeof step !== 'string')) throw new TypeError('scaffold.plan manualSteps must be strings');
+  return jsonCopy({ files: files.map(({ path, content }) => ({ path, content })), updates: updates.map(({ path, content, before }) => ({ path, content, before })), manualSteps });
 }
 
 /** Valid `checks` config paths, in order; a malformed list already has a config-valid diagnostic. */
@@ -178,8 +205,10 @@ async function execute(message) {
         if (issues.length) continue;
         definitions.set(entry.id, definition);
         const { check, checkAll, ...metadata } = definition;
+        const hasScaffoldPlan = typeof metadata.scaffold?.plan === 'function';
+        if (object(metadata.scaffold)) metadata.scaffold = scaffoldMetadata(metadata.scaffold);
         const { floor, configIndex, ...familyConfig } = entry;
-        result.families.push({ ...jsonCopy(metadata), hasCheck: typeof check === 'function', hasCheckAll: typeof checkAll === 'function', config: familyConfig, floor, configIndex });
+        result.families.push({ ...jsonCopy(metadata), hasCheck: typeof check === 'function', hasCheckAll: typeof checkAll === 'function', ...(hasScaffoldPlan ? { hasScaffoldPlan } : {}), config: familyConfig, floor, configIndex });
       } catch (error) { errorDiagnostic(error, { file: entry.contract, family: entry.id }); }
     }
     // A join link's match walks the target family's fields, so it is checked once every contract is in; only the family holding the bad link is dropped.
@@ -329,6 +358,14 @@ async function execute(message) {
         }
       }
       for (const key of selected) if (!result.generators.some((info) => info.key === key)) result.outputs.push({ key, diagnostic: diagnostic('generator-invalid', `Unknown generator ${key}`, {}, 'family-drift') });
+    }
+    if (message.scaffold) {
+      const planFunction = definitions.get(message.scaffold.family)?.scaffold?.plan;
+      if (typeof planFunction !== 'function') diagnostic('scaffold-plan-failed', `Family ${message.scaffold.family} has no scaffold.plan`, { family: message.scaffold.family });
+      else {
+        try { result.scaffold = await runScaffoldPlan(root, message.scaffold, planFunction, result); }
+        catch (error) { diagnostic('scaffold-plan-failed', `Scaffold plan failed: ${error?.message || String(error)}`, { family: message.scaffold.family }); }
+      }
     }
     // A configured loader owns runtime imports. Parse its repository source closure
     // afterward for cache freshness without registering any competing hooks.

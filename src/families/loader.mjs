@@ -54,7 +54,7 @@ async function resolveLoader(root, packageName) {
   return new URL(stdout).href;
 }
 
-function spawnLoad({ root, paths, config, generate, loaderUrl }) {
+function spawnLoad({ root, paths, config, generate, scaffold, loaderUrl }) {
   return new Promise((resolveResult) => {
     const env = childEnvironment();
     const execArgv = ['--disable-warning=ExperimentalWarning'];
@@ -87,12 +87,13 @@ function spawnLoad({ root, paths, config, generate, loaderUrl }) {
         finish(reply);
       } else finish(failure('load-failed', `Family loader exited ${signal || code} without a successful result`));
     });
-    child.send({ protocol: 1, token, root, paths, config, kernelUrl, ...(generate ? { generate } : {}) }, (error) => { if (error) { child.kill('SIGKILL'); finish(failure('load-failed', error.message)); } });
+    child.send({ protocol: 1, token, root, paths, config, kernelUrl, ...(generate ? { generate } : {}), ...(scaffold ? { scaffold } : {}) }, (error) => { if (error) { child.kill('SIGKILL'); finish(failure('load-failed', error.message)); } });
   });
 }
 
 /** Execute repository code in a fresh child; only JSON data crosses the boundary. */
-export async function loadFamilies({ root: inputRoot, config, paths, resolutionSignature, fileHashes = {}, generate } = {}) {
+export async function loadFamilies({ root: inputRoot, config, paths, resolutionSignature, fileHashes = {}, generate, scaffold } = {}) {
+  const volatile = Boolean(generate || scaffold);
   const root = await realpath(resolve(inputRoot));
   if (config === undefined) {
     try { config = JSON.parse(await readFile(join(root, '.blocks/config.json'), 'utf8')); }
@@ -123,12 +124,12 @@ export async function loadFamilies({ root: inputRoot, config, paths, resolutionS
   const tracked = [...new Set([...state.loadedFiles, ...labelFiles, ...direct])].sort();
   const hashes = await contentHashes(root, tracked, fileHashes);
   const key = cacheKey({ config, resolutionSignature, matched, hashes, loaderUrl, paths: matchingPaths });
-  if (!generate && state.results.has(key)) return structuredClone(state.results.get(key));
-  if (!generate && state.inflight.has(key)) return structuredClone(await state.inflight.get(key));
+  if (!volatile && state.results.has(key)) return structuredClone(state.results.get(key));
+  if (!volatile && state.inflight.has(key)) return structuredClone(await state.inflight.get(key));
   const load = async () => {
     if (!parsed.families.length && !parsed.generators.length && !(Array.isArray(config.checks) && config.checks.length) && !historyLabelModule(config)) return { key, ...empty(parsed.diagnostics), discoveredFiles: matchingPaths, ...(generate ? { outputs: [] } : {}) };
     // The worker gets both the exact resolver ownership list and discovery inputs.
-    const result = await spawnLoad({ root, paths: resolverPaths, config, generate, loaderUrl });
+    const result = await spawnLoad({ root, paths: resolverPaths, config, generate, scaffold, loaderUrl });
     state.loadedFiles = [...new Set([...result.loadedFiles, ...Object.keys(result.fileHashes || {})])];
     // The hook hashes the exact bytes supplied to Node. Re-reading here could
     // cache an older evaluated value under newer bytes saved while it was loading.
@@ -139,14 +140,14 @@ export async function loadFamilies({ root: inputRoot, config, paths, resolutionS
     // Kept across ordinary loads: the label module is only evaluated in a generate pass, but editing what it reads must move the key.
     if (reachedByLabel) state.labelFiles = reachedByLabel;
     const completed = { key: finalKey, ...publicResult, discoveredFiles: matchingPaths };
-    if (!generate && cacheable !== false) {
+    if (!volatile && cacheable !== false) {
       state.results.set(finalKey, structuredClone(completed));
       while (state.results.size > 4) state.results.delete(state.results.keys().next().value);
     }
     return completed;
   };
   const pending = load();
-  if (!generate) state.inflight.set(key, pending);
+  if (!volatile) state.inflight.set(key, pending);
   try { return structuredClone(await pending); }
-  finally { if (!generate) state.inflight.delete(key); }
+  finally { if (!volatile) state.inflight.delete(key); }
 }
