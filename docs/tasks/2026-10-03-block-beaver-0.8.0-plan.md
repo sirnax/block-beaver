@@ -286,3 +286,20 @@ The goal is to fix all of them and release **0.8.0**:
 - A failed `kit create` rollback removes the files it created but can leave the empty directories made for them.
 - `runtime-import-dev-dependency` reads the root `package.json`. The project model has no mapping from a file to its nearest `package.json`.
 - The overflow folders in the rail are plain list items, with no reach lines.
+
+## Publication
+
+- **Merge:** PR #57 merged to `main` as `1f97307` on 2026-10-03. It closed #47–#56.
+- **npm:** `block-beaver@0.8.0` has shasum `bb51dc50a36202746897d7a55261d2c9629e2c00` and 78 files.
+  - The owner published the tarball packed from the merged `main`, after `npm publish --dry-run`.
+  - The registry reports the same shasum, integrity and file count, and `latest` is 0.8.0.
+- **Tag and release:** the annotated tag `v0.8.0` points at `1f97307`. The tag workflow reran the checks and created the GitHub release [v0.8.0](https://github.com/sirnax/block-beaver/releases/tag/v0.8.0), marked Latest.
+- **Registry install:** in a disposable directory, `npm install block-beaver@0.8.0` installed 0.8.0.
+  - `block-beaver/kernel` exports `composeSafe`, `read` and `createRegistry`.
+  - `block-beaver/view` exports `prepareView` and ships `src/view.d.ts`.
+  - The CLI help lists `install --runtime --check`, `kit create --input`, and `gen --format`.
+- **Next:** re-adoption in the motivating repository:
+  - pin 0.8.0;
+  - run `upgrade`, which rewrites the families guidance once;
+  - re-export the registered view modules;
+  - try `map.reach: 'registry'`, `install --runtime`, and replacing the project scaffolder with `scaffold.plan`.
