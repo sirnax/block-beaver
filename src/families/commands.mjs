@@ -54,7 +54,7 @@ export async function generateProject(inputRoot, { check = false, label, dryRun 
   if (!ready.config) return { ok: false, mode, outputs: [], written: [], pending: [], diagnostics: ready.diagnostics };
   const viewOutputs = extraOutputs ?? await registeredViewOutputs(root, ready.graph);
   const plan = await planGeneration({ root, config: ready.config, graph: ready.graph, paths: ready.paths, label: label ?? null, now, extraOutputs: viewOutputs, loadFamilies, adopt: adopting, readOnly: check || dryRun });
-  const outputs = plan.outputs.map(({ key, out, status, bodyIdentical, regions }) => ({ key, out, status, ...(bodyIdentical === undefined ? {} : { bodyIdentical }), ...(regions ? { regions: regions.map(({ region, status: state }) => ({ region, status: state })) } : {}) }));
+  const outputs = plan.outputs.map(({ key, out, status, bodyIdentical, bodyIdenticalIgnoringLeadingComment, regions }) => ({ key, out, status, ...(bodyIdentical === undefined ? {} : { bodyIdentical, bodyIdenticalIgnoringLeadingComment }), ...(regions ? { regions: regions.map(({ region, status: state }) => ({ region, status: state })) } : {}) }));
   const pending = changedOutputs(plan);
   if (check) {
     const diagnostics = checkGeneration(plan);
