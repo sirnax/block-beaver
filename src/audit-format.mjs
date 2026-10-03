@@ -32,3 +32,21 @@ export function formatAuditSummary(result) {
   for (const advisory of warnings) lines.push(line(['warning', advisory.code, advisory.path, advisory.message]));
   return `block-beaver audit: fail (${files}, ${seen.size} error${seen.size === 1 ? '' : 's'})\n${lines.join('\n')}\n`;
 }
+
+/** One line when `gen` is clean; one line per failing diagnostic otherwise. */
+export function formatGenSummary(result) {
+  const count = (n, noun) => `${n} ${noun}${n === 1 ? '' : 's'}`;
+  if (result.ok !== false && !result.diagnostics?.some((item) => item.severity === 'error')) {
+    if (result.mode === 'check') return `block-beaver gen: ${count(result.outputs?.length ?? 0, 'output')} current\n`;
+    if (result.mode === 'dry-run') return `block-beaver gen: would write ${count(result.pending?.length ?? 0, 'output')}\n`;
+    return `block-beaver gen: wrote ${count(result.written?.length ?? 0, 'output')}\n`;
+  }
+  const lines = [], seen = new Set();
+  for (const item of result.diagnostics ?? []) {
+    if (item.severity !== 'error') continue;
+    const text = line([item.file, item.region ? `region ${item.region}` : '', item.code, item.message]);
+    if (!seen.has(text)) { seen.add(text); lines.push(text); }
+  }
+  if (!lines.length) lines.push('block-beaver gen: failed');
+  return `${lines.join('\n')}\n`;
+}
