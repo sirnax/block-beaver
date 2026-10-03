@@ -241,7 +241,8 @@ For code that runs in production, use the non-throwing forms. `createRegistry(fa
 | `map.groupBy` | Manifest field that clusters blocks within a floor. |
 | `map.skin`, `map.tokens` | A single skin stylesheet and CSS custom-property tokens. |
 | `map.skins` | Several skins, `{ id, path?, tokens? }`, with a viewer toggle. |
-| `map.bindings` | Registry-call patterns `{ family, call, registry }` that count as code reach. |
+| `map.bindings` | Call patterns that count as code reach: `{ family, call, registry }` matches `call(REGISTRY['id'])`; `{ family, call, argKey }` matches `call({ argKey: 'id' })` with a string literal (a variable adds nothing). |
+| contract `map.unused`, `map.reach` | In a family contract: `unused: false` never flags the family's blocks unused; `reach: 'registry'` counts every block as reached when an ordinary, non-generated file imports the family's `registry.out` (`codeReach` entry `via: 'registry'` with import evidence). |
 
 ## Multi-app projects and embedding
 

@@ -54,7 +54,7 @@ export type FamilyDefinition = {id:string;fields:ObjectNode;implementation:reado
   /** `match` makes a join link: an edge to every `to` manifest whose `match` path (on that one family) shares a value with `field`. */
   links?:readonly {field:string;to:string|readonly string[];kind:string;match?:string}[];generators?:readonly ('registry'|'index'|'history')[];
   /** `group` clusters this family's map floor by a schema path (`.`/`[]`): array values are joined with `join` (default `', '`), no value gives `empty` (default no group), and `format` wraps the label around one `{value}`. It wins over config `map.groupBy`. */
-  map?:{title?:string;blurb?:string;group?:{field:string;join?:string;empty?:string;format?:string}};scaffold?:{files:readonly {path:string;template:string}[];manualSteps?:readonly string[]};
+  map?:{title?:string;blurb?:string;/** `false` never flags this family's blocks unused on the map. */unused?:boolean;/** `'registry'`: an ordinary, non-generated file importing the family's `registry.out` counts every block as reached. */reach?:'registry';group?:{field:string;join?:string;empty?:string;format?:string}};scaffold?:{files:readonly {path:string;template:string}[];manualSteps?:readonly string[]};
   check?:(manifest:CoreManifest & Record<string,unknown>,ctx:{family:string;get(ref:string):unknown}) => readonly {path:string;message:string;code?:string}[] | void;
   checkAll?:(manifests:readonly (CoreManifest & Record<string,unknown>)[],ctx:SetCheckContext) => SetCheckIssues | Promise<SetCheckIssues>;};
 /** Context for a family's `checkAll` and for config-level `checks` modules (default export `(manifests, ctx) => issues`, where `manifests` spans every family). */
