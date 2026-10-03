@@ -356,11 +356,16 @@ async function structuralRules(root, { strict, familyDrift, mode, priorBaseline,
     }
     if (installDocument.value?.version !== version) managedFindings.push({ path: '.blocks/install.json', message: `Installed files are from ${installDocument.value?.version || 'unknown'}, package is ${version} — run block-beaver upgrade`, remediation: 'block-beaver upgrade' });
     try {
-      const { planManagedFiles } = await import('./managed-files.mjs');
+      const { planManagedFiles, familiesOnlyDrift } = await import('./managed-files.mjs');
       const plan = await planManagedFiles({ root, version, config: configDocument.value || {}, agents: installDocument.value?.agents || [], operation: 'upgrade', force: true });
       const differing = plan.files.filter((file) => file.before !== file.content);
       const local = await localOnlyPaths(root, mode, [...differing.map((file) => file.path), ...(plan.conflicts || []).map((conflict) => conflict?.path)], removed);
-      for (const file of differing) routeManaged({ path: file.path, message: 'Managed content differs from this package version.', remediation: 'block-beaver upgrade' }, local, managedFindings, managedAdvisories);
+      for (const file of differing) {
+        // Config-derived families guidance lags a families config change until upgrade; that alone is a warning.
+        if (['workflow', 'instructions', 'skill'].includes(file.kind) && familiesOnlyDrift(file.before, file.content)) {
+          if (!managedAdvisories.some((entry) => entry.code === 'managed-families-stale' && entry.path === file.path)) managedAdvisories.push({ code: 'managed-families-stale', severity: 'warning', path: file.path, message: 'run `block-beaver upgrade`', remediation: 'block-beaver upgrade' });
+        } else routeManaged({ path: file.path, message: 'Managed content differs from this package version.', remediation: 'block-beaver upgrade' }, local, managedFindings, managedAdvisories);
+      }
       for (const conflict of plan.conflicts || []) routeManaged(typeof conflict === 'string' ? { message: conflict } : conflict, local, managedFindings, managedAdvisories);
     } catch (error) { managedFindings.push({ message: `Cannot validate managed content: ${error.message}`, remediation: 'block-beaver upgrade' }); }
     try {

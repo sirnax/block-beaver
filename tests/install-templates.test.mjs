@@ -26,3 +26,26 @@ test('bundled templates produce LF output even from a CRLF source checkout', asy
     assert.ok(!text.includes('\r'));
   }
 });
+
+test('families guidance renders from config and leaves every byte unchanged without it', async () => {
+  const { renderAgentInstructions, renderFamiliesSection, readInstallTemplates } = await import('../src/install-templates.mjs');
+  const plain = renderAgentInstructions();
+  const config = { families: [{ id: 'widget', manifests: 'catalog/*.item.ts', contract: 'defs/widget.ts', registry: { out: 'src/w.generated.ts' } }, { id: 'gadget', manifests: 'g/*.ts', contract: 'defs/gadget.ts' }], enforcement: { receipts: 'off' } };
+  for (const empty of [undefined, {}, { families: [] }, { families: [{ id: 3 }] }]) {
+    assert.equal(renderAgentInstructions(empty), plain);
+    assert.equal(renderFamiliesSection(empty), '');
+    assert.deepEqual(await readInstallTemplates(empty), await readInstallTemplates());
+  }
+  const rendered = renderAgentInstructions(config);
+  assert.ok(rendered.startsWith(plain));
+  assert.equal(rendered, renderAgentInstructions(structuredClone(config)));
+  assert.match(rendered, /\| `widget` \| `catalog\/\*\.item\.ts` \| `defs\/widget\.ts` \|\n\| `gadget` \|/);
+  assert.match(rendered, /add one manifest/);
+  assert.match(rendered, /not only `block-beaver update --root \.`/);
+  assert.match(rendered, /Never hand-edit outputs written by `gen` \(registries: `src\/w\.generated\.ts`/);
+  assert.match(rendered, /kit create FAMILY ID` for families with a scaffold/);
+  assert.match(rendered, /`enforcement\.receipts` is `off`/);
+  assert.ok(!renderAgentInstructions({ ...config, enforcement: { receipts: 'required' } }).includes('enforcement.receipts'));
+  const templates = await readInstallTemplates(config);
+  assert.ok(templates.workflow.includes('## Typed families') && templates.skill.includes('## Typed families'));
+});
