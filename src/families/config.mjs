@@ -76,6 +76,7 @@ export function parseFamiliesConfig(config) {
         if (!Array.isArray(floors) || floors.some((id) => typeof id !== 'string') || new Set(floors).size !== floors.length) issue('family-path-invalid', 'map.floors must list distinct family IDs', '$.map.floors');
         else for (const [index, id] of floors.entries()) if (!ids.has(id)) issue('family-path-invalid', `map.floors names unknown family ${id}`, `$.map.floors[${index}]`);
       }
+      if (config.map.railLimit !== undefined && !(Number.isInteger(config.map.railLimit) && config.map.railLimit > 0)) issue('family-path-invalid', 'map.railLimit must be a positive integer', '$.map.railLimit');
       if (config.map.groupBy !== undefined && (typeof config.map.groupBy !== 'string' || !/^[A-Za-z_$][\w$]*$/.test(config.map.groupBy))) issue('family-path-invalid', 'map.groupBy must name a manifest field', '$.map.groupBy');
       if (config.map.skins !== undefined) {
         const skins = config.map.skins, skinIds = new Set();
@@ -100,6 +101,7 @@ export function parseFamiliesConfig(config) {
   if (config.view !== undefined) {
     if (!object(config.view)) issue('family-path-invalid', 'view must be an object', '$.view');
     else if (config.view.detail !== undefined && !['full', 'map'].includes(config.view.detail)) issue('family-path-invalid', 'view.detail must be full or map', '$.view.detail');
+    else for (const key of ['title', 'eyebrow', 'heading', 'intro']) if (config.view[key] !== undefined && typeof config.view[key] !== 'string') issue('family-path-invalid', `view.${key} must be a string`, `$.view.${key}`);
   }
   return { families, generators, diagnostics, ...(loader ? { loader } : {}) };
 }
