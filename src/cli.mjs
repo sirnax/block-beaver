@@ -16,6 +16,7 @@ import { writeProjectFiles, readProjectFile } from './project-files.mjs';
 import { relative, isAbsolute } from 'node:path';
 import { auditProject, integrateApproved, recordException } from './compliance.mjs';
 import { git } from './compliance-git.mjs';
+import { gitScope } from './git-file-set.mjs';
 
 /** Read-only family drift check (the one audit uses); costs nothing unless families are configured. */
 async function staleFamilyHint(root, graph) {
@@ -31,6 +32,8 @@ async function staleFamilyHint(root, graph) {
 }
 
 const [command, ...args] = process.argv.slice(2);
+// One Git ignore listing per command; a live refresh opens its own scope.
+gitScope.enterWith(new Map());
 const flags = new Set(['write', 'strict', 'dry-run', 'force', 'fix-ignores', 'fix-excludes', 'staged', 'remove-data', 'yes', 'runtime']);
 if (command === 'install') flags.add('check');
 if (command === 'gen') { flags.add('check'); flags.add('adopt'); }

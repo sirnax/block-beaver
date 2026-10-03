@@ -8,6 +8,7 @@ import { promisify } from 'node:util';
 import { canonicalJson } from './canonical.mjs';
 import { historyLabelModule, isFamilyPath, parseFamiliesConfig } from './config.mjs';
 import { discoverFiles, matchManifests } from './glob.mjs';
+import { gitFileSet } from '../git-file-set.mjs';
 
 const cliVersion = createRequire(import.meta.url)('../../package.json').version;
 const workerPath = fileURLToPath(new URL('./load-worker.mjs', import.meta.url));
@@ -54,7 +55,9 @@ async function resolveLoader(root, packageName) {
   return new URL(stdout).href;
 }
 
-function spawnLoad({ root, paths, config, generate, scaffold, loaderUrl }) {
+async function spawnLoad({ root, paths, config, generate, scaffold, loaderUrl }) {
+  // The worker reuses this Git ignore listing instead of spawning Git again.
+  const gitIgnored = (await gitFileSet(root))?.ignored ?? null;
   return new Promise((resolveResult) => {
     const env = childEnvironment();
     const execArgv = ['--disable-warning=ExperimentalWarning'];
@@ -87,7 +90,7 @@ function spawnLoad({ root, paths, config, generate, scaffold, loaderUrl }) {
         finish(reply);
       } else finish(failure('load-failed', `Family loader exited ${signal || code} without a successful result`));
     });
-    child.send({ protocol: 1, token, root, paths, config, kernelUrl, ...(generate ? { generate } : {}), ...(scaffold ? { scaffold } : {}) }, (error) => { if (error) { child.kill('SIGKILL'); finish(failure('load-failed', error.message)); } });
+    child.send({ protocol: 1, token, root, paths, config, kernelUrl, gitIgnored, ...(generate ? { generate } : {}), ...(scaffold ? { scaffold } : {}) }, (error) => { if (error) { child.kill('SIGKILL'); finish(failure('load-failed', error.message)); } });
   });
 }
 

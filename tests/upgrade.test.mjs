@@ -1,3 +1,4 @@
+import { fileURLToPath } from 'node:url';
 import test from 'node:test';
 import { createHash } from 'node:crypto';
 import assert from 'node:assert/strict';
@@ -429,7 +430,7 @@ test('an edited managed section still fails managed-current when the families co
 
 test('update hints that family outputs are stale only when families are configured and drifted', async (t) => {
   const { spawnSync } = await import('node:child_process');
-  const cli = new URL('../bin/block-beaver.mjs', import.meta.url).pathname;
+  const cli = fileURLToPath(new URL('../bin/block-beaver.mjs', import.meta.url));
   const run = (root) => JSON.parse(spawnSync(process.execPath, [cli, 'update', '--root', root], { encoding: 'utf8' }).stdout);
   const root = await installationFixture(t), runner = packageRunner(root), version = await currentVersion();
   await installProject(root, { agents: [], version, runner });

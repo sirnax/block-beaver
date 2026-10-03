@@ -12,6 +12,7 @@ import { canonicalJson, manifestHash } from './canonical.mjs';
 import { captureManifestId, discoverFiles, matchGlobs, matchManifests } from './glob.mjs';
 import { assertSafeSource, installFamilyHooks, runtimeSourcePath } from './hooks.mjs';
 import { regionIdPattern, regionStyle, regionStyles } from './regions.mjs';
+import { gitScope, seedGitFileSet } from '../git-file-set.mjs';
 
 const coreKeys = new Set(['id', 'family', 'version', 'name', 'description', 'rationale', 'implementation', 'files']);
 const idPattern = /^[a-z][a-z0-9]*(-[a-z0-9]+)*$/;
@@ -422,6 +423,9 @@ async function discoverClosure(root, project, loadedFiles, dependencies) {
 }
 
 process.once('message', async (message) => {
+  gitScope.enterWith(new Map());
+  // Reuse the parent's Git ignore listing instead of spawning Git again.
+  if (message && Object.hasOwn(message, 'gitIgnored')) seedGitFileSet(message.root, message.gitIgnored);
   let result;
   try {
     if (message?.protocol !== 1) throw new Error('Unsupported family loader protocol');

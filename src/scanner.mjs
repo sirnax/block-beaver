@@ -4,7 +4,7 @@ import { createHash } from 'node:crypto';
 import { jsTsReactPlugin } from './plugins/js-ts-react.mjs';
 import { loadProjectModel } from './project-model.mjs';
 import { readProjectFile } from './project-files.mjs';
-import { gitFileSet } from './git-file-set.mjs';
+import { gitFileSet, gitScope } from './git-file-set.mjs';
 
 const ignored = new Set(['node_modules', '.git', '.next', 'dist', 'build', 'coverage', '.turbo', '.vercel', '.blocks', 'vendor']);
 const fileHash = (text) => createHash('sha256').update(text).digest('hex').slice(0, 16);
@@ -52,7 +52,8 @@ export async function scanRepository(inputRoot, options = {}) {
   // Files Block Beaver deliberately leaves out of the graph but projects may import: registered
   // view exports and gitignored files present on disk. Imports of them are not unresolved.
   const excludedKnown = new Set(registeredExports);
-  const gitCache = new Map();
+  // One Git listing per scan, shared with the surrounding command's scope when there is one.
+  const gitCache = gitScope.getStore() ?? new Map();
   const discoveredPaths = (await findSourceFiles(root, { ...options, plugins, gitCache, onExcluded: (path) => excludedKnown.add(path) })).filter((path) => !registeredExports.has(path));
   const project = await loadProjectModel(root, { paths: discoveredPaths, writeConfig: options.writeConfig ?? true, strict: false, gitCache });
   const paths = discoveredPaths.filter((path) => !project.isIgnored(path));

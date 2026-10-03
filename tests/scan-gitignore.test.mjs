@@ -105,3 +105,17 @@ test('packageImports records packages, subpaths and type-only imports without ch
   const strip = (value) => normalize({ ...value, root: '' });
   assert.equal(strip(await scanRepository(plain, quiet)), strip(await scanRepository(withGit, quiet)), 'git and plain scans of an unchanged tree serialize identically');
 });
+
+test('one operation scope lists ignored files once, and a file created later in it is still scanned', async (t) => {
+  const { gitScope, gitFileSet } = await import('../src/git-file-set.mjs');
+  const repo = await fixture(t, base);
+  await gitScope.run(new Map(), async () => {
+    assert.equal(gitFileSet(repo), gitFileSet(repo), 'the scope reuses one listing');
+    assert.deepEqual(files(await scanRepository(repo, quiet)), ['src/main.ts']);
+    // A generated output written mid-command is not in the cached listing, yet must not be dropped.
+    await writeFile(join(repo, 'src/generated.ts'), 'export const g = 1;\n');
+    assert.deepEqual(files(await scanRepository(repo, quiet)), ['src/generated.ts', 'src/main.ts']);
+    assert.ok((await discoverFiles(repo)).includes('src/generated.ts'));
+  });
+  assert.notEqual(gitFileSet(repo), gitFileSet(repo), 'outside a scope every call lists afresh');
+});

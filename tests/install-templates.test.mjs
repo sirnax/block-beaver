@@ -9,7 +9,7 @@ test('bundled templates produce LF output even from a CRLF source checkout', asy
   const root = await mkdtemp(join(tmpdir(), 'block-beaver-crlf-templates-'));
   t.after(() => rm(root, { recursive: true, force: true }));
   await mkdir(join(root, 'src'));
-  for (const name of ['install-templates.mjs', 'package-manager.mjs', 'project-files.mjs']) {
+  for (const name of ['install-templates.mjs', 'package-manager.mjs', 'project-files.mjs', 'git-file-set.mjs']) {
     await copyFile(new URL(`../src/${name}`, import.meta.url), join(root, 'src', name));
   }
   for (const name of ['block-workflow.md', 'agent-skill/SKILL.md', 'agent-skill/references/workflow.md', 'agent-skill/references/apps.md', 'legacy/0.1.1-workflow.md', 'legacy/0.2.0-workflow.md']) {
