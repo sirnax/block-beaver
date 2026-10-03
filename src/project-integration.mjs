@@ -24,11 +24,13 @@ function managedSection(before, body, path, prefix = '') {
 export async function initializeProject(root, { editor = 'all' } = {}) {
   const editors = editor === 'all' ? Object.keys(editorFiles) : [editor];
   if (editors.some((name) => !Object.hasOwn(editorFiles, name))) throw new Error('Editor must be all, agents, claude, cursor, or copilot.');
-  const { workflow: guide } = await readInstallTemplates();
+  let config = null;
+  try { config = JSON.parse(await readProjectFile(root, '.blocks/config.json') || 'null'); } catch { /* an invalid config is reported by the scan below */ }
+  const { workflow: guide } = await readInstallTemplates(config);
   const specifications = [
     { path: '.blocks/WORKFLOW.md', body: guide },
     { path: '.blocks/.gitignore', body: '/worktrees/\n/view/', ignore: true },
-    ...editors.map((name) => ({ path: editorFiles[name], body: renderAgentInstructions(), prefix: name === 'cursor' ? cursorHeader : '' })),
+    ...editors.map((name) => ({ path: editorFiles[name], body: renderAgentInstructions(config), prefix: name === 'cursor' ? cursorHeader : '' })),
   ];
   const files = [];
   for (const item of specifications) {

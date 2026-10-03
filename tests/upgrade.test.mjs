@@ -378,3 +378,65 @@ test('init never overwrites a CI file or hook with ambiguous markers', async (t)
   assert.equal(await readFile(hook, 'utf8'), owner);
   assert.equal(await readFile(join(root, '.github/workflows/block-beaver.yml'), 'utf8'), workflow);
 });
+
+const familyFiles = async (root, extra = {}) => {
+  await mkdir(join(root, 'definitions'), { recursive: true });
+  await mkdir(join(root, 'catalog/widgets'), { recursive: true });
+  await writeFile(join(root, 'definitions/widget.family.ts'), "import { defineFamily, s } from 'block-beaver/kernel'; export default defineFamily({id:'widget',fields:s.object({}),implementation:['module'],generators:['registry']});\n");
+  await writeFile(join(root, 'catalog/widgets/alpha.item.ts'), `export default ${JSON.stringify({ id: 'alpha', family: 'widget', version: 1, name: 'Alpha', description: 'Fixture', rationale: 'Fixture', implementation: { kind: 'module', module: '../../src/index' } })};\n`);
+  const path = join(root, '.blocks/config.json');
+  const config = JSON.parse(await readFile(path, 'utf8'));
+  await writeFile(path, JSON.stringify({ ...config, families: [{ id: 'widget', contract: 'definitions/widget.family.ts', manifests: 'catalog/widgets/*.item.ts', registry: { out: 'src/widgets.generated.ts' } }], ...extra }, null, 2) + '\n');
+};
+const managedCurrent = (audit) => audit.rules.find((rule) => rule.id === 'managed-current');
+
+test('families config renders guidance on upgrade, rewriting only the managed region', async (t) => {
+  const root = await installationFixture(t), runner = packageRunner(root), version = await currentVersion();
+  await installProject(root, { agents: ['codex', 'claude'], version, runner });
+  commitAll(root, 'install');
+  const plain = await snapshot(root);
+  assert.ok(!plain['AGENTS.md'].includes('Typed families'));
+  await writeFile(join(root, 'AGENTS.md'), `Owner intro\n\n${plain['AGENTS.md']}\nOwner outro\n`);
+  await familyFiles(root, { enforcement: { receipts: 'optional' } });
+  const audit = await auditProject(root, { mode: 'working' });
+  const rule = managedCurrent(audit);
+  assert.equal(rule.pass, true);
+  assert.ok(rule.advisories.some((entry) => entry.severity === 'warning' && entry.message === 'run `block-beaver upgrade`'));
+  await upgradeProject(root, { version, runner });
+  const after = await snapshot(root);
+  for (const path of ['AGENTS.md', 'CLAUDE.md', '.blocks/WORKFLOW.md', '.claude/skills/block-beaver/SKILL.md', '.agents/skills/block-beaver/SKILL.md']) {
+    assert.match(after[path], /\| `widget` \| `catalog\/widgets\/\*\.item\.ts` \| `definitions\/widget\.family\.ts` \|/, path);
+    assert.match(after[path], /block-beaver gen/);
+    assert.match(after[path], /typed-family manifests are reviewed in the pull request/);
+  }
+  assert.ok(after['AGENTS.md'].startsWith('Owner intro\n\n') && after['AGENTS.md'].endsWith('\nOwner outro\n'));
+  assert.equal(after['.blocks/WORKFLOW.md'].replace(/\n*<!-- block-beaver:families:start -->[\s\S]*?<!-- block-beaver:families:end -->\n?/, '\n').replace(/<!-- block-beaver:hash [a-f0-9]{64} -->\n/, ''), plain['.blocks/WORKFLOW.md'].replace(/<!-- block-beaver:hash [a-f0-9]{64} -->\n/, ''));
+  assert.equal(managedCurrent(await auditProject(root, { mode: 'working' })).advisories.some((entry) => entry.code === 'managed-families-stale'), false);
+  assert.deepEqual((await upgradeProject(root, { version, runner })).changed, []);
+});
+
+test('an edited managed section still fails managed-current when the families config also changed', async (t) => {
+  const root = await installationFixture(t), runner = packageRunner(root), version = await currentVersion();
+  await installProject(root, { agents: ['codex'], version, runner });
+  commitAll(root, 'install');
+  await familyFiles(root);
+  const text = await readFile(join(root, 'AGENTS.md'), 'utf8');
+  await writeFile(join(root, 'AGENTS.md'), text.replace('Report affected blocks', 'Report all affected blocks'));
+  const rule = managedCurrent(await auditProject(root, { mode: 'working' }));
+  assert.equal(rule.pass, false);
+  assert.ok(rule.findings.some((finding) => finding.path === 'AGENTS.md'));
+});
+
+test('update hints that family outputs are stale only when families are configured and drifted', async (t) => {
+  const { spawnSync } = await import('node:child_process');
+  const cli = new URL('../bin/block-beaver.mjs', import.meta.url).pathname;
+  const run = (root) => JSON.parse(spawnSync(process.execPath, [cli, 'update', '--root', root], { encoding: 'utf8' }).stdout);
+  const root = await installationFixture(t), runner = packageRunner(root), version = await currentVersion();
+  await installProject(root, { agents: [], version, runner });
+  assert.equal('hint' in run(root), false);
+  await familyFiles(root);
+  assert.match(run(root).hint, /family outputs are stale; run block-beaver gen/);
+  const gen = spawnSync(process.execPath, [cli, 'gen', '--root', root], { encoding: 'utf8' });
+  assert.equal(gen.status, 0, gen.stdout + gen.stderr);
+  assert.equal('hint' in run(root), false);
+});

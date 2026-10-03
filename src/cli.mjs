@@ -17,6 +17,19 @@ import { relative, isAbsolute } from 'node:path';
 import { auditProject, integrateApproved, recordException } from './compliance.mjs';
 import { git } from './compliance-git.mjs';
 
+/** Read-only family drift check (the one audit uses); costs nothing unless families are configured. */
+async function staleFamilyHint(root, graph) {
+  let config;
+  try { config = JSON.parse(await readProjectFile(root, '.blocks/config.json') ?? 'null'); } catch { return null; }
+  if (!Array.isArray(config?.families) || !config.families.length) return null;
+  try {
+    const { planGeneration, checkGeneration } = await import('./families/generate.mjs');
+    const { registeredViewOutputs } = await import('./view-exports.mjs');
+    const plan = await planGeneration({ root, config, graph, paths: Object.keys(graph.hashes || {}), extraOutputs: await registeredViewOutputs(root, graph), readOnly: true });
+    return checkGeneration(plan).some((entry) => entry.rule === 'family-drift') ? 'family outputs are stale; run block-beaver gen' : null;
+  } catch { return null; }
+}
+
 const [command, ...args] = process.argv.slice(2);
 const flags = new Set(['write', 'strict', 'dry-run', 'force', 'fix-ignores', 'fix-excludes', 'staged', 'remove-data', 'yes']);
 if (command === 'install') flags.add('check');
@@ -166,7 +179,8 @@ try {
   }
   if (command === 'update') {
     const { graph, ...result } = await updateProject(root);
-    print({ ...result, summary: graph.summary });
+    const hint = await staleFamilyHint(root, graph);
+    print({ ...result, summary: graph.summary, ...(hint ? { hint } : {}) });
     await exit(0);
   }
   if (command === 'start') {
