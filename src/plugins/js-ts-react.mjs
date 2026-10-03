@@ -1,7 +1,10 @@
 import ts from 'typescript';
 import { extname } from 'node:path';
+import { builtinModules } from 'node:module';
 
 const extensions = new Set(['.js', '.jsx', '.mjs', '.cjs', '.ts', '.tsx', '.mts', '.cts']);
+const builtins = new Set(builtinModules.map((name) => name.replace(/^node:/, '')));
+const bareName = /^(?:@[a-z0-9~-][a-z0-9._~-]*\/)?[a-z0-9~-][a-z0-9._~-]*(?:\/.*)?$/;
 const sourceKind = (name) => name.endsWith('.tsx') ? ts.ScriptKind.TSX : name.endsWith('.jsx') ? ts.ScriptKind.JSX : name.endsWith('.js') || name.endsWith('.mjs') || name.endsWith('.cjs') ? ts.ScriptKind.JS : ts.ScriptKind.TS;
 const sourceLines = new WeakMap();
 const evidence = (file, source, node) => {
@@ -32,6 +35,21 @@ function declarations(source, path) {
   }
   return found.map((d) => ({ ...d, id: `symbol:${path}#${d.name}`, kind: symbolKind(d.name, d.node, source) }));
 }
+/** `import type`, `export type`, `import type x = require()`, or every named specifier marked `type`. */
+function isTypeOnly(node) {
+  if (ts.isImportDeclaration(node)) {
+    const clause = node.importClause;
+    if (!clause) return false;
+    if (clause.isTypeOnly) return true;
+    const named = clause.namedBindings;
+    return !clause.name && !!named && ts.isNamedImports(named) && named.elements.length > 0 && named.elements.every((element) => element.isTypeOnly);
+  }
+  if (ts.isExportDeclaration(node)) {
+    if (node.isTypeOnly) return true;
+    return !!node.exportClause && ts.isNamedExports(node.exportClause) && node.exportClause.elements.length > 0 && node.exportClause.elements.every((element) => element.isTypeOnly);
+  }
+  return ts.isImportEqualsDeclaration(node) && node.isTypeOnly;
+}
 function links(files, fileSet, addEdge, context = {}) {
   for (const [path, file] of files) {
     if (file.plugin !== jsTsReactPlugin || context.shouldLink?.(path) === false) continue;
@@ -55,7 +73,13 @@ function links(files, fileSet, addEdge, context = {}) {
       const resolution = context.resolveImport?.(path, specifier, { mode });
       const target = resolution?.path;
       const proof = evidence(path, source, statement);
+      // Installed packages resolve as external; a bare specifier that does not resolve (not installed
+      // here, and not an alias, which the scope/name pattern rejects) is still recorded by name.
+      const name = resolution?.external ? resolution.package : !target && resolution?.error && bareName.test(specifier) ? specifier.split('/').slice(0, specifier.startsWith('@') ? 2 : 1).join('/') : null;
+      if (name && !builtins.has(name.replace(/^node:/, ''))) context.recordPackageImport?.(path, { package: name, specifier, line: proof.line, typeOnly: isTypeOnly(statement) });
       if (!target || !fileSet.has(target)) {
+        // Deliberately excluded files (registered view exports, gitignored files) are known targets.
+        if (target && context.excludedKnown?.has(target)) continue;
         if (!resolution?.external) context.reportUnresolved?.(path, specifier, proof, resolution?.error || (target ? `Resolved file is outside scanned source: ${target}` : `Cannot resolve module '${specifier}'`), resolution?.category);
         continue;
       }

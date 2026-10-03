@@ -402,7 +402,7 @@ test('loader works when its own source package sits inside the scanned repositor
   const kitRoot = join(data.root, 'local-tool');
   const repositoryRoot = fileURLToPath(new URL('..', import.meta.url));
   await mkdir(join(kitRoot, 'src'), { recursive: true });
-  for (const path of ['families', 'kernel', 'project-model.mjs', 'project-files.mjs']) await cp(join(repositoryRoot, 'src', path), join(kitRoot, 'src', path), { recursive: true });
+  for (const path of ['families', 'kernel', 'project-model.mjs', 'project-files.mjs', 'git-file-set.mjs']) await cp(join(repositoryRoot, 'src', path), join(kitRoot, 'src', path), { recursive: true });
   await cp(join(repositoryRoot, 'package.json'), join(kitRoot, 'package.json'));
   await mkdir(join(kitRoot, 'node_modules'), { recursive: true });
   await symlink(join(repositoryRoot, 'node_modules/typescript'), join(kitRoot, 'node_modules/typescript'), process.platform === 'win32' ? 'junction' : 'dir');
