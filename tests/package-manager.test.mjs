@@ -149,3 +149,30 @@ test('local CLI prefixes are manager-native and never accept arbitrary command t
   assert.throws(() => localBlockBeaverCommand('npm; echo bad'), /require npm/);
   assert.throws(() => localBlockBeaverCommand({ executable: 'npm' }), /require npm/);
 });
+
+for (const id of ['npm', 'pnpm', 'yarn', 'bun']) {
+  test(`${id} runtime install pins under dependencies and removes the devDependency`, async (t) => {
+    const root = await fixture(t, { packageManager: `${id}@9.0.0`, devDependencies: { 'block-beaver': '0.2.0' } });
+    const plan = await planPackageChange(root, { manager: id, version, runtime: true });
+    const args = plan.commands.at(-1).args;
+    assert.ok(args.includes(`block-beaver@${version}`));
+    assert.ok(!args.includes('--save-dev') && !args.includes('--dev'));
+    assert.ok(args.includes(id === 'npm' || id === 'pnpm' ? '--save-exact' : '--exact'));
+    if (id === 'yarn') assert.deepEqual(plan.commands[0].args, ['remove', 'block-beaver']);
+    const next = JSON.parse(plan.files[0].content);
+    assert.equal(next.dependencies['block-beaver'], version);
+    assert.equal(next.devDependencies['block-beaver'], undefined);
+    assert.equal(plan.placement, 'dependencies');
+  });
+}
+
+test('re-pinning keeps an existing dependencies placement and lock checks accept either group', async (t) => {
+  const root = await fixture(t, { dependencies: { 'block-beaver': '0.2.0' } });
+  const plan = await planPackageChange(root, { manager: 'npm', version, keepPlacement: true });
+  assert.ok(!plan.commands[0].args.includes('--save-dev'));
+  assert.equal(JSON.parse(plan.files[0].content).dependencies['block-beaver'], version);
+  const locked = await fixture(t, { dependencies: { 'block-beaver': version } }, { 'package-lock.json': JSON.stringify({ lockfileVersion: 3, packages: { '': { dependencies: { 'block-beaver': version } }, 'node_modules/block-beaver': { version } } }) });
+  assert.deepEqual((await planPackageChange(locked, { manager: 'npm', version, keepPlacement: true })).commands, []);
+  const pnpm = await fixture(t, { packageManager: 'pnpm@9.0.0', dependencies: { 'block-beaver': version } }, { 'pnpm-lock.yaml': matching.pnpm[1].replace('devDependencies:', 'dependencies:') });
+  assert.deepEqual((await planPackageChange(pnpm, { manager: 'pnpm', version, keepPlacement: true })).commands, []);
+});

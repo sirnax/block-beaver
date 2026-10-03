@@ -5,6 +5,7 @@ import { dirname, join } from 'node:path';
 import { execFileSync, spawnSync } from 'node:child_process';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { installProject } from '../src/install.mjs';
+import { renderAgentInstructions } from '../src/install-templates.mjs';
 import { installationFixture, packageRunner } from './helpers/install-fixture.mjs';
 
 const packageRoot = fileURLToPath(new URL('../', import.meta.url));
@@ -710,7 +711,7 @@ test('0.7.0: the managed pre-commit prints one line when a staged audit passes a
   const passed = hookCommit(root, env, 'add notes');
   assert.equal(passed.status, 0, passed.lines.join('\n'));
   assert.equal(passed.lines.length, 1, passed.lines.join('\n'));
-  assert.match(passed.lines[0], /^block-beaver audit: pass \(\d+ files?, 0 errors\)$/);
+  assert.match(passed.lines[0], /^block-beaver audit: pass \(\d+ files?, 0 errors(?:, 1 warning - run block-beaver audit for the full report)?\)$/);
   assert.equal(git(root, 'log', '--format=%s', '-1').trim(), 'add notes');
 
   // A failing one: kind "audio" is served by no model, so the cross-family check fails in the staged snapshot.
@@ -729,4 +730,233 @@ test('0.7.0: the managed pre-commit prints one line when a staged audit passes a
   assert.match(family[0], /src\/blocks\/task\/manifests\/draw\.task\.ts/);
   assert.match(family[0], /no model serves/);
   assert.equal(failed.lines.some((line) => /^\s*[{[]|"rules"/.test(line)), false, 'no JSON report in hook output');
+});
+
+// ---- 0.8.0: map reach, argKey bindings, gitignored builds, view-export imports, quiet gen, computed scaffolds, narrowing --agents ----
+
+const configFile = (patch) => ({ '.blocks/config.json': JSON.stringify({ ...config, ...patch }, null, 2) + '\n' });
+const withMap = (family, map) => family.replace("implementation: ['none'],", `implementation: ['none'],\n  map: ${JSON.stringify(map)},`);
+const graphOf = async (root) => JSON.parse(await read(root, '.blocks/view/graph.json'));
+const ruleOf = (report, id) => report.rules.find((item) => item.id === id);
+
+test('0.8.0: map.reach registry counts an ordinary importer of the registry output as reach, and map.unused false exempts a family', async (t) => {
+  const root = await installedProject(t, {
+    'src/blocks/model/model.family.ts': withMap(modelFamily, { reach: 'registry' }),
+    'src/blocks/task/task.family.ts': withMap(taskFamily, { unused: false }),
+    'src/main.ts': "import { reader } from './nodes/reader.ts';\nimport { models } from './blocks/model/registry.out.ts';\nexport const main = [reader, models];\n",
+  });
+  assert.equal(json(root, ['gen']).ok, true);
+  json(root, ['update']);
+  const graph = await graphOf(root);
+  assert.deepEqual(graph.unused, [], 'registry reach and map.unused false leave nothing unused');
+  const registry = graph.codeReach.filter((entry) => entry.via === 'registry');
+  assert.deepEqual(registry.map((entry) => [entry.block, entry.folder, entry.files]), [['block:model:text', 'src', ['src/main.ts']], ['block:model:vision', 'src', ['src/main.ts']]]);
+  for (const entry of registry) {
+    assert.equal(entry.evidence.length, 1);
+    assert.deepEqual([entry.evidence[0].file, entry.evidence[0].line], ['src/main.ts', 2]);
+    assert.match(entry.evidence[0].text, /registry\.out\.ts/);
+  }
+  assert.equal(graph.codeReach.some((entry) => entry.via === 'registry' && entry.block.startsWith('block:task:')), false);
+  assert.equal(graph.codeReach.some((entry) => entry.block.startsWith('block:task:')), false, 'task blocks are exempt, not reached');
+
+  // Without either key the same project reports the model and task blocks unused (the importer alone is not reach).
+  const plain = await installedProject(t, { 'src/main.ts': "import { reader } from './nodes/reader.ts';\nimport { models } from './blocks/model/registry.out.ts';\nexport const main = [reader, models];\n" });
+  assert.equal(json(plain, ['gen']).ok, true);
+  json(plain, ['update']);
+  assert.deepEqual((await graphOf(plain)).unused, ['block:model:text', 'block:model:vision', 'block:task:draw', 'block:task:summarize']);
+});
+
+test('0.8.0: an argKey map binding reaches the block named by a string-literal call argument, and a variable adds nothing', async (t) => {
+  const root = await installedProject(t, {
+    ...configFile({ map: { ...config.map, bindings: [{ family: 'task', call: 'runTask', argKey: 'key' }] } }),
+    'src/main.ts': "import { reader } from './nodes/reader.ts';\nconst runTask = (options: { key: string }) => options.key;\nconst dynamic = 'summarize';\nexport const main = [reader, runTask({ key: 'draw' }), runTask({ key: dynamic })];\n",
+  });
+  assert.equal(json(root, ['gen']).ok, true);
+  json(root, ['update']);
+  const graph = await graphOf(root);
+  assert.deepEqual(graph.codeReach.filter((entry) => entry.via === 'binding').map((entry) => [entry.block, entry.folder, entry.files]), [['block:task:draw', 'src', ['src/main.ts']]]);
+  assert.equal(graph.unused.includes('block:task:draw'), false);
+  assert.ok(graph.unused.includes('block:task:summarize'), 'a variable argument reaches nothing');
+});
+
+test('0.8.0: a gitignored build file that imports source is left out of the scan and does not make a staged audit call the view stale', { skip: process.platform === 'win32' }, async (t) => {
+  const root = await installedProject(t, {
+    '.gitignore': 'node_modules/\nout/\n',
+    'out/bundle.ts': "import { painter } from '../src/nodes/reader.ts';\nexport const built = painter;\n",
+  });
+  // Git lists the work tree only once something is tracked (a fresh repo falls back to the plain walk).
+  commitAll(root, 'seed');
+  assert.equal(json(root, ['gen']).ok, true);
+  json(root, ['update']);
+  const graph = await graphOf(root);
+  assert.equal(graph.nodes.some((node) => node.path?.startsWith('out/')), false, 'working-tree scan excludes the ignored folder');
+  assert.equal(graph.edges.some((edge) => `${edge.from} ${edge.to}`.includes('out/')), false);
+  assert.equal(JSON.stringify(graph).includes('out/bundle.ts'), false);
+
+  commitAll(root, 'adopt families');
+  assert.equal(git(root, 'ls-files', 'out'), '', 'the build file is never tracked');
+  // Stage a source change, regenerate in the working tree, then audit the staged snapshot.
+  await writeFile(join(root, 'src/nodes/reader.ts'), 'export const reader = () => "read";\nexport const painter = () => "paint it";\n');
+  git(root, 'add', 'src/nodes/reader.ts');
+  json(root, ['gen']);
+  json(root, ['update']);
+  const staged = run(root, ['audit', '--staged']);
+  assert.equal(staged.status, 0, staged.stdout + staged.stderr);
+  const report = JSON.parse(staged.stdout);
+  assert.equal(report.pass, true);
+  const fresh = ruleOf(report, 'view-fresh');
+  assert.deepEqual([fresh.pass, fresh.findings], [true, []]);
+});
+
+test('0.8.0: a source file importing a registered view export module passes audit --strict without raising the resolution ratchet', async (t) => {
+  const root = await installedProject(t);
+  assert.equal(json(root, ['gen']).ok, true);
+  const exported = json(root, ['view', '--format', 'module', '--out', 'src/view.mjs']);
+  assert.ok(exported.bytes > 0, JSON.stringify(exported));
+  assert.deepEqual(JSON.parse(await read(root, '.blocks/view-exports.json')), [{ path: 'src/view.mjs', format: 'module' }]);
+  await writeFile(join(root, 'src/main.ts'), "import { reader } from './nodes/reader.ts';\nimport { BLOCK_BEAVER_VIEW } from './view.mjs';\nexport const main = [reader, BLOCK_BEAVER_VIEW];\n");
+  json(root, ['view', '--format', 'module', '--out', 'src/view.mjs']);
+  json(root, ['update']);
+  const graph = await graphOf(root);
+  assert.equal(graph.unresolved?.length ?? graph.resolution?.unresolved ?? 0, 0, 'the export import is known, not unresolved');
+  commitAll(root, 'import the view export');
+  const audit = run(root, ['audit', '--strict']);
+  assert.equal(audit.status, 0, audit.stdout + audit.stderr);
+  const report = JSON.parse(audit.stdout);
+  assert.equal(report.pass, true);
+  for (const id of ['resolution-ratchet', 'view-fresh', 'undeclared-link']) {
+    const rule = ruleOf(report, id);
+    assert.deepEqual([id, rule.pass, rule.findings], [id, true, []]);
+  }
+  assert.equal(run(root, ['gen', '--check']).status, 0);
+});
+
+test('0.8.0: gen --check --format summary prints exactly one line on a clean tree and exits 0', async (t) => {
+  const root = await installedProject(t);
+  assert.equal(json(root, ['gen']).ok, true);
+  const quiet = run(root, ['gen', '--check', '--format', 'summary']);
+  assert.equal(quiet.status, 0, quiet.stdout + quiet.stderr);
+  assert.equal(quiet.stderr, '');
+  assert.match(quiet.stdout, /^block-beaver gen: \d+ outputs? current\n$/);
+  assert.equal(quiet.stdout.trimEnd().split('\n').length, 1);
+
+  // A drifted output fails with one line per failing output and no JSON.
+  await writeFile(join(root, 'src/blocks/coverage.json'), '{}\n');
+  const drift = run(root, ['gen', '--check', '--format', 'summary']);
+  assert.equal(drift.status, 2, drift.stdout);
+  assert.match(drift.stdout, /src\/blocks\/coverage\.json · /);
+  assert.equal(/^\s*[{[]/m.test(drift.stdout), false);
+});
+
+const planTaskFamily = taskFamily.replace("import { defineFamily, s } from 'block-beaver/kernel';", "import { createHash } from 'node:crypto';\nimport { defineFamily, s } from 'block-beaver/kernel';").replace("  generators: ['registry', 'index'],", `  generators: ['registry', 'index'],
+  scaffold: {
+    async plan(input, { all, readFile, id }) {
+      const list = await readFile('docs/task-list.json');
+      const next = JSON.stringify({ tasks: [...JSON.parse(list).tasks, id] }, null, 2) + '\\n';
+      const node = input.node ?? all.find((item) => item.family === 'node')?.id ?? 'reader';
+      return {
+        files: [{ path: 'src/blocks/task/manifests/' + id + '.task.ts', content: 'export const ' + id.replace(/-/g, '_') + ' = ' + JSON.stringify({ id, family: 'task', version: 1, name: id, description: 'The ' + id + ' task', rationale: 'Keeps ' + id + ' cohesive', kind: input.kind, node, implementation: { kind: 'none' } }) + ' as const;\\n' }],
+        updates: [{ path: 'docs/task-list.json', content: next, before: 'sha256:' + createHash('sha256').update(list).digest('hex') }],
+        manualSteps: ['Announce ' + id],
+      };
+    },
+  },`);
+const taskList = '{\n  "tasks": [\n    "draw",\n    "summarize"\n  ]\n}\n';
+
+test('0.8.0: a computed scaffold creates the manifest and updates an existing file, with a dry-run diff, then applies and runs gen', async (t) => {
+  const root = await installedProject(t, { 'src/blocks/task/task.family.ts': planTaskFamily, 'docs/task-list.json': taskList });
+  assert.equal(json(root, ['gen']).ok, true);
+  const kit = (...args) => JSON.parse(run(root, ['kit', 'create', 'task', 'translate', '--input', '{"kind":"text"}', ...args]).stdout);
+  const manifest = 'src/blocks/task/manifests/translate.task.ts';
+
+  const dry = run(root, ['kit', 'create', 'task', 'translate', '--input', '{"kind":"text"}', '--dry-run']);
+  assert.equal(dry.status, 0, dry.stdout + dry.stderr);
+  const preview = JSON.parse(dry.stdout).result;
+  assert.ok(preview.written.some((file) => file.path === manifest), JSON.stringify(preview.written));
+  assert.deepEqual(preview.updated.map((file) => file.path), ['docs/task-list.json']);
+  assert.match(preview.updated[0].diff, /^--- a\/docs\/task-list\.json/);
+  assert.match(preview.updated[0].diff, /^\+    "translate"/m);
+  assert.deepEqual(preview.manualSteps, ['Announce translate']);
+  assert.equal(await read(root, 'docs/task-list.json'), taskList, 'a dry run writes nothing');
+  await assert.rejects(read(root, manifest), { code: 'ENOENT' });
+  assert.equal(await read(root, 'src/blocks/task/registry.out.ts').then((text) => text.includes('translate')), false);
+
+  const applied = run(root, ['kit', 'create', 'task', 'translate', '--input', '{"kind":"text"}']);
+  assert.equal(applied.status, 0, applied.stdout + applied.stderr);
+  assert.deepEqual(JSON.parse(applied.stdout).result.updated.map((file) => file.path), ['docs/task-list.json']);
+  assert.match(await read(root, manifest), /"kind":"text"/);
+  assert.deepEqual(JSON.parse(await read(root, 'docs/task-list.json')).tasks, ['draw', 'summarize', 'translate']);
+  assert.match(await read(root, 'src/blocks/task/registry.out.ts'), /translate/, 'gen ran after the write');
+  assert.ok(JSON.parse(await read(root, '.blocks/index.json')).some((item) => item.id === 'translate'));
+  assert.equal(run(root, ['gen', '--check']).status, 0);
+  assert.ok(kit().ok === false, 'the manifest now exists, so a second create is refused');
+});
+
+async function twoAgentProject(t) {
+  const root = await installationFixture(t);
+  const runner = packageRunner(root);
+  await installProject(root, { agents: ['claude', 'codex'], runner });
+  return { root, runner };
+}
+const exists = (root, path) => readFile(join(root, path)).then(() => true, () => false);
+
+test('0.8.0: install --agents claude removes the codex-managed files and install --agents claude --check then exits 0', async (t) => {
+  const { root } = await twoAgentProject(t);
+  for (const path of ['.codex/hooks.json', '.agents/skills/block-beaver/SKILL.md']) assert.equal(await exists(root, path), true, path);
+  const install = (...args) => spawnSync(process.execPath, [cli, 'install', '--root', root, '--agents', 'claude', ...args], { encoding: 'utf8', timeout: 120_000 });
+  assert.equal(install('--check').status, 2, 'the narrowing is pending until applied');
+  const dry = install('--dry-run');
+  assert.equal(dry.status, 0, dry.stdout + dry.stderr);
+  assert.equal(await exists(root, '.codex/hooks.json'), true, 'a dry run removes nothing');
+  const narrowed = install();
+  assert.equal(narrowed.status, 0, narrowed.stdout + narrowed.stderr);
+  for (const path of ['.codex/hooks.json', '.codex/config.toml', '.agents/skills/block-beaver/SKILL.md']) assert.equal(await exists(root, path), false, path);
+  assert.equal(await exists(root, '.claude/skills/block-beaver/SKILL.md'), true);
+  assert.deepEqual(JSON.parse(await read(root, '.blocks/install.json')).agents, ['claude']);
+  const settled = install('--check');
+  assert.equal(settled.status, 0, settled.stdout + settled.stderr);
+});
+
+// The pre-0.8.0 managed guidance, byte for byte, for a config without families.
+const guidance070 = `## Block Beaver\n\nRead and follow .blocks/WORKFLOW.md before changing code.\n- Install this project’s locked dependencies with its package manager and use the pinned local Block Beaver command (for npm, \`npx --no-install block-beaver\`).\n- Inspect the owning block, its files, dependencies, and dependents using a fresh source graph and the authoritative registry.\n- Record purpose, rationale, file boundaries, interfaces, and verification before implementing a feature. Stay inside the agreed block; declare new connections and propose new blocks through plan/propose/check/review.\n- Review .blocks/config.json application ownership and health. Preserve owner-controlled entries; resolve imports using the owning app's tsconfig.\n- Require review JSON \`readyForApproval: true\` before approval. After authorized approval, run \`block-beaver integrate ROADMAP BLOCK --root .\` to apply the reviewed changes and create their receipt. Stage the receipt and matching workflow evidence with the implementation.\n- Run \`block-beaver audit --root .\` before finishing and \`block-beaver audit --staged --root .\` before committing. Record justified exceptions with the CLI.\n- After source or manifest changes, run \`block-beaver update --root .\` to regenerate the graph and view. Never hand-edit generated outputs.\n- Run \`block-beaver start --root .\` for live updates. Report affected blocks and verification at completion.\n`;
+
+test('0.8.0 compatibility: a project that uses none of the new keys keeps its graph, generated bytes and guidance', async (t) => {
+  const root = await installedProject(t);
+  assert.equal(json(root, ['gen']).ok, true);
+  json(root, ['update']);
+  const outputs = ['.blocks/index.json', 'src/blocks/coverage.json', 'src/blocks/node/registry.out.ts', 'src/blocks/model/registry.out.ts', 'src/blocks/task/registry.out.ts'];
+  const before = Object.fromEntries(await Promise.all(outputs.map(async (path) => [path, await read(root, path)])));
+  const graphText = await read(root, '.blocks/view/graph.json');
+  const normalize = (text) => JSON.stringify({ ...JSON.parse(text), scannedAt: 0 });
+
+  // Generated bytes equal what the 0.6.0/0.7.0 parts assert, and a second gen/update changes nothing.
+  assert.equal(before['.blocks/index.json'], expectedIndex);
+  assert.equal(before['src/blocks/coverage.json'], expectedCoverage);
+  assert.deepEqual(json(root, ['gen']).written, []);
+  json(root, ['update']);
+  for (const path of outputs) assert.equal(await read(root, path), before[path], path);
+  assert.equal(normalize(await read(root, '.blocks/view/graph.json')), normalize(graphText), 'graph.json is stable apart from scannedAt');
+
+  // None of the 0.8.0 fields appear in graph.json, and the schema stays at 2.
+  const graph = JSON.parse(graphText);
+  assert.equal(graph.schemaVersion, 2);
+  const compact = graphText.replace(/\s+/g, '');
+  for (const key of ['excludedKnown', 'packageImports', 'railLimit']) assert.equal(compact.includes(`"${key}"`), false, key);
+  for (const via of ['registry', 'binding']) assert.equal(compact.includes(`"via":"${via}"`), false, via);
+  assert.equal(Object.hasOwn(graph, 'view'), false);
+  assert.equal(Object.hasOwn(graph.mapStyle ?? {}, 'railLimit'), false);
+  assert.ok(graph.codeReach.every((entry) => !Object.hasOwn(entry, 'evidence')), 'code reach entries carry no evidence');
+  assert.ok(graph.codeReach.every((entry) => entry.via === 'import'));
+
+  // Guidance without families is the pre-0.8.0 text, and an install writes exactly that between the markers.
+  assert.equal(renderAgentInstructions(), guidance070);
+  assert.equal(renderAgentInstructions({}), guidance070);
+  assert.equal(renderAgentInstructions({ schemaVersion: 1, apps: [] }), guidance070);
+  const plain = await installationFixture(t);
+  const installed = await installProject(plain, { agents: ['claude'], runner: packageRunner(plain) });
+  assert.equal(installed.complete, true, JSON.stringify(installed.conflicts));
+  const claude = (await read(plain, 'CLAUDE.md')).replaceAll('\r\n', '\n');
+  const section = claude.match(/<!-- block-beaver:start -->\n<!-- block-beaver:hash [a-f0-9]{64} -->\n([\s\S]*?)<!-- block-beaver:end -->/);
+  assert.ok(section, claude);
+  assert.equal(section[1].replace(/^<!-- block-beaver:version [^\n]* -->\n/, ''), guidance070, 'the version comment is the only addition');
 });

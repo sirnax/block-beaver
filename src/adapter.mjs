@@ -70,6 +70,9 @@ export async function attachProjectRegistry(graph, { config: suppliedConfig, loa
     try { config = configText === null ? null : JSON.parse(configText); } catch { return graph; }
   }
   graph.repoName = await projectName(graph.root);
+  // Page text only; attached when set so graphs without it keep their bytes.
+  const pageText = Object.fromEntries(['title', 'eyebrow', 'heading', 'intro'].filter((key) => typeof config?.view?.[key] === 'string').map((key) => [key, config.view[key]]));
+  if (Object.keys(pageText).length) graph.view = pageText;
   if (config && ['families', 'generators', 'loader', 'history', 'checks'].some((key) => Object.hasOwn(config, key))) {
     const paths = Object.keys(graph.hashes || {});
     const project = await loadProjectModel(graph.root, { paths, writeConfig: false });
@@ -94,6 +97,7 @@ export async function attachProjectRegistry(graph, { config: suppliedConfig, loa
     const { prepareMapStyle } = await import('./families/map-style.mjs');
     const style = await prepareMapStyle(graph.root, config);
     graph.mapStyle = style;
+    if (config.map.railLimit !== undefined) style.railLimit = config.map.railLimit;
     graph.familyDiagnostics = [...(graph.familyDiagnostics || []), ...(style.diagnostics || [])];
   }
   return graph;

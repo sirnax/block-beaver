@@ -6,6 +6,83 @@ All notable user visible changes are recorded here. Releases follow semantic ver
 
 - No additional changes recorded.
 
+## 0.8.0 — 2026-10-03
+
+0.8.0 fixes what finishing the adoption of an existing family system exposed:
+- the runtime kernel can no longer take a live app down;
+- the map no longer marks registry-consumed blocks unused;
+- scans honour `.gitignore`;
+- agent guidance knows about families;
+- `kit create` can replace a project scaffolder;
+- a narrower `--agents` install cleans up after itself.
+
+Upgrading from 0.7.0 is `block-beaver upgrade`. See the [0.8.0 plan](docs/tasks/2026-10-03-block-beaver-0.8.0-plan.md).
+
+**Compatibility notes**
+
+- **Map views change bytes.** The map controls use new colour tokens, map text turns ligatures off, and the folder rail shows 20 rows by default. Re-export any registered view module (`view --format module`, or `gen`) and commit the result.
+  - The tokens are `--bb-control-surface`, `--bb-control-border`, `--bb-control-text`, `--bb-control-hover` and `--bb-panel-surface`. Each falls back to the previous colour.
+  - Rows beyond the rail limit sit behind a `<details>` "Show all N folders".
+- **Working-tree scans honour `.gitignore`.**
+  - Inside a Git work tree, scans read tracked files plus untracked files that are not ignored. Gitignored files leave the graph, so working-tree and staged audits agree.
+  - Config `ignore` entries added only to hide build output can be removed.
+  - Outside Git, the scan walks the directory as before.
+  - The `maxFiles` limit now counts only the files that are kept.
+- **Fewer unresolved imports.** Imports that resolve to a registered view export or a gitignored file are no longer reported as unresolved. Resolution counts can therefore drop, and `upgrade` may lower `.blocks/baseline.json`.
+- **Managed guidance changes only where families are configured.**
+  - Projects with `families` get a "Typed families" section inside the managed regions of the agent instructions, `WORKFLOW.md` and the agent skill. `upgrade` rewrites those regions once.
+  - Without `families`, every managed byte is unchanged.
+  - Until `upgrade` runs after a families config change, `audit` reports the `managed-families-stale` warning instead of failing.
+- **Either dependency placement is current.** `managed-current` accepts the exact `block-beaver` pin in `dependencies` or `devDependencies`. A plain `install` still pins it as a devDependency.
+- **New audit warning.** `runtime-import-dev-dependency` appears when non-test code imports `block-beaver`, `block-beaver/kernel` or `block-beaver/view` at runtime while the package is only a devDependency. Generated registries count as non-test code.
+  - The audit still passes.
+  - `audit --format summary` adds ", 1 warning" to its pass line.
+- **Narrower `--agents` removes files.** An explicit `--agents` list that drops a recorded agent now removes that agent's managed files and hook entries. An edited managed section is a conflict, as for `uninstall`. Auto-detection never removes anything.
+- **`kit create` is all-or-nothing.** If `gen` or the reload fails after scaffolding, every created file is deleted and every updated file restored. Before, the scaffold files were left behind. The CLI exits 2 instead of 1.
+- **Graph schema and kernel.**
+  - `graph.json` stays at schema 2.
+  - `codeReach` entries gain `evidence` only for the new `via: 'registry'`.
+  - `coerce`, `validate`, `compose` and `createRegistry` behave as before by default.
+- **New codes.** `managed-families-stale`, `runtime-import-dev-dependency`, `unmanaged-left`, `scaffold-plan-failed`, `scaffold-stale` and `scaffold-update-missing`.
+
+**Changes**
+
+- Contract `map.reach: 'registry'` counts every block of a family as reached when an ordinary, non-generated file imports its `registry.out`. Those `codeReach` entries carry import evidence. Contract `map.unused: false` keeps a family's blocks off the unused list. A `map.bindings` entry `{ family, call, argKey }` matches `call({ argKey: 'id' })`. (#47)
+- Imports of a registered view export, or of a gitignored file, no longer count as unresolved, so they no longer raise the resolution ratchet. (#48)
+- Working-tree scans, family file discovery and the project inventory read the same Git file set, so gitignored build output no longer makes the staged audit call the view stale. (#49)
+- Agent guidance knows about families.
+  - With `families` configured, the managed agent instructions, `WORKFLOW.md` and skill gain a section with:
+    - a table of families;
+    - "add a block = add one manifest";
+    - `block-beaver gen` (not only `update`) and a warning never to hand-edit generated outputs;
+    - the `kit` commands;
+    - a PR-review note when receipts are optional.
+  - `update` adds a `hint` when family outputs are stale.
+  
+  (#50)
+- `kit create` can replace a project scaffolder.
+  - Contracts may define `scaffold.plan(input, { all, entries, readFile, id, family })`, which returns created files, `updates` to existing files (each guarded by a `before` sha256) and `manualSteps`.
+  - `kit create` takes `--input JSON` or `--input-file PATH` and validates the planned manifest against the family schema and its `check` before writing.
+  - `--dry-run` shows creates and update diffs.
+  
+  (#51)
+- The family map gets control and panel colour tokens, turns ligatures off (the broken "fi"), and adds a `map.railLimit` (default 20) with the remaining folders behind `<details>`.
+  - Config `view.title`, `view.eyebrow`, `view.heading` and `view.intro` set the page text.
+  - `block-beaver/view` ships TypeScript types.
+  
+  (#52)
+- `gen` and `gen --check` take `--format summary`, which prints one line on success and one line per failing output otherwise. Adopted outputs also report `bodyIdenticalIgnoringLeadingComment`. The README notes how pnpm's `minimumReleaseAge` interacts with upgrading. (#53)
+- Tracking issue for the 0.8.0 goal. (#54)
+- The runtime kernel is safe to use in a live app.
+  - `composeSafe(base, dynamic, { family, order })` returns `{ registry, rejected }` instead of throwing on an invalid or duplicate dynamic manifest.
+  - `read(schema, value)` always returns a value plus a list of `repairs`.
+  - `createRegistry(family, manifests, { order: 'input' })` keeps input order.
+  - An unknown `implementation` key on a data kind now names `implementationFields.<kind>`.
+  - `install --runtime` pins `block-beaver` under `dependencies`, and `upgrade` keeps the existing placement.
+  
+  (#55)
+- `install --agents` with a narrower list removes the dropped agents' managed files and hooks. It reports `removed`, and `unmanaged-left` warnings for files it leaves. `install --check` exits 2 when anything would change. (#56)
+
 ## 0.7.0 — 2026-10-02
 
 0.7.0 takes the next steps in adopting an existing family system: join links, per-family grouping, generator entries, taking over existing outputs, region outputs, history label modules, a map-only view export, and a one-line audit output for hooks and CI. Upgrading from 0.6.x is `block-beaver upgrade`. See the [0.7.0 plan](docs/tasks/2026-10-02-block-beaver-0.7.0-plan.md).

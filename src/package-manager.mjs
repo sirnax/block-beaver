@@ -90,14 +90,14 @@ async function lockMatches(root, manager, version) {
     try {
       const lock = JSON.parse(text);
       return lock.packages
-        ? lock.packages['']?.devDependencies?.['block-beaver'] === version && lock.packages['node_modules/block-beaver']?.version === version
+        ? (lock.packages['']?.devDependencies?.['block-beaver'] === version || lock.packages['']?.dependencies?.['block-beaver'] === version) && lock.packages['node_modules/block-beaver']?.version === version
         : lock.dependencies?.['block-beaver']?.version === version;
     } catch { return false; }
   }
   const v = escapeRegex(version);
   if (manager.id === 'pnpm') {
     const importer = text.match(/^  \.:\s*\n([\s\S]*?)(?=^  \S|^\S|(?![\s\S]))/m)?.[1];
-    return Boolean(importer && new RegExp(`^    devDependencies:\\s*\\n(?:(?!^    \\S)[\\s\\S])*?^      ['"]?block-beaver['"]?:\\s*\\n        specifier: ['"]?${v}['"]?\\s*\\n        version: ['"]?${v}(?:\\([^\\n]*\\))?['"]?\\s*$`, 'm').test(importer));
+    return Boolean(importer && new RegExp(`^    (?:devDependencies|dependencies):\\s*\\n(?:(?!^    \\S)[\\s\\S])*?^      ['"]?block-beaver['"]?:\\s*\\n        specifier: ['"]?${v}['"]?\\s*\\n        version: ['"]?${v}(?:\\([^\\n]*\\))?['"]?\\s*$`, 'm').test(importer));
   }
   if (manager.id === 'yarn') {
     // Both classic and Berry stanzas name the requested exact version.
@@ -106,14 +106,14 @@ async function lockMatches(root, manager, version) {
   if (manager.id === 'bun') {
     try {
       const lock = JSON.parse(text);
-      return lock.workspaces?.['']?.devDependencies?.['block-beaver'] === version && lock.packages?.['block-beaver']?.[0] === `block-beaver@${version}`;
+      return (lock.workspaces?.['']?.devDependencies?.['block-beaver'] === version || lock.workspaces?.['']?.dependencies?.['block-beaver'] === version) && lock.packages?.['block-beaver']?.[0] === `block-beaver@${version}`;
     } catch { return false; }
   }
   return false;
 }
 
 /** Pure plan: the package manager owns package.json and lockfile updates. */
-export async function planPackageChange(root, { manager, version, operation = 'install' } = {}) {
+export async function planPackageChange(root, { manager, version, operation = 'install', runtime, keepPlacement = false } = {}) {
   if (!['install', 'uninstall'].includes(operation)) throw new Error('Package operation must be install or uninstall.');
   if (operation === 'install' && (typeof version !== 'string' || !exactVersion.test(version))) throw new Error('Block Beaver must be pinned to an exact semantic version.');
   const detected = await detectPackageManager(root);
@@ -122,6 +122,10 @@ export async function planPackageChange(root, { manager, version, operation = 'i
   const pkg = await readPackage(root);
   const diagnostics = [...detected.diagnostics];
   const commands = [];
+  // Placement: runtime forces dependencies; keepPlacement (upgrade) leaves an existing dependencies pin there; otherwise devDependencies.
+  const placement = runtime ? 'dependencies' : keepPlacement && pkg.dependencies?.['block-beaver'] !== undefined && pkg.devDependencies?.['block-beaver'] === undefined ? 'dependencies' : 'devDependencies';
+  const other = placement === 'dependencies' ? 'devDependencies' : 'dependencies';
+  const prod = placement === 'dependencies';
   const command = (args) => commands.push({ executable: detected.executable, args });
   const yarnBerry = /^yarn@(?:[2-9]|\d{2,})\./.test(pkg.packageManager || '') || /__metadata:/.test(await readProjectFile(root, 'yarn.lock') || '');
   const workspaceRoot = Boolean(pkg.workspaces) || await readProjectFile(root, 'pnpm-workspace.yaml') !== null;
@@ -129,28 +133,28 @@ export async function planPackageChange(root, { manager, version, operation = 'i
     if (pkg.devDependencies?.['block-beaver'] !== undefined || pkg.dependencies?.['block-beaver'] !== undefined) {
       command(detected.id === 'npm' ? ['uninstall', 'block-beaver', '--ignore-scripts'] : ['remove', 'block-beaver', ...(detected.id === 'yarn' ? [] : ['--ignore-scripts'])]);
     }
-  } else if (pkg.devDependencies?.['block-beaver'] === version && !pkg.dependencies?.['block-beaver']) {
+  } else if (pkg[placement]?.['block-beaver'] === version && pkg[other]?.['block-beaver'] === undefined) {
     if (!await lockMatches(root, detected, version)) {
       diagnostics.push(`The exact pin exists but ${detected.lockfile || 'the lockfile'} needs verification by ${detected.id}.`);
       command({ npm: ['install', '--package-lock-only', '--ignore-scripts'], pnpm: ['install', '--lockfile-only', '--ignore-scripts'], yarn: yarnBerry ? ['install', '--mode=update-lockfile'] : ['install', '--ignore-scripts'], bun: ['install', '--lockfile-only', '--ignore-scripts'] }[detected.id]);
     }
   } else {
-    // Berry refuses moving a production dependency with --dev; remove it first.
-    if (detected.id === 'yarn' && pkg.dependencies?.['block-beaver'] !== undefined) command(['remove', 'block-beaver']);
-    command({ npm: ['install', '--save-dev', '--save-exact', '--ignore-scripts', `block-beaver@${version}`], pnpm: ['add', '--save-dev', '--save-exact', '--ignore-scripts', ...(workspaceRoot ? ['--workspace-root'] : []), `block-beaver@${version}`], yarn: ['add', '--dev', '--exact', ...(!yarnBerry ? ['--ignore-scripts', ...(workspaceRoot ? ['--ignore-workspace-root-check'] : [])] : []), `block-beaver@${version}`], bun: ['add', '--dev', '--exact', '--ignore-scripts', `block-beaver@${version}`] }[detected.id]);
+    // Berry refuses moving a dependency between groups; remove it from the other group first.
+    if (detected.id === 'yarn' && pkg[other]?.['block-beaver'] !== undefined) command(['remove', 'block-beaver']);
+    command({ npm: ['install', prod ? '--save-prod' : '--save-dev', '--save-exact', '--ignore-scripts', `block-beaver@${version}`], pnpm: ['add', prod ? '--save-prod' : '--save-dev', '--save-exact', '--ignore-scripts', ...(workspaceRoot ? ['--workspace-root'] : []), `block-beaver@${version}`], yarn: ['add', ...(prod ? [] : ['--dev']), '--exact', ...(!yarnBerry ? ['--ignore-scripts', ...(workspaceRoot ? ['--ignore-workspace-root-check'] : [])] : []), `block-beaver@${version}`], bun: ['add', ...(prod ? [] : ['--dev']), '--exact', '--ignore-scripts', `block-beaver@${version}`] }[detected.id]);
   }
   const before = await readProjectFile(root, 'package.json');
   const next = structuredClone(pkg);
   if (operation === 'install') {
-    next.devDependencies = { ...next.devDependencies, 'block-beaver': version };
-    if (next.dependencies) delete next.dependencies['block-beaver'];
+    next[placement] = { ...next[placement], 'block-beaver': version };
+    if (next[other]) delete next[other]['block-beaver'];
   } else {
     if (next.devDependencies) delete next.devDependencies['block-beaver'];
     if (next.dependencies) delete next.dependencies['block-beaver'];
   }
   const files = JSON.stringify(next) === JSON.stringify(pkg) ? [] : [{ path: 'package.json', before, content: `${JSON.stringify(next, null, 2)}\n`, commandOwned: true }];
   if (commands.length) diagnostics.push('Package-manager-owned package.json diffs are previews; lockfile changes are determined by the listed package manager command.');
-  return { commands, files, diagnostics };
+  return { commands, files, diagnostics, placement: operation === 'install' ? placement : undefined };
 }
 
 /** Runner seam uses executable + argument arrays, always with shell disabled. */

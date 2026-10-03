@@ -39,6 +39,9 @@ export declare function isSchema(value:unknown): value is Node;
 export declare function assertSchema(value:unknown): Node;
 export declare function validate<const S extends Node>(schema:S,value:unknown): Result<Infer<S>>;
 export declare function coerce<const S extends Node>(schema:S,value:unknown): Result<Infer<S>>;
+export type Repair = {path:string;code:Issue['code'];message:string};
+/** Never throws on data (a malformed schema still throws): applies defaults (including nested defaults under missing parents), keeps unknown keys, replaces a wrong-typed field with its default or drops it, and lists every repair. A non-object root yields `{}` (object/record schemas) or `null`. Use `validate` at write boundaries. */
+export declare function read<const S extends Node>(schema:S,value:unknown): {value:Infer<S>;repairs:Repair[]};
 /** Opt-in wider manifest type for checks and generators of families with `dataKinds`: annotate the callback parameter with it to compare declared data kinds. */
 export type LoadedManifest = Omit<CoreManifest,'implementation'> & {implementation:{kind:string;module?:string} & Record<string,unknown>} & Record<string,unknown>;
 export type CoreManifest = {id:string;family:string;version:number|string;name:string;description:string;rationale:string;implementation:{kind:'module';module:string}|{kind:'none'};files?:readonly string[]};
@@ -51,9 +54,14 @@ export type FamilyDefinition = {id:string;fields:ObjectNode;implementation:reado
   /** `match` makes a join link: an edge to every `to` manifest whose `match` path (on that one family) shares a value with `field`. */
   links?:readonly {field:string;to:string|readonly string[];kind:string;match?:string}[];generators?:readonly ('registry'|'index'|'history')[];
   /** `group` clusters this family's map floor by a schema path (`.`/`[]`): array values are joined with `join` (default `', '`), no value gives `empty` (default no group), and `format` wraps the label around one `{value}`. It wins over config `map.groupBy`. */
-  map?:{title?:string;blurb?:string;group?:{field:string;join?:string;empty?:string;format?:string}};scaffold?:{files:readonly {path:string;template:string}[];manualSteps?:readonly string[]};
+  map?:{title?:string;blurb?:string;/** `false` never flags this family's blocks unused on the map. */unused?:boolean;/** `'registry'`: an ordinary, non-generated file importing the family's `registry.out` counts every block as reached. */reach?:'registry';group?:{field:string;join?:string;empty?:string;format?:string}};scaffold?:ScaffoldDefinition;
   check?:(manifest:CoreManifest & Record<string,unknown>,ctx:{family:string;get(ref:string):unknown}) => readonly {path:string;message:string;code?:string}[] | void;
   checkAll?:(manifests:readonly (CoreManifest & Record<string,unknown>)[],ctx:SetCheckContext) => SetCheckIssues | Promise<SetCheckIssues>;};
+/** A computed scaffold: `plan` runs in the load worker; `readFile` reads project files (null when missing) and rejects paths that escape the root or follow symlinks. `all` and `entries` are this family's manifests. */
+export interface ScaffoldPlanContext {all:readonly (CoreManifest & Record<string,unknown>)[];entries:readonly {ref:string;family:string;id:string;path:string;exportName:string;hash:string;value:CoreManifest & Record<string,unknown>}[];readFile(path:string):Promise<string|null>;id:string;family:string;}
+/** `files` are created (exactly one must be the manifest); `updates` replace an existing file and are refused unless its current sha256 equals `before`. */
+export interface ScaffoldPlan {files:readonly {path:string;content:string}[];updates?:readonly {path:string;content:string;before:`sha256:${string}`}[];manualSteps?:readonly string[];}
+export interface ScaffoldDefinition {files?:readonly {path:string;template:string}[];manualSteps?:readonly string[];plan?:(input:Record<string,unknown>,ctx:ScaffoldPlanContext) => ScaffoldPlan | Promise<ScaffoldPlan>;}
 /** Context for a family's `checkAll` and for config-level `checks` modules (default export `(manifests, ctx) => issues`, where `manifests` spans every family). */
 export type SetCheckContext = {families:readonly {id:string}[];get(ref:string):unknown;all(familyId:string):readonly (CoreManifest & Record<string,unknown>)[]};
 export type SetCheckIssues = readonly {message:string;block?:string;field?:string;path?:string;code?:string}[] | void;
@@ -77,5 +85,10 @@ export declare const coreManifestSchema: DeepReadonly<Extract<Node,{type:'object
 export declare function validateManifest<F extends FamilyDefinition = FamilyDefinition>(manifest:unknown,options?:{mode?:'build'|'runtime';family?:F}): Result<ManifestOf<F>>;
 export type Registry<M extends {id:string;family:string}> = Readonly<{family:string;all:readonly DeepReadonly<M>[];byId:Readonly<Record<M['id'],DeepReadonly<M>>>;get(id:string):DeepReadonly<M>|undefined;has(id:string):id is M['id']}>;
 export declare class KernelError extends Error {code:string;details:unknown;constructor(code:string,message:string,details?:unknown);}
-export declare function createRegistry<const M extends {id:string;family:string}>(family:string,manifests:readonly M[]): Registry<M>;
+/** `all` is sorted by id unless `order: 'input'` keeps the input order. A duplicate id or family mismatch still throws `KernelError`. */
+export declare function createRegistry<const M extends {id:string;family:string}>(family:string,manifests:readonly M[],options?:{order?:'sorted'|'input'}): Registry<M>;
+/** Throws `manifest-invalid` on the first invalid dynamic manifest; use `composeSafe` at runtime. */
 export declare function compose<M extends {id:string;family:string}>(base:Registry<M>,dynamic:readonly unknown[],options?:{family?:FamilyDefinition}): Registry<M|CoreManifest>;
+export type Rejected = {index:number;id?:string;errors:readonly (Issue|{path:string;code:'duplicate-id'|'family-mismatch';message:string})[]};
+/** Production-safe `compose`: never throws for invalid dynamic manifests or duplicate ids (a base-id or earlier-dynamic collision is rejected with `duplicate-id`); returns the registry of valid manifests plus the rejected ones. Base manifests are trusted. */
+export declare function composeSafe<M extends {id:string;family:string}>(base:Registry<M>,dynamic:readonly unknown[],options?:{family?:FamilyDefinition;order?:'sorted'|'input'}): {registry:Registry<M|CoreManifest>;rejected:Rejected[]};

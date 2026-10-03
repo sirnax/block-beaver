@@ -128,3 +128,40 @@ function run(schema,value,lenient,checkSchema = true) {
 function canonical(v) { return JSON.stringify(v && typeof v === 'object' ? Array.isArray(v) ? v.map(item => JSON.parse(canonical(item))) : Object.fromEntries(Object.keys(v).sort().map(k => [k,JSON.parse(canonical(v[k]))])) : v); }
 export function validate(schema,value) { return run(schema,value,false); }
 export function coerce(schema,value) { return run(schema,value,true); }
+export function read(schema,value) {
+  assertSchema(schema);
+  const repairs = [];
+  const bad = (path,code,message,n) => { repairs.push({path,code,message}); return Object.hasOwn(n,'default') ? clone(n.default) : undefined; };
+  function visit(n,v,path) {
+    if (v === undefined) {
+      if (Object.hasOwn(n,'default')) return clone(n.default);
+      if (n.type !== 'object') return n.optional ? undefined : bad(path,'required','Value is required',n);
+      const mark = repairs.length, out = visit(n,{},path);
+      if (n.optional) { repairs.length = mark; return Object.keys(out).length ? out : undefined; }
+      repairs.splice(mark,0,{path,code:'required',message:'Value is required'}); return out;
+    }
+    if (v === null && n.nullable) return null;
+    if (n.type === 'union') { const o = n.options.find(option => run(option,v,false,false).valid); return o ? visit(o,v,path) : bad(path,'union','Value does not match any union option',n); }
+    if (n.type === 'unknown') return clone(v);
+    if (n.type === 'array' && Array.isArray(v)) {
+      const out = v.map((item,i) => visit(n.items,item,`${path}[${i}]`)).filter(item => item !== undefined);
+      const r = run(n,out,false,false);
+      return r.valid ? out : bad(path,r.errors[0].code,r.errors[0].message,n);
+    }
+    if (n.type === 'object' || n.type === 'record') {
+      if (v === null || typeof v !== 'object' || Array.isArray(v)) return bad(path,'type',`Expected ${n.type}`,n);
+      const out = {}, shape = n.type === 'record' ? Object.fromEntries(Object.keys(v).sort().map(k => [k,n.values])) : n.shape;
+      const put = (key,item) => { if (item !== undefined) Object.defineProperty(out,key,{value:item,enumerable:true,writable:true,configurable:true}); };
+      for (const key of Object.keys(shape)) put(key,visit(shape[key],v[key],`${path}.${key}`));
+      for (const key of Object.keys(v).filter(k => !Object.hasOwn(shape,k)).sort()) put(key,clone(v[key]));
+      return out;
+    }
+    const r = run(n,v,false,false);
+    return r.valid ? v : bad(path,r.errors[0].code,r.errors[0].message,n);
+  }
+  const issue = jsonIssue(value);
+  if (issue) repairs.push({path:issue,code:'not-json',message:'Value must be plain JSON'});
+  let out = issue ? undefined : visit(schema,value,'$');
+  if (out === undefined) out = schema.type === 'object' || schema.type === 'record' ? visit(schema,{},'$') : null;
+  return {value:out ?? null,repairs};
+}

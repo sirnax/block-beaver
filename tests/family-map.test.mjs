@@ -667,3 +667,80 @@ test('group packing stays fast for thousands of distinct groups', () => {
     assert.ok(elapsed < limit, `${count} groups rendered in ${Math.round(elapsed)} ms`);
   }
 });
+
+test('map controls use themeable tokens with today\'s colours as fallbacks, and map text has no ligatures', () => {
+  for (const token of ['control-surface', 'control-border', 'control-text', 'panel-surface']) assert.match(FAMILY_MAP_CSS, new RegExp(`var\\(--bb-${token},`));
+  assert.match(FAMILY_MAP_CSS, /\.family-zoom button,\.family-history button\{[^}]*border:1px solid var\(--bb-control-border,#b9c6c4\);background:var\(--bb-control-surface,#fff\)/);
+  assert.match(FAMILY_MAP_CSS, /\.family-evidence\{[^}]*background:var\(--bb-panel-surface,#fff\);border:1px solid var\(--bb-control-border,#cbd4d3\)/);
+  assert.doesNotMatch(FAMILY_MAP_CSS, /background:#fff[;}]/);
+  assert.match(FAMILY_MAP_CSS, /\.family-scene text\{font-variant-ligatures:none/);
+  const html = renderBlockMap(familyMapFixture());
+  assert.match(html, /input,select\{[^}]*border:1px solid var\(--bb-control-border,#b7c9ca\);background:var\(--bb-control-surface,white\)/);
+});
+
+const railGraph = (count, railLimit) => {
+  const graph = familyMapFixture();
+  graph.nodes = graph.nodes.filter((node) => node.kind !== 'file');
+  for (let index = 0; index < count; index++) graph.nodes.push({ id: `file:src/f${String(index).padStart(3, '0')}/a.ts`, kind: 'file', name: 'a.ts', path: `src/f${String(index).padStart(3, '0')}/a.ts`, app: 'web', usedBy: ['web'], lines: 1 });
+  if (railLimit !== undefined) graph.mapStyle = { ...graph.mapStyle, railLimit };
+  return graph;
+};
+
+test('the ordinary-code rail shows 20 folders by default and folds the rest into a script-free disclosure', () => {
+  const small = renderBlockMap(railGraph(20));
+  assert.doesNotMatch(small, /<details class="family-rail-more"/);
+  assert.equal(small.match(/class="ordinary-code/g).length, 20);
+  const big = renderBlockMap(railGraph(25));
+  assert.equal(big.match(/<g class="ordinary-code/g).length, 20);
+  assert.match(big, /<details class="family-rail-more"><summary>Show all 25 folders<\/summary><ul>(<li class="ordinary-code"[^>]*>[^<]*<\/li>){5}<\/ul><\/details>/);
+  assert.ok(big.includes('src/f024'));
+  assert.doesNotMatch(big.match(/<details class="family-rail-more">.*?<\/details>/)[0], /<script|onclick/);
+});
+
+test('map.railLimit overrides the default and bad values fall back', () => {
+  const custom = renderBlockMap(railGraph(10, 3));
+  assert.equal(custom.match(/<g class="ordinary-code/g).length, 3);
+  assert.match(custom, /Show all 10 folders/);
+  assert.doesNotMatch(renderBlockMap(railGraph(10, 50)), /<details class="family-rail-more"/);
+  assert.equal(renderBlockMap(railGraph(25, 0)).match(/<g class="ordinary-code/g).length, 20);
+});
+
+test('config validates view text keys and map.railLimit', async () => {
+  const { parseFamiliesConfig } = await import('../src/families/config.mjs');
+  const codes = (config) => parseFamiliesConfig(config).diagnostics.map((item) => item.path ?? item.field ?? item.message);
+  assert.deepEqual(codes({ view: { title: 'T', eyebrow: 'E', heading: 'H', intro: 'I' }, map: { railLimit: 5 } }), []);
+  for (const view of [{ title: 1 }, { eyebrow: null }, { heading: {} }, { intro: [] }]) assert.equal(codes({ view }).length, 1);
+  for (const railLimit of [0, -1, 1.5, '5', null]) assert.equal(codes({ map: { railLimit } }).length, 1);
+});
+
+test('config view text and map.railLimit reach the rendered page through the adapter', async (t) => {
+  const root = await mkdtemp(join(tmpdir(), 'block-beaver-view-config-'));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  await writeFile(join(root, 'package.json'), JSON.stringify({ name: 'view-config-fixture', type: 'module' }));
+  await mkdir(join(root, 'src'));
+  await writeFile(join(root, 'src/main.ts'), 'export const main = 1;\n');
+  const plain = await attachProjectRegistry(await scanRepository(root, { writeConfig: false }), { config: { schemaVersion: 1, view: { detail: 'full' } } });
+  assert.equal(Object.hasOwn(plain, 'view'), false, 'view.detail alone attaches nothing');
+  const graph = await attachProjectRegistry(await scanRepository(root, { writeConfig: false }), { config: { schemaVersion: 1, view: { title: 'Atlas <x>', detail: 'full' }, map: { railLimit: 3 } } });
+  assert.deepEqual(graph.view, { title: 'Atlas <x>' });
+  assert.equal(graph.mapStyle.railLimit, 3);
+  assert.match(renderBlockMap(graph), /<title>Atlas &lt;x&gt;<\/title>/);
+});
+
+test('registry-reach entries with import evidence draw like other reach and carry their evidence in the data', () => {
+  const graph = parityFixture();
+  const evidence = [{ file: 'src/menu.ts', line: 3, text: "import { UNITS } from './gen';" }];
+  graph.codeReach = graph.codeReach.map((entry, index) => index === 0 ? { ...entry, via: 'registry', evidence } : entry);
+  const html = renderBlockMap(graph);
+  assert.match(renderFamilyMap(graph), /reach-line/);
+  const data = JSON.parse(html.match(/<script type="application\/json" id="family-map-data"[^>]*>([\s\S]*?)<\/script>/)[1]);
+  assert.equal(data.codeReach.length, 3);
+  assert.equal(data.codeReach.filter((entry) => entry.via === 'registry').length, 1);
+});
+
+test('no page or map rule hard-codes a white background, so a dark skin themes every panel and control', () => {
+  const html = renderBlockMap(familyMapFixture());
+  const styles = [...html.matchAll(/<style[^>]*>([\s\S]*?)<\/style>/g)].map((match) => match[1]).join('\n');
+  assert.match(styles, /\.block\{[^}]*background:var\(--bb-panel-surface,white\)/);
+  assert.doesNotMatch(styles, /[;{]background(?:-color)?:(?:white|#fff(?:fff)?)\s*[;}]/i);
+});

@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { mkdtemp, mkdir, readFile, writeFile, rm } from 'node:fs/promises';
+import { mkdtemp, mkdir, readFile, writeFile, rm, symlink } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -87,7 +87,7 @@ test('kit CLI JSON shape and prewrite scaffold errors use status 2 and leave fil
   }
 });
 
-test('kit CLI generation failure after scaffold writes uses status 1 and reports retained files and manual steps', async (t) => {
+test('kit CLI generation failure after scaffold writes rolls everything back with status 2', async (t) => {
   const root = await fixture(t);
   const listed = run(root, ['kit', 'list']);
   assert.equal(listed.status, 0);
@@ -100,32 +100,17 @@ test('kit CLI generation failure after scaffold writes uses status 1 and reports
   assert.deepEqual(JSON.parse(outputBefore), { count: 0 });
 
   const result = run(root, ['kit', 'create', 'sample', 'new-item', '--json', '-'], JSON.stringify({ rationale: 'Exercise partial creation', name: 'New item' }));
-  assert.equal(result.status, 1, JSON.stringify(result.json));
+  assert.equal(result.status, 2, JSON.stringify(result.json));
   assert.equal(result.json.ok, false);
   assert.equal(result.json.error.code, 'generator-failed');
   const details = result.json.error.details;
-  assert.deepEqual(details.written.map((file) => file.path), ['units/new-item.entry.ts', 'source/new-item.ts']);
+  assert.deepEqual(details.written, []);
+  assert.equal(details.rolledBack, true);
   assert.deepEqual(details.manualSteps, ['Review new-item manually', 'Write the database migration for new-item']);
   assert.ok(details.cause.diagnostics.some((item) => item.message.includes('fixture generator refuses new-item')));
-  for (const file of details.written) {
-    const content = await readFile(join(root, file.path), 'utf8');
-    assert.equal(Buffer.byteLength(content), file.bytes);
-  }
-  assert.match(await readFile(join(root, 'units/new-item.entry.ts'), 'utf8'), /Exercise partial creation/);
-  assert.equal(await readFile(join(root, 'source/new-item.ts'), 'utf8'), 'export const name = "New item";\n');
+  for (const path of ['units/new-item.entry.ts', 'source/new-item.ts', 'migration.sql']) await assert.rejects(readFile(join(root, path)), { code: 'ENOENT' });
   assert.equal(await readFile(join(root, 'generated/count.json'), 'utf8'), outputBefore);
-  await assert.rejects(readFile(join(root, 'migration.sql')), { code: 'ENOENT' });
-
-  // The partial result is visible on the next independent CLI process; retry
-  // reports the existing manifest instead of replacing the retained scaffold.
-  const reloaded = run(root, ['kit', 'list']);
-  assert.equal(reloaded.status, 0);
-  assert.equal(reloaded.json.result.blocks[0].ref, 'sample:new-item');
-  const retried = run(root, ['kit', 'create', 'sample', 'new-item', '--json', '{"rationale":"Retry"}']);
-  assert.equal(retried.status, 2);
-  assert.equal(retried.json.error.code, 'create-exists');
-  assert.equal(retried.json.error.details.written, undefined);
-  assert.match(await readFile(join(root, 'units/new-item.entry.ts'), 'utf8'), /Exercise partial creation/);
+  assert.deepEqual(run(root, ['kit', 'list']).json.result.blocks, []);
 });
 
 test('kit CLI dry-run generation failure uses status 2 and leaves the target untouched', async (t) => {
@@ -136,5 +121,131 @@ test('kit CLI dry-run generation failure uses status 2 and leaves the target unt
   assert.equal(result.json.error.code, 'generator-failed');
   for (const path of ['units/new-item.entry.ts', 'source/new-item.ts', 'generated/count.json', '.blocks/cache/generators.json']) {
     await assert.rejects(readFile(join(root, path)), { code: 'ENOENT' });
+  }
+});
+
+async function computedFixture(t) {
+  const root = await mkdtemp(join(tmpdir(), 'block-beaver-kit-plan-'));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  assert.equal(spawnSync('git', ['init', '-q', root], { encoding: 'utf8' }).status, 0);
+  await mkdir(join(root, '.blocks')); await mkdir(join(root, 'units')); await mkdir(join(root, 'fixtures'));
+  await writeFile(join(root, 'package.json'), JSON.stringify({ name: 'kit-plan-fixture', type: 'module' }));
+  await writeFile(join(root, '.blocks/config.json'), JSON.stringify({
+    schemaVersion: 1, apps: [],
+    families: [{ id: 'sample', contract: 'sample.family.ts', manifests: 'units/*.entry.ts', generators: ['count.generator.ts'] }],
+  }));
+  await writeFile(join(root, 'fixtures/types.json'), '{\n  "types": [\n    "first"\n  ]\n}\n');
+  await writeFile(join(root, 'units/first.entry.ts'), 'export default { id: "first", family: "sample", version: 1, name: "first", description: "first", rationale: "seed", order: 5, implementation: { kind: "none" } };\n');
+  await writeFile(join(root, 'outside.txt'), 'secret');
+  await writeFile(join(root, 'sample.family.ts'), `import { defineFamily, s } from 'block-beaver/kernel';
+import { createHash } from 'node:crypto';
+export default defineFamily({
+  id: 'sample', fields: s.object({ order: s.number() }), implementation: ['none'],
+  check(manifest) { return manifest.order > 100 ? [{ path: '$.order', message: 'order too large' }] : undefined; },
+  scaffold: {
+    manualSteps: ['static step ignored for computed'],
+    async plan(input, { all, readFile, id }) {
+      const types = await readFile('fixtures/types.json');
+      if (input.escape) await readFile(input.escape);
+      const order = input.order ?? Math.max(0, ...all.map((item) => item.order)) + 1;
+      const next = JSON.stringify({ types: [...JSON.parse(types).types, id] }, null, 2) + '\\n';
+      const before = input.stale ? 'sha256:' + '0'.repeat(64) : 'sha256:' + createHash('sha256').update(types).digest('hex');
+      return {
+        files: [{ path: 'units/' + id + '.entry.ts', content: 'export default ' + JSON.stringify({ id, family: 'sample', version: 1, name: id, description: id, rationale: input.rationale ?? 'r', order, implementation: { kind: 'none' } }) + ';\\n' }],
+        updates: [{ path: 'fixtures/types.json', content: next, before }],
+        manualSteps: ['Write the migration for ' + id],
+      };
+    },
+  },
+});\n`);
+  await writeFile(join(root, 'count.generator.ts'), `import { defineGenerator } from 'block-beaver/kernel';
+export default defineGenerator({
+  out: 'generated/count.json', inputs: ['units/*.entry.ts'],
+  generate(ctx) {
+    const manifests = ctx.manifests('sample');
+    if (manifests.some((manifest) => manifest.id === 'boom')) throw new Error('fixture generator refuses boom');
+    return JSON.stringify({ count: manifests.length });
+  }
+});\n`);
+  return root;
+}
+
+const typesFile = (root) => readFile(join(root, 'fixtures/types.json'), 'utf8');
+
+test('computed scaffold numbers the block, creates its manifest, updates an existing file and runs gen', async (t) => {
+  const root = await computedFixture(t);
+  const before = await typesFile(root);
+  const result = run(root, ['kit', 'create', 'sample', 'second', '--input', '{}']);
+  assert.equal(result.status, 0, JSON.stringify(result.json));
+  assert.deepEqual(result.json.result.manualSteps, ['Write the migration for second']);
+  assert.deepEqual(result.json.result.updated.map((file) => file.path), ['fixtures/types.json']);
+  assert.match(await readFile(join(root, 'units/second.entry.ts'), 'utf8'), /"order":6/);
+  assert.deepEqual(JSON.parse(await typesFile(root)).types, ['first', 'second']);
+  assert.notEqual(await typesFile(root), before);
+  assert.deepEqual(JSON.parse(await readFile(join(root, 'generated/count.json'), 'utf8')), { count: 2 });
+});
+
+test('computed scaffold --input-file and dry-run show creates and a diff without writing', async (t) => {
+  const root = await computedFixture(t);
+  const before = await typesFile(root);
+  await writeFile(join(root, 'input.json'), '{"order":9}');
+  const result = run(root, ['kit', 'create', 'sample', 'second', '--input-file', 'input.json', '--dry-run']);
+  assert.equal(result.status, 0, JSON.stringify(result.json));
+  assert.ok(result.json.result.written.some((file) => file.path === 'units/second.entry.ts'));
+  const diff = result.json.result.updated[0].diff;
+  assert.match(diff, /^--- a\/fixtures\/types\.json/);
+  assert.match(diff, /^\+    "second"/m);
+  assert.match(diff, /^-    "first"$/m);
+  assert.equal(await typesFile(root), before);
+  await assert.rejects(readFile(join(root, 'units/second.entry.ts')), { code: 'ENOENT' });
+  await assert.rejects(readFile(join(root, 'generated/count.json')), { code: 'ENOENT' });
+});
+
+test('computed scaffold refuses a stale before hash and writes nothing', async (t) => {
+  const root = await computedFixture(t);
+  const before = await typesFile(root);
+  const result = run(root, ['kit', 'create', 'sample', 'second', '--input', '{"stale":true}']);
+  assert.equal(result.status, 2);
+  assert.equal(result.json.error.code, 'scaffold-stale');
+  assert.equal(await typesFile(root), before);
+  await assert.rejects(readFile(join(root, 'units/second.entry.ts')), { code: 'ENOENT' });
+});
+
+test('computed scaffold with an invalid planned manifest writes nothing', async (t) => {
+  const root = await computedFixture(t);
+  const before = await typesFile(root);
+  for (const args of [['--input', '{"order":"x"}'], ['--input', '{"order":500}'], ['--input', '{"order":500}', '--dry-run']]) {
+    const result = run(root, ['kit', 'create', 'sample', 'second', ...args]);
+    assert.equal(result.status, 2, JSON.stringify(result.json));
+    assert.equal(result.json.error.code, 'manifest-schema');
+    assert.equal(await typesFile(root), before);
+    await assert.rejects(readFile(join(root, 'units/second.entry.ts')), { code: 'ENOENT' });
+    await assert.rejects(readFile(join(root, 'generated/count.json')), { code: 'ENOENT' });
+  }
+});
+
+test('computed scaffold rolls back creates and updates when generation fails', async (t) => {
+  const root = await computedFixture(t);
+  const before = await typesFile(root);
+  assert.equal(run(root, ['gen']).status, 0);
+  const generated = await readFile(join(root, 'generated/count.json'), 'utf8');
+  const result = run(root, ['kit', 'create', 'sample', 'boom', '--input', '{}']);
+  assert.equal(result.status, 2, JSON.stringify(result.json));
+  assert.equal(result.json.error.code, 'generator-failed');
+  assert.equal(result.json.error.details.rolledBack, true);
+  assert.equal(await typesFile(root), before);
+  await assert.rejects(readFile(join(root, 'units/boom.entry.ts')), { code: 'ENOENT' });
+  assert.equal(await readFile(join(root, 'generated/count.json'), 'utf8'), generated);
+});
+
+test('computed scaffold readFile cannot escape the project root or follow symlinks', async (t) => {
+  const root = await computedFixture(t);
+  const before = await typesFile(root);
+  await symlink(join(root, 'outside.txt'), join(root, 'link.txt'));
+  for (const escape of ['../outside.txt', '/etc/hosts', 'link.txt']) {
+    const result = run(root, ['kit', 'create', 'sample', 'second', '--input', JSON.stringify({ escape })]);
+    assert.equal(result.status, 2, JSON.stringify(result.json));
+    assert.equal(result.json.error.code, 'scaffold-plan-failed');
+    assert.equal(await typesFile(root), before);
   }
 });

@@ -6,7 +6,7 @@ import { fileURLToPath } from 'node:url';
 test('kernel declarations infer family schemas and registry literal ids', () => {
   const file = fileURLToPath(new URL('../src/kernel/type-fixture.ts',import.meta.url)).replaceAll('\\', '/');
   const source = `
-    import {s, type Infer, type ManifestOf, type LoadedManifest, type GeneratorDefinition, defineFamily, defineGenerator, type GeneratorEntry, createRegistry, compose, validate} from 'block-beaver/kernel';
+    import {s, type Infer, type ManifestOf, type LoadedManifest, type GeneratorDefinition, defineFamily, defineGenerator, type GeneratorEntry, createRegistry, compose, composeSafe, read, validate} from 'block-beaver/kernel';
     const schema = s.object({state:s.enum(['open','closed']), label:s.optional(s.string()), values:s.array(s.integer()), nullable:s.nullable(s.string())});
     const value: Infer<typeof schema> = {state:'open',values:[1],nullable:null};
     s.withDefault(s.string(),'default');
@@ -60,6 +60,20 @@ test('kernel declarations infer family schemas and registry literal ids', () => 
     const regionId: Required<GeneratorDefinition>['region'] = 'roadmap-badge';
     // @ts-expect-error a region is a kebab-case string id
     const numbered: Required<GeneratorDefinition>['region'] = 1;
+    const ordered = createRegistry('service',[m],{order:'input'});
+    // @ts-expect-error order only accepts sorted or input
+    createRegistry('service',[m],{order:'random'});
+    const safe = composeSafe(createRegistry('arms',[planned]),[{}],{family:arms,order:'input'});
+    const rejectedId: string | undefined = safe.rejected[0].id;
+    const rejectedCode: string = safe.rejected[0].errors[0].code;
+    const kept: string = safe.registry.all[0].id;
+    // @ts-expect-error rejected entries carry an index, not a manifest
+    safe.rejected[0].manifest;
+    const repaired = read(schema,null);
+    const fixed: 'open'|'closed' = repaired.value.state;
+    const repairPath: string = repaired.repairs[0].path;
+    // @ts-expect-error read returns a value, not a validity flag
+    repaired.valid;
     const result = validate(schema,{});
     if (result.valid) { const state: 'open'|'closed' = result.value.state; }
   `;

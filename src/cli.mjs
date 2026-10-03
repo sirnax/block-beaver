@@ -16,9 +16,26 @@ import { writeProjectFiles, readProjectFile } from './project-files.mjs';
 import { relative, isAbsolute } from 'node:path';
 import { auditProject, integrateApproved, recordException } from './compliance.mjs';
 import { git } from './compliance-git.mjs';
+import { gitScope } from './git-file-set.mjs';
+
+/** Read-only family drift check (the one audit uses); costs nothing unless families are configured. */
+async function staleFamilyHint(root, graph) {
+  let config;
+  try { config = JSON.parse(await readProjectFile(root, '.blocks/config.json') ?? 'null'); } catch { return null; }
+  if (!Array.isArray(config?.families) || !config.families.length) return null;
+  try {
+    const { planGeneration, checkGeneration } = await import('./families/generate.mjs');
+    const { registeredViewOutputs } = await import('./view-exports.mjs');
+    const plan = await planGeneration({ root, config, graph, paths: Object.keys(graph.hashes || {}), extraOutputs: await registeredViewOutputs(root, graph), readOnly: true });
+    return checkGeneration(plan).some((entry) => entry.rule === 'family-drift') ? 'family outputs are stale; run block-beaver gen' : null;
+  } catch { return null; }
+}
 
 const [command, ...args] = process.argv.slice(2);
-const flags = new Set(['write', 'strict', 'dry-run', 'force', 'fix-ignores', 'fix-excludes', 'staged', 'remove-data', 'yes']);
+// One Git ignore listing per command; a live refresh opens its own scope.
+gitScope.enterWith(new Map());
+const flags = new Set(['write', 'strict', 'dry-run', 'force', 'fix-ignores', 'fix-excludes', 'staged', 'remove-data', 'yes', 'runtime']);
+if (command === 'install') flags.add('check');
 if (command === 'gen') { flags.add('check'); flags.add('adopt'); }
 if (command === 'baseline') flags.add('lower');
 const options = new Map();
@@ -43,8 +60,8 @@ const exit = (code) => new Promise(() => { process.exitCode = code; process.stdo
 try {
   if (option('parseError')) throw new Error(option('parseError'));
   if (!command || command === 'help') {
-    process.stdout.write('Project integration\n  start [--root PATH] [--editor all|agents|claude|cursor|copilot] [--port 4175]\n  init [--root PATH] [--editor all|agents|claude|cursor|copilot]\n  update [--root PATH]\n  detect [--root PATH] [--write]\n  view --format module --out PATH [--detail full|map] [--max-bytes N] [--root PATH]\n  install [--agents claude,codex,cursor,copilot] [--dry-run]\n  upgrade [--dry-run] [--force]\n  baseline --lower [--root PATH] [--dry-run]\n  uninstall [--dry-run] [--remove-data --yes]\n  audit [--staged | --base SHA] [--strict] [--format json|summary]\n  integrate ROADMAP BLOCK\n  exception ID --reason TEXT --paths PATHS --check COMMAND\n\n');
-    process.stdout.write('Block Beaver\n  scan [--root PATH] [--full true]\n  inspect ID [--root PATH]\n  search QUERY [--root PATH] [--kind KIND]\n  kit list|describe|validate|compose|create [ARGS] [--json JSON] [--dry-run] [--root PATH]\n  gen [--check] [--label TEXT] [--adopt [PATH…]]\n  history import FILE --map MAPPING.json\n  agent --exec PATH [--scope file1,file2] [--create new1,new2] [--root PATH]\n  plan ROADMAP_ID [--scope file1,file2] [--create new1,new2] [--root PATH] [--title TITLE]\n  propose ROADMAP_ID PROPOSAL.json [--root PATH]\n  repair ROADMAP_ID SLICE_ID PROPOSAL.json [--root PATH]\n  check ROADMAP_ID SLICE_ID [--root PATH]\n  review ROADMAP_ID SLICE_ID [--root PATH]\n  approve ROADMAP_ID SLICE_ID [--root PATH]\n  reject ROADMAP_ID SLICE_ID --reason TEXT [--root PATH]\n  resume ROADMAP_ID [--root PATH]\n');
+    process.stdout.write('Project integration\n  start [--root PATH] [--editor all|agents|claude|cursor|copilot] [--port 4175]\n  init [--root PATH] [--editor all|agents|claude|cursor|copilot]\n  update [--root PATH]\n  detect [--root PATH] [--write]\n  view --format module --out PATH [--detail full|map] [--max-bytes N] [--root PATH]\n  install [--agents claude,codex,cursor,copilot] [--runtime] [--dry-run | --check]\n  upgrade [--dry-run] [--force]\n  baseline --lower [--root PATH] [--dry-run]\n  uninstall [--dry-run] [--remove-data --yes]\n  audit [--staged | --base SHA] [--strict] [--format json|summary]\n  integrate ROADMAP BLOCK\n  exception ID --reason TEXT --paths PATHS --check COMMAND\n\n');
+    process.stdout.write('Block Beaver\n  scan [--root PATH] [--full true]\n  inspect ID [--root PATH]\n  search QUERY [--root PATH] [--kind KIND]\n  kit list|describe|validate|compose|create [ARGS] [--json JSON | --input JSON | --input-file PATH] [--dry-run] [--root PATH]\n  gen [--check] [--format json|summary] [--label TEXT] [--adopt [PATH…]]\n  history import FILE --map MAPPING.json\n  agent --exec PATH [--scope file1,file2] [--create new1,new2] [--root PATH]\n  plan ROADMAP_ID [--scope file1,file2] [--create new1,new2] [--root PATH] [--title TITLE]\n  propose ROADMAP_ID PROPOSAL.json [--root PATH]\n  repair ROADMAP_ID SLICE_ID PROPOSAL.json [--root PATH]\n  check ROADMAP_ID SLICE_ID [--root PATH]\n  review ROADMAP_ID SLICE_ID [--root PATH]\n  approve ROADMAP_ID SLICE_ID [--root PATH]\n  reject ROADMAP_ID SLICE_ID --reason TEXT [--root PATH]\n  resume ROADMAP_ID [--root PATH]\n');
     await exit(0);
   }
   if (command === 'init') { print(await initializeProject(root, { editor: option('editor', 'all') })); await exit(0); }
@@ -52,9 +69,9 @@ try {
     if (command === 'uninstall' && option('remove-data') && !option('yes')) throw new Error('Deleting .blocks data requires explicit --remove-data --yes.');
     const { installProject, upgradeProject, uninstallProject } = await import('./install.mjs');
     const action = { install: installProject, upgrade: upgradeProject, uninstall: uninstallProject }[command];
-    const result = await action(root, { agents: option('agents')?.split(',').filter(Boolean), dryRun: option('dry-run', false), force: option('force', false), fixIgnores: option('fix-ignores', false), fixExcludes: option('fix-excludes', false), removeData: option('remove-data', false) });
+    const result = await action(root, { agents: option('agents')?.split(',').filter(Boolean), dryRun: option('dry-run', false), check: command === 'install' && option('check', false), force: option('force', false), fixIgnores: option('fix-ignores', false), fixExcludes: option('fix-excludes', false), runtime: option('runtime', false), removeData: option('remove-data', false) });
     print(result);
-    await exit(result.conflicts?.length || (!result.dryRun && !result.complete) ? 2 : 0);
+    await exit(result.conflicts?.length || (result.check ? !result.check.current : !result.dryRun && !result.complete) ? 2 : 0);
   }
   if (command === 'baseline') {
     if (!option('lower')) throw new Error('Use baseline --lower [--dry-run]; the baseline can only be lowered.');
@@ -90,9 +107,11 @@ try {
       if (!output || output.startsWith('../') || output === '..' || isAbsolute(output)) throw new Error(`Adopted output must be inside the project root: ${path}`);
       return output;
     });
+    const format = option('format', 'json');
+    if (!['json', 'summary'].includes(format)) throw new Error('Unknown gen format; use --format json or --format summary.');
     const { generateProject } = await import('./families/commands.mjs');
     const result = await generateProject(root, { check: option('check', false), dryRun: option('dry-run', false), label: option('label'), adopt: adopt.length ? adopt : option('adopt', false) === true });
-    print(result);
+    if (format === 'summary') process.stdout.write((await import('./audit-format.mjs')).formatGenSummary(result)); else print(result);
     await exit(result.pass === false || result.ok === false || result.diagnostics?.some((item) => item.severity === 'error') ? 2 : 0);
   }
   if (command === 'history') {
@@ -106,8 +125,16 @@ try {
     const { runKit } = await import('./families/kit.mjs');
     let input;
     try {
-      let json = option('json', '{}');
-      if (json === '-') { json = ''; for await (const chunk of process.stdin) { json += chunk; if (Buffer.byteLength(json) > 1_000_000) throw new Error('Kit input exceeds 1MB.'); } }
+      let json = option('input', option('json', '{}'));
+      if (option('input-file')) {
+        const { open } = await import('node:fs/promises');
+        // One handle for the size check and the read, so the file cannot change in between.
+        const handle = await open(resolve(root, option('input-file')), 'r');
+        try {
+          if ((await handle.stat()).size > 1_000_000) throw new Error('Kit input exceeds 1MB.');
+          json = await handle.readFile('utf8');
+        } finally { await handle.close(); }
+      } else if (json === '-') { json = ''; for await (const chunk of process.stdin) { json += chunk; if (Buffer.byteLength(json) > 1_000_000) throw new Error('Kit input exceeds 1MB.'); } }
       input = JSON.parse(json);
     } catch (error) {
       print({ ok: false, error: { code: 'kit-input-invalid', message: error.message } });
@@ -163,7 +190,8 @@ try {
   }
   if (command === 'update') {
     const { graph, ...result } = await updateProject(root);
-    print({ ...result, summary: graph.summary });
+    const hint = await staleFamilyHint(root, graph);
+    print({ ...result, summary: graph.summary, ...(hint ? { hint } : {}) });
     await exit(0);
   }
   if (command === 'start') {

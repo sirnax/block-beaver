@@ -1,7 +1,7 @@
 import { deepFreeze } from './schema.mjs';
-export { s, isSchema, assertSchema, validate, coerce } from './schema.mjs';
+export { s, isSchema, assertSchema, validate, coerce, read } from './schema.mjs';
 export { coreManifestSchema, validateManifest } from './manifest.mjs';
-export { createRegistry, compose, KernelError } from './registry.mjs';
+export { createRegistry, compose, composeSafe, KernelError } from './registry.mjs';
 
 function define(value,kind) {
   Object.defineProperty(value,Symbol.for(`block-beaver.${kind}`),{value:true,enumerable:false});

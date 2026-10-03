@@ -3,6 +3,7 @@ import { updateProject, renderBlockMap } from './block-map.mjs';
 import { isLocalBrowserRequest, securityHeaders } from './http-security.mjs';
 import { randomBytes } from 'node:crypto';
 import { prepareView } from './view.mjs';
+import { gitScope } from './git-file-set.mjs';
 
 export async function watchProject(root, { port = 4175, interval = 1500, onRefresh = () => {} } = {}) {
   if (!Number.isInteger(port) || port < 0 || port > 65535) throw new Error('Port must be an integer from 0 to 65535.');
@@ -11,7 +12,8 @@ export async function watchProject(root, { port = 4175, interval = 1500, onRefre
   let error = null, stopped = false, timer, active;
   async function refresh() {
     try {
-      const next = await updateProject(root);
+      // Each refresh lists ignored files afresh, so .gitignore edits and new ignored files are seen.
+      const next = await gitScope.run(new Map(), () => updateProject(root));
       if (next.revision !== latest.revision) onRefresh(next);
       latest = next;
       error = null;

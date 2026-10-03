@@ -4,7 +4,8 @@ import { basename, join, relative, resolve } from 'node:path';
 import { coreManifestSchema, validateManifest, createRegistry, compose } from '../kernel/index.mjs';
 import { extractLinks } from './graph.mjs';
 import { registeredViewOutputs } from '../view-exports.mjs';
-import { KitError, planScaffold, applyScaffold } from './scaffold.mjs';
+import { readProjectFile, writeProjectFiles } from '../project-files.mjs';
+import { KitError, planScaffold, planComputedScaffold, applyScaffold } from './scaffold.mjs';
 
 const failure = (code, message, details) => ({ ok: false, error: { code, message, ...(details === undefined ? {} : { details }) } });
 const success = (result) => ({ ok: true, result });
@@ -80,7 +81,7 @@ export async function runKit(root, command, args = [], options = {}) {
     }
     if (command === 'describe') {
       const family = getFamily(args[0]);
-      return success({ kernelSchemaVersion: 1, id: family.id, fields: family.fields, core: coreManifestSchema, implementation: family.implementation, dataKinds: family.dataKinds || [], implementationFields: family.implementationFields || {}, links: family.links || [], generators: family.generators || [], map: family.map || {}, scaffold: { files: (family.scaffold?.files || []).map((file) => file.path), manualSteps: family.scaffold?.manualSteps || [] } });
+      return success({ kernelSchemaVersion: 1, id: family.id, fields: family.fields, core: coreManifestSchema, implementation: family.implementation, dataKinds: family.dataKinds || [], implementationFields: family.implementationFields || {}, links: family.links || [], generators: family.generators || [], map: family.map || {}, scaffold: { files: (family.scaffold?.files || []).map((file) => file.path), manualSteps: family.scaffold?.manualSteps || [], ...(family.hasScaffoldPlan ? { computed: true } : {}) } });
     }
     if (command === 'validate') {
       const family = getFamily(input.family || input.manifest?.family);
@@ -103,8 +104,33 @@ export async function runKit(root, command, args = [], options = {}) {
     }
     const family = getFamily(args[0]), id = args[1];
     if (manifests.some((item) => item.family === family.id && item.id === id)) throw new KitError('create-exists', `Block '${family.id}:${id}' already exists`, { paths: manifests.filter((item) => item.family === family.id && item.id === id).map((item) => item.path) });
-    const scaffold = await planScaffold(root, family, id, input);
-    const result = { written: scaffold.files.map((file) => ({ path: file.path, bytes: Buffer.byteLength(file.content) })), manualSteps: scaffold.manualSteps, gen: { written: [], diagnostics: [] } };
+    let scaffold;
+    if (family.hasScaffoldPlan) {
+      // The plan function runs in a fresh load worker; nothing is written until its manifest validates.
+      const planned = await loader({ ...loadOptions, scaffold: { family: family.id, id, input } });
+      const planIssues = errorDiagnostics(planned.diagnostics);
+      if (planIssues.length || !planned.scaffold) throw new KitError(planIssues[0]?.code || 'scaffold-plan-failed', planIssues[0]?.message || 'Scaffold plan returned nothing', { diagnostics: planIssues });
+      scaffold = await planComputedScaffold(root, family, id, planned.scaffold);
+    } else scaffold = await planScaffold(root, family, id, input);
+    scaffold.updates ||= [];
+    const result = { written: scaffold.files.map((file) => ({ path: file.path, bytes: Buffer.byteLength(file.content) })), updated: scaffold.updates.map((update) => ({ path: update.path, bytes: Buffer.byteLength(update.content), diff: update.diff })), manualSteps: scaffold.manualSteps, gen: { written: [], diagnostics: [] } };
+    // Generated outputs are backed up before they are written so a later failure can restore them.
+    const backups = new Map();
+    const remember = async (creationRoot, paths) => {
+      if (creationRoot !== root) return;
+      for (const path of paths) if (!backups.has(path)) backups.set(path, await readProjectFile(root, path));
+    };
+    const restoreGenerated = async () => {
+      const errors = [];
+      for (const [path, content] of backups) {
+        try {
+          const current = await readProjectFile(root, path);
+          if (current !== content) await writeProjectFiles(root, [{ path, before: current, content }]);
+        } catch (error) { errors.push({ path, message: error.message }); }
+      }
+      return errors;
+    };
+    const outputPaths = (plan) => [...(plan.outputs || []).filter((output) => ['missing', 'stale'].includes(output.status)).map((output) => output.out), ...(plan.cacheUpdate ? [plan.cacheUpdate.path] : [])];
     const planCreation = async (creationRoot) => {
       const context = await creationContext(creationRoot, config, loader, scaffold, family, id, paths);
       const planGeneration = options.planGeneration || (await import('./generate.mjs')).planGeneration;
@@ -116,6 +142,7 @@ export async function runKit(root, command, args = [], options = {}) {
     const executeGeneration = async (creationRoot) => {
       const { plan, context, extraOutputs } = await planCreation(creationRoot);
       const applyGeneration = options.applyGeneration || (await import('./generate.mjs')).applyGeneration;
+      await remember(creationRoot, outputPaths(plan));
       const gen = await applyGeneration(creationRoot, plan);
       result.gen = gen;
       if (errorDiagnostics(gen.diagnostics).length) throw new KitError('generator-failed', 'Generation failed', { diagnostics: gen.diagnostics });
@@ -126,6 +153,7 @@ export async function runKit(root, command, args = [], options = {}) {
         const planGeneration = (await import('./generate.mjs')).planGeneration;
         const viewPlan = await planGeneration({ root: creationRoot, config, graph: refreshed.graph, extraOutputs: await registeredViewOutputs(creationRoot, refreshed.graph), loadFamilies: async () => ({ families: [], manifests: [], generators: [], diagnostics: [] }) });
         viewPlan.cacheUpdate = null;
+        await remember(creationRoot, outputPaths(viewPlan));
         const appliedViews = await applyGeneration(creationRoot, viewPlan);
         gen.written = [...new Set([...gen.written, ...appliedViews.written])];
         gen.diagnostics.push(...appliedViews.diagnostics);
@@ -140,10 +168,14 @@ export async function runKit(root, command, args = [], options = {}) {
       return result;
     };
     if (dryRun) return success(await withScaffoldSnapshot(root, scaffold, executeGeneration));
-    await applyScaffold(root, scaffold);
+    // A computed scaffold proves its manifest (schema and check) in a snapshot before the project is touched.
+    if (family.hasScaffoldPlan) await withScaffoldSnapshot(root, scaffold, async (snapshot) => { await creationContext(snapshot, config, loader, scaffold, family, id, paths); });
+    const applied = await applyScaffold(root, scaffold);
     try { return success(await executeGeneration(root)); }
     catch (error) {
-      return failure(error.code || 'generator-failed', 'Scaffold files were created, but generation or reloading failed: ' + error.message, { ...result, ...(error.details === undefined ? {} : { cause: error.details }) });
+      const rollbackErrors = [...await restoreGenerated(), ...await applied.rollback()];
+      const details = { ...result, written: rollbackErrors.length ? result.written : [], updated: rollbackErrors.length ? result.updated : [], gen: { written: [], diagnostics: result.gen.diagnostics }, rolledBack: !rollbackErrors.length, ...(rollbackErrors.length ? { rollbackErrors, retained: scaffold.files.map((file) => file.path) } : {}), ...(error.details === undefined ? {} : { cause: error.details }) };
+      return failure(error.code || 'generator-failed', `Generation or reloading failed${rollbackErrors.length ? ' and rollback was incomplete' : '; scaffold changes were rolled back'}: ${error.message}`, details);
     }
   } catch (error) {
     return failure(error.code || 'kit-failed', error.message, error.details);

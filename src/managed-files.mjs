@@ -2,7 +2,7 @@ import { createHash } from 'node:crypto';
 import { readFile } from 'node:fs/promises';
 import { readProjectFile } from './project-files.mjs';
 import { detectPackageManager, localBlockBeaverCommand } from './package-manager.mjs';
-import { AGENT_FILES, CURSOR_HEADER, LEGACY_AGENT_INSTRUCTIONS, LEGACY_APP_INSTRUCTION, readInstallTemplates, renderAgentHook, renderAgentInstructions } from './install-templates.mjs';
+import { FAMILIES_END, FAMILIES_START, AGENT_FILES, CURSOR_HEADER, LEGACY_AGENT_INSTRUCTIONS, LEGACY_APP_INSTRUCTION, readInstallTemplates, renderAgentHook, renderAgentInstructions } from './install-templates.mjs';
 
 const digest = (text) => createHash('sha256').update(text).digest('hex');
 const lf = (text) => text.replaceAll('\r\n', '\n');
@@ -49,6 +49,21 @@ function planText(before, spec, { version, operation, force }) {
   const rendered = renderSection(spec.body, version, spec.ignore);
   if (lf(text.slice(bounds.start, bounds.finish)) === rendered) return before;
   return text.slice(0, bounds.start) + rendered + text.slice(bounds.finish);
+}
+
+/**
+ * True when the only difference between installed and desired content is the config-derived families
+ * region (and the hash line covering it), and the installed section's own hash still verifies. Owner
+ * edits elsewhere in the managed region fail the hash, so they stay hard failures.
+ */
+export function familiesOnlyDrift(before, content) {
+  if (typeof before !== 'string' || typeof content !== 'string') return false;
+  const sections = (text) => [...lf(text).matchAll(/<!-- block-beaver:start -->\n<!-- block-beaver:hash ([a-f0-9]{64}) -->\n([\s\S]*?)<!-- block-beaver:end -->/g)];
+  const [installed, desired] = [sections(before), sections(content)];
+  if (installed.length !== 1 || desired.length !== 1 || digest(installed[0][2]) !== installed[0][1]) return false;
+  const family = new RegExp(`\\n?${FAMILIES_START}[\\s\\S]*?${FAMILIES_END}\\n?`, 'g');
+  const strip = (text) => lf(text).replace(/<!-- block-beaver:hash [a-f0-9]{64} -->\n/, '').replace(family, '');
+  return before !== content && strip(before) === strip(content);
 }
 
 const ownsHook = (handler) => handler?.type === 'command' && typeof handler.command === 'string' && /^(?:(?:(?:npx --no-install|pnpm exec|yarn exec|bunx --no-install) )?block-beaver|node node_modules\/block-beaver\/bin\/block-beaver\.mjs) hook-check(?:\s|$)/.test(handler.command) && /(?:^|\s)--hook-id\s+block-beaver(?:\s|$)/.test(handler.command);
@@ -143,12 +158,18 @@ function codexFeaturePlan(before, options) {
  * Read-only desired-state plan. Callers preflight all conflicts, then apply files
  * with the safe compare-before-write writer. content:null means delete that file.
  */
-export async function planManagedFiles({ root, version, config = {}, agents = [], manager, operation = 'install', force = false }) {
+export async function planManagedFiles({ root, version, config = {}, agents = [], removeAgents = [], manager, operation = 'install', force = false }) {
   if (!['install', 'upgrade', 'uninstall'].includes(operation)) throw new Error('Managed operation must be install, upgrade, or uninstall.');
   if (typeof version !== 'string' || !/^\d+\.\d+\.\d+(?:[-+][0-9A-Za-z.-]+)?$/.test(version)) throw new Error('Managed files require a semantic package version.');
   const selected = normalizeAgents(typeof agents === 'string' ? agents.split(',') : agents);
   if (selected.some((agent) => !Object.hasOwn(AGENT_FILES, agent))) throw new Error('Agents must be claude, codex, cursor, or copilot.');
-  const templates = await readInstallTemplates();
+  // Agents dropped by a narrower install: their managed output is planned for removal in the same pass.
+  const dropped = operation === 'install' ? normalizeAgents(typeof removeAgents === 'string' ? removeAgents.split(',') : removeAgents).filter((agent) => !selected.includes(agent)) : [];
+  if (dropped.some((agent) => !Object.hasOwn(AGENT_FILES, agent))) throw new Error('Agents must be claude, codex, cursor, or copilot.');
+  const droppedPaths = new Set();
+  const templates = await readInstallTemplates(config);
+  const instructions = renderAgentInstructions(config);
+  const plainWorkflow = config?.families === undefined ? templates.workflow : (await readInstallTemplates()).workflow;
   // The 0.4.0 init path wrote the workflow without a hash, so its exact body is a trusted legacy input.
   const legacyWorkflow040 = lf(await readFile(new URL('../templates/legacy/0.4.0-workflow.md', import.meta.url), 'utf8'));
   // The 0.5.0 hooks used a package-manager launcher; their exact entries are trusted legacy input.
@@ -165,21 +186,23 @@ export async function planManagedFiles({ root, version, config = {}, agents = []
   }
   const options = { version, operation, force };
   const specifications = [
-    { path: '.blocks/WORKFLOW.md', body: templates.workflow, legacyBodies: [templates.workflow, ...templates.legacyWorkflows, legacyWorkflow040], owned: true, kind: 'workflow' },
+    { path: '.blocks/WORKFLOW.md', body: templates.workflow, legacyBodies: [templates.workflow, plainWorkflow, ...templates.legacyWorkflows, legacyWorkflow040], owned: true, kind: 'workflow' },
     { path: '.blocks/.gitignore', body: '/worktrees/\n/cache/\n/view/', legacyBodies: ['/worktrees/\n/view/'], ignore: true, kind: 'ignore' },
-    ...selected.map((agent) => ({ path: AGENT_FILES[agent], body: renderAgentInstructions(), legacyBodies: [renderAgentInstructions(), LEGACY_AGENT_INSTRUCTIONS, LEGACY_AGENT_INSTRUCTIONS + LEGACY_APP_INSTRUCTION], prefix: agent === 'cursor' ? CURSOR_HEADER : '', owned: agent === 'cursor', kind: 'instructions' })),
+    ...[...selected, ...dropped].map((agent) => ({ path: AGENT_FILES[agent], body: instructions, legacyBodies: [instructions, renderAgentInstructions(), LEGACY_AGENT_INSTRUCTIONS, LEGACY_AGENT_INSTRUCTIONS + LEGACY_APP_INSTRUCTION], prefix: agent === 'cursor' ? CURSOR_HEADER : '', owned: agent === 'cursor', kind: 'instructions', remove: dropped.includes(agent) })),
   ];
-  for (const agent of selected.filter((agent) => ['claude', 'codex'].includes(agent))) {
+  for (const agent of [...selected, ...dropped].filter((agent) => ['claude', 'codex'].includes(agent))) {
+    const remove = dropped.includes(agent);
     const directory = agent === 'claude' ? '.claude/skills/block-beaver' : '.agents/skills/block-beaver';
     const frontmatter = templates.skill.match(/^---\n[\s\S]*?\n---\n\n/)?.[0] || '';
-    specifications.push({ path: `${directory}/SKILL.md`, body: templates.skill.slice(frontmatter.length), prefix: frontmatter, owned: true, kind: 'skill' });
-    for (const [path, body] of Object.entries(templates.references)) specifications.push({ path: `${directory}/${path}`, body, owned: true, kind: 'skill' });
+    specifications.push({ path: `${directory}/SKILL.md`, body: templates.skill.slice(frontmatter.length), prefix: frontmatter, owned: true, kind: 'skill', remove });
+    for (const [path, body] of Object.entries(templates.references)) specifications.push({ path: `${directory}/${path}`, body, owned: true, kind: 'skill', remove });
   }
   for (const spec of specifications) {
     let before;
     try {
       before = await readProjectFile(root, spec.path);
-      const content = planText(before, spec, options);
+      if (spec.remove) droppedPaths.add(spec.path);
+      const content = planText(before, spec, spec.remove ? { ...options, operation: 'uninstall' } : options);
       files.push({ path: spec.path, before, content, kind: spec.kind });
     } catch (error) { conflicts.push({ path: spec.path, message: error.message, before, expected: spec.body }); }
   }
@@ -194,21 +217,24 @@ export async function planManagedFiles({ root, version, config = {}, agents = []
     conflicts.push({ path: statePath, message: error.message, before: stateBefore });
     return { files, conflicts, diagnostics };
   }
-  if (selected.includes('codex')) {
+  for (const remove of [false, true]) if ((remove ? dropped : selected).includes('codex')) {
     const path = '.codex/config.toml';
     let before;
     try {
       before = await readProjectFile(root, path);
-      files.push({ path, before, content: codexFeaturePlan(before, options), kind: 'agent-config' });
+      if (remove) droppedPaths.add(path);
+      files.push({ path, before, content: codexFeaturePlan(before, remove ? { ...options, operation: 'uninstall' } : options), kind: 'agent-config' });
     } catch (error) { conflicts.push({ path, message: error.message, before }); }
   }
   const nextHooks = { ...state.hooks };
-  for (const agent of selected.filter((agent) => ['claude', 'codex'].includes(agent))) {
+  for (const agent of [...selected, ...dropped].filter((agent) => ['claude', 'codex'].includes(agent))) {
     const path = agent === 'claude' ? '.claude/settings.json' : '.codex/hooks.json';
+    const remove = dropped.includes(agent);
     let before;
     try {
       before = await readProjectFile(root, path);
-      const result = hookPlan(before, agent, operation, force, state.hooks[agent]?.hash, manager, { pnp, legacy: legacyHooks[agent] || [] });
+      if (remove) droppedPaths.add(path);
+      const result = hookPlan(before, agent, remove ? 'uninstall' : operation, force, state.hooks[agent]?.hash, manager, { pnp, legacy: legacyHooks[agent] || [] });
       files.push({ path, before, content: result.content, kind: 'hooks' });
       if (result.hash) nextHooks[agent] = { hash: result.hash };
       else delete nextHooks[agent];
@@ -217,5 +243,5 @@ export async function planManagedFiles({ root, version, config = {}, agents = []
   const content = operation === 'uninstall' && !Object.keys(nextHooks).length ? null : JSON.stringify({ ...state, version, hooks: nextHooks }, null, 2) + '\n';
   files.push({ path: statePath, before: stateBefore, content: preserveLineEndings(stateBefore, content), kind: 'managed-state' });
   if (config.enforcement?.agents === 'block') diagnostics.push('Agent enforcement is configured to block; hook-check still fails open on errors and timeouts.');
-  return { files, conflicts, diagnostics };
+  return { files, conflicts, diagnostics, dropped: { agents: dropped, paths: [...droppedPaths].sort() } };
 }

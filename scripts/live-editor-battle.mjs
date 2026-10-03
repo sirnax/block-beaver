@@ -1,10 +1,10 @@
 /** Opt-in live editor release gate. Each run uses a disposable project and keeps its logs and metadata for review. */
 import { execFile, spawn, spawnSync } from 'node:child_process';
 import { accessSync, appendFileSync, constants, createWriteStream, readFileSync, realpathSync, statSync } from 'node:fs';
-import { chmod, copyFile, mkdir, mkdtemp, readdir, readFile, realpath, symlink, unlink, writeFile } from 'node:fs/promises';
+import { chmod, mkdir, mkdtemp, readdir, readFile, realpath, symlink, writeFile } from 'node:fs/promises';
 import { createHash } from 'node:crypto';
 import { finished } from 'node:stream/promises';
-import { homedir, tmpdir } from 'node:os';
+import { tmpdir } from 'node:os';
 import { delimiter, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { promisify } from 'node:util';
@@ -13,12 +13,10 @@ const exec = promisify(execFile);
 const script = fileURLToPath(import.meta.url);
 const cli = fileURLToPath(new URL('../bin/block-beaver.mjs', import.meta.url));
 const repository = fileURLToPath(new URL('..', import.meta.url));
-const usage = 'Usage: node scripts/live-editor-battle.mjs codex|claude normal|bypass|failed|drift [--timeout SECONDS] [--codex-hook-trust]\n';
+const usage = 'Usage: node scripts/live-editor-battle.mjs claude normal|bypass|failed|drift [--timeout SECONDS]\n';
 const scenarios = ['normal', 'bypass', 'failed', 'drift'];
-// Roster from AGENTS.md: GPT work uses gpt-6.1-sol at medium effort; Claude work uses Sonnet 5.5 at high effort.
+// Roster: Claude work uses Sonnet 5.5 at high effort.
 const roster = {
-  codex: { command: 'codex', model: 'gpt-6.1-sol', effort: 'medium', helpArgs: ['exec', '--help'],
-    flags: ['--ephemeral', '--ignore-user-config', '--sandbox', '--cd', '--add-dir', '--model', '--config', '--color', '--json', '--output-last-message'] },
   claude: { command: 'claude', model: 'claude-sonnet-5-5', effort: 'high', helpArgs: ['--help'], minimumVersion: [2, 1, 284],
     flags: ['--print', '--model', '--effort', '--output-format', '--no-session-persistence', '--permission-mode', '--tools', '--allowedTools', '--disallowedTools', '--strict-mcp-config', '--setting-sources'] },
 };
@@ -124,13 +122,11 @@ function preflight(model) {
   if (minimumVersion && (!numbers || differs >= 0 && numbers[differs] < minimumVersion[differs])) {
     return { ...result, reason: `${command} ${result.version} is older than ${minimumVersion.join('.')}.` };
   }
-  if (model === 'claude') {
-    const auth = run(['auth', 'status']);
-    let parsed = null;
-    try { parsed = JSON.parse(auth.stdout); } catch { /* Report the exit status below. */ }
-    result.auth = { loggedIn: parsed?.loggedIn ?? null, authMethod: parsed?.authMethod ?? null };
-    if (auth.status !== 0 || parsed?.loggedIn === false) return { ...result, reason: 'claude is not authenticated; run `claude auth login` outside this harness.' };
-  }
+  const auth = run(['auth', 'status']);
+  let parsed = null;
+  try { parsed = JSON.parse(auth.stdout); } catch { /* Report the exit status below. */ }
+  result.auth = { loggedIn: parsed?.loggedIn ?? null, authMethod: parsed?.authMethod ?? null };
+  if (auth.status !== 0 || parsed?.loggedIn === false) return { ...result, reason: 'claude is not authenticated; run `claude auth login` outside this harness.' };
   const help = run(helpArgs);
   const missing = flags.filter((flag) => !`${help.stdout}${help.stderr}`.includes(flag));
   result.flags = flags;
@@ -288,51 +284,31 @@ function parseClaude(text) {
     durationMs: result.duration_ms ?? null, costUsd: result.total_cost_usd ?? null, sessionId: result.session_id ?? null, errors: result.errors ?? null };
 }
 
-function parseCodex(text) {
-  const events = text.split('\n').filter(Boolean).map((line) => { try { return JSON.parse(line); } catch { return null; } }).filter(Boolean);
-  const models = new Set();
-  const visit = (value) => {
-    if (Array.isArray(value)) value.forEach(visit);
-    else if (value && typeof value === 'object') for (const [key, inner] of Object.entries(value)) { if (key === 'model' && typeof inner === 'string') models.add(inner); else visit(inner); }
-  };
-  visit(events);
-  const types = {};
-  for (const event of events) types[event.type ?? 'unknown'] = (types[event.type ?? 'unknown'] || 0) + 1;
-  return { events: events.length, types, completed: Boolean(types['turn.completed']), failures: events.filter((event) => ['error', 'turn.failed'].includes(event.type)).map((event) => event.message ?? event.error ?? event.type),
-    models: models.size ? [...models] : null };
-}
-
 async function main() {
   const args = process.argv.slice(2);
   const positional = [];
   let timeoutSeconds = 300;
-  let codexHookTrust = false;
   for (let i = 0; i < args.length; i++) {
     if (args[i] === '--timeout') timeoutSeconds = Number(args[++i]);
     else if (args[i].startsWith('--timeout=')) timeoutSeconds = Number(args[i].slice(10));
-    else if (args[i] === '--codex-hook-trust') codexHookTrust = true;
     else positional.push(args[i]);
   }
   const [model, scenario] = positional;
-  if (positional.length !== 2 || !roster[model] || !scenarios.includes(scenario) || codexHookTrust && model !== 'codex' || !Number.isInteger(timeoutSeconds) || timeoutSeconds < 30 || timeoutSeconds > 3600) {
+  if (positional.length !== 2 || !roster[model] || !scenarios.includes(scenario) || !Number.isInteger(timeoutSeconds) || timeoutSeconds < 30 || timeoutSeconds > 3600) {
     process.stderr.write(usage);
     process.exit(2);
   }
   const { command, model: requestedModel, effort } = roster[model];
   const run = await realpath(await mkdtemp(join(tmpdir(), `block-beaver-live-${model}-${scenario}-`)));
-  const paths = { run, root: join(run, 'project'), bin: join(run, 'bin'), evidence: join(run, 'evidence'), shimLog: join(run, 'shim'), shell: join(run, 'shell') };
+  const paths = { run, root: join(run, 'project'), bin: join(run, 'bin'), evidence: join(run, 'evidence'), shimLog: join(run, 'shim') };
   const files = { stdout: join(paths.evidence, 'model.stdout.log'), stderr: join(paths.evidence, 'model.stderr.log'), prompt: join(paths.evidence, 'prompt.txt'),
-    guidance: join(paths.evidence, 'guidance.txt'), preflightStdout: join(paths.evidence, 'preflight.stdout.log'), preflightStderr: join(paths.evidence, 'preflight.stderr.log'), lastMessage: join(paths.evidence, 'codex-last-message.txt'), metadata: join(paths.evidence, 'run.json'),
+    guidance: join(paths.evidence, 'guidance.txt'), preflightStdout: join(paths.evidence, 'preflight.stdout.log'), preflightStderr: join(paths.evidence, 'preflight.stderr.log'), metadata: join(paths.evidence, 'run.json'),
     invocations: join(paths.shimLog, 'invocations.jsonl') };
-  await Promise.all([paths.root, paths.bin, paths.evidence, paths.shimLog, paths.shell].map((folder) => mkdir(folder)));
+  await Promise.all([paths.root, paths.bin, paths.evidence, paths.shimLog].map((folder) => mkdir(folder)));
   const record = { model, scenario, requested: { command, model: requestedModel, effort, timeoutSeconds }, paths, files, startedAt: new Date().toISOString(), blockedReasons: [], checks: [] };
   const block = (reason) => record.blockedReasons.push(reason);
   const check = (name, pass, detail = null) => record.checks.push({ name, pass: Boolean(pass), detail });
   const finish = async () => {
-    if (paths.codexHome) {
-      try { await unlink(join(paths.codexHome, 'auth.json')); if (record.nativeTrust) record.nativeTrust.authRemoved = true; }
-      catch (error) { if (error.code !== 'ENOENT') block(`Could not remove disposable authentication copy: ${error.message}`); }
-    }
     if (record.process && record.blockBeaver?.sourceStart) {
       try {
         record.blockBeaver.sourceEnd = await sourceFingerprint();
@@ -359,21 +335,19 @@ async function main() {
     if (!record.preflight.ok) { block(record.preflight.reason); return await finish(); }
     // Verify selected Claude model access before giving it repository tools. The file flag is
     // supported by the parser but intentionally omitted from some versions' help text.
-    if (model === 'claude') {
-      const probe = await runProcess(command, ['-p', '--model', requestedModel, '--effort', effort,
-        '--tools', '', '--disallowedTools', 'mcp__*', '--strict-mcp-config', '--setting-sources', '',
-        '--permission-mode', 'dontAsk', '--output-format', 'json', '--no-session-persistence',
-        '--append-system-prompt-file', join(repository, 'AGENTS.md')], {
-        cwd: paths.run, env: process.env, input: 'Reply exactly OK. Do not delegate or change files.',
-        timeoutMs: 60_000, stdoutFile: files.preflightStdout, stderrFile: files.preflightStderr,
-      });
-      const metadata = parseClaude(await readFile(files.preflightStdout, 'utf8'));
-      record.preflight.modelAccess = { ...probe, metadata };
-      if (probe.exitCode !== 0 || probe.timedOut || !metadata || metadata.isError ||
-          !metadata.models?.some((name) => name.startsWith(requestedModel))) {
-        block('Claude selected-model access or guidance-file option probe failed; inspect preflight logs.');
-        return await finish();
-      }
+    const probe = await runProcess(command, ['-p', '--model', requestedModel, '--effort', effort,
+      '--tools', '', '--disallowedTools', 'mcp__*', '--strict-mcp-config', '--setting-sources', '',
+      '--permission-mode', 'dontAsk', '--output-format', 'json', '--no-session-persistence',
+      '--append-system-prompt-file', join(repository, 'CLAUDE.md')], {
+      cwd: paths.run, env: process.env, input: 'Reply exactly OK. Do not delegate or change files.',
+      timeoutMs: 60_000, stdoutFile: files.preflightStdout, stderrFile: files.preflightStderr,
+    });
+    const probeMetadata = parseClaude(await readFile(files.preflightStdout, 'utf8'));
+    record.preflight.modelAccess = { ...probe, metadata: probeMetadata };
+    if (probe.exitCode !== 0 || probe.timedOut || !probeMetadata || probeMetadata.isError ||
+        !probeMetadata.models?.some((name) => name.startsWith(requestedModel))) {
+      block('Claude selected-model access or guidance-file option probe failed; inspect preflight logs.');
+      return await finish();
     }
     const root = paths.root;
     const git = async (...gitArgs) => (await exec('git', ['-C', root, ...gitArgs])).stdout.trim();
@@ -449,60 +423,26 @@ async function main() {
       seedLedgers = await readLedgers(root);
     }
 
-    // Exact installed guidance for the tool under test; Codex also discovers AGENTS.md from its working root.
-    const guidanceFile = model === 'claude' ? 'CLAUDE.md' : 'AGENTS.md';
+    // Exact installed guidance for the tool under test.
+    const guidanceFile = 'CLAUDE.md';
     const guidance = await readFile(join(root, guidanceFile), 'utf8');
     const template = await readFile(new URL('../templates/block-workflow.md', import.meta.url), 'utf8');
     const installedWorkflow = await readFile(join(root, '.blocks/WORKFLOW.md'), 'utf8').catch(() => null);
     record.guidance = { file: guidanceFile, sha256: sha(guidance), bytes: guidance.length, templateSha256: sha(template), workflowMatchesTemplate: installedWorkflow === null ? null : installedWorkflow.includes(template.trimEnd()) };
     if (record.guidance.workflowMatchesTemplate !== true) { block('Installed .blocks/WORKFLOW.md differs from templates/block-workflow.md; the fixture does not use the current guidance.'); return await finish(); }
     await writeFile(files.guidance, guidance);
-    const prompt = prompts[scenario] + ` The working repository is ${root}. Create proposal inputs inside that repository, for example ${join(root, 'proposal.json')}. Do not write beside the repository.` + ' Dependencies are already provisioned for this fixture. Do not run dependency installation commands (including npm ci/install), or change node_modules; package transport is verified separately.' + ' Do not launch additional agents or background workers.' + (model === 'claude' ? claudeSuffix : '');
+    const prompt = prompts[scenario] + ` The working repository is ${root}. Create proposal inputs inside that repository, for example ${join(root, 'proposal.json')}. Do not write beside the repository.` + ' Dependencies are already provisioned for this fixture. Do not run dependency installation commands (including npm ci/install), or change node_modules; package transport is verified separately.' + ' Do not launch additional agents or background workers.' + claudeSuffix;
     await writeFile(files.prompt, prompt);
 
     // Shims record `git` and `block-beaver` use; the latter runs this checkout's CLI, so no published package is needed.
-    // Codex uses a login shell. macOS path_helper can move /usr/bin ahead of the
-    // inherited shim directory; scoped zsh startup files restore instrumentation
-    // after the system profile without loading or changing the user's dotfiles.
-    const shellProfile = `export PATH=${shq(paths.bin)}:"$PATH"\n`;
-    await Promise.all(['.zshenv', '.zprofile', '.zlogin'].map((name) => writeFile(join(paths.shell, name), shellProfile)));
-    const environment = { ...process.env, PATH: `${paths.bin}${delimiter}${process.env.PATH}`, GIT_TERMINAL_PROMPT: '0', GIT_EDITOR: 'true',
-      ...(model === 'codex' ? { ZDOTDIR: paths.shell } : {}) };
-    // Verify npm's real local binary lookup before launching either editor. Offline
+    const environment = { ...process.env, PATH: `${paths.bin}${delimiter}${process.env.PATH}`, GIT_TERMINAL_PROMPT: '0', GIT_EDITOR: 'true' };
+    // Verify npm's real local binary lookup before launching the editor. Offline
     // mode makes a missing fixture package fail rather than fetching a substitute.
     const packageProbe = await exec('npx', ['--offline', '--no-install', 'block-beaver', 'scan', '--root', '.', '--full', 'true'],
       { cwd: root, env: environment, timeout: 30_000 });
     record.fixture.packageProbe = { command: ['npx', '--offline', '--no-install', 'block-beaver', 'scan', '--root', '.', '--full', 'true'],
       pass: true, stdoutSha256: sha(packageProbe.stdout) };
     const fixtureBinHash = sha(await readFile(join(root, 'node_modules/block-beaver/bin/block-beaver.mjs')));
-
-    if (codexHookTrust) {
-      // Persist trust only through Codex's normal interactive review UI. The
-      // disposable home keeps project/hook trust separate from the owner's home.
-      if (!process.stdin.isTTY || !process.stdout.isTTY) {
-        block('--codex-hook-trust requires a terminal for the normal Codex /hooks review.');
-        return await finish();
-      }
-      paths.codexHome = join(paths.run, 'codex-home');
-      await mkdir(paths.codexHome);
-      const auth = join(process.env.CODEX_HOME || join(homedir(), '.codex'), 'auth.json');
-      await copyFile(auth, join(paths.codexHome, 'auth.json'));
-      await chmod(join(paths.codexHome, 'auth.json'), 0o600);
-      environment.CODEX_HOME = paths.codexHome;
-      const trustArgs = ['--no-daemon', '--no-alt-screen', '--cd', root, '--model', requestedModel,
-        '--sandbox', 'workspace-write', '--config', `model_reasoning_effort="${effort}"`, '--config', 'check_for_update_on_startup=false'];
-      record.nativeTrust = { method: 'Codex TUI /hooks', home: paths.codexHome, authIsolation: 'private disposable copy (0600)',
-        hookPath: join(root, '.codex/hooks.json'), hookSha256: nativeBefore['.codex/hooks.json'], args: trustArgs };
-      await writeFile(files.metadata, JSON.stringify(record, null, 2) + '\n');
-      process.stderr.write(`\nReview ${record.nativeTrust.hookPath} (sha256 ${record.nativeTrust.hookSha256}).\nIn Codex, accept the disposable project trust prompt, run /hooks, review and trust the installed hook, then exit with /quit. The workflow test will then run.\n`);
-      const trustExit = await new Promise((done, reject) => {
-        const child = spawn(command, trustArgs, { cwd: root, env: environment, stdio: 'inherit' });
-        child.once('error', reject);
-        child.once('close', (code) => done(code));
-      });
-      record.nativeTrust.exitCode = trustExit;
-      if (trustExit !== 0) { block('Normal Codex hook trust setup did not exit successfully.'); return await finish(); }
-    }
 
     const commit = bashRule('git commit');
     const rules = {
@@ -511,20 +451,17 @@ async function main() {
       deny: ['mcp__*', 'Edit(./.git/**)', 'Write(./.git/**)', 'Edit(./.blocks/receipts/**)', 'Write(./.blocks/receipts/**)', 'Edit(./.blocks/roadmaps/**)', 'Write(./.blocks/roadmaps/**)',
         ...['git push', 'git config', 'git -c', 'git commit --no-verify', 'git commit -n'].flatMap(bashRule), ...(scenario === 'bypass' ? ['Bash(git commit * --no-verify*)', 'Bash(git commit * -n *)'] : commit)],
     };
-    const cliArgs = model === 'codex'
-      ? ['exec', '--ephemeral', ...(codexHookTrust ? [] : ['--ignore-user-config']), '--sandbox', 'workspace-write', '--cd', root, '--add-dir', paths.shimLog, '--add-dir', join(root, '.git'), '--model', requestedModel,
-        '--config', `model_reasoning_effort="${effort}"`, '--config', 'approval_policy="never"', '--color', 'never', '--json', '--output-last-message', files.lastMessage, '-']
-      : ['-p', '--model', requestedModel, '--effort', effort, '--output-format', 'json', '--no-session-persistence', '--append-system-prompt-file', files.guidance,
+    const cliArgs = ['-p', '--model', requestedModel, '--effort', effort, '--output-format', 'json', '--no-session-persistence', '--append-system-prompt-file', files.guidance,
         '--permission-mode', 'dontAsk', '--tools', 'Read,Glob,Grep,Edit,Write,Bash', '--allowedTools', rules.allow.join(','), '--disallowedTools', rules.deny.join(','),
         '--strict-mcp-config', '--setting-sources', 'project,local'];
-    record.invocation = { command, cwd: root, args: cliArgs.map((part) => part === guidance ? `<guidance ${guidanceFile}: sha256 ${record.guidance.sha256}; see guidance.txt>` : part), input: 'prompt.txt on stdin', permissions: model === 'claude' ? rules : 'codex workspace-write sandbox, approval_policy never' };
+    record.invocation = { command, cwd: root, args: cliArgs.map((part) => part === guidance ? `<guidance ${guidanceFile}: sha256 ${record.guidance.sha256}; see guidance.txt>` : part), input: 'prompt.txt on stdin', permissions: rules };
 
     const result = await runProcess(command, cliArgs, { cwd: root, env: environment, input: prompt, timeoutMs: timeoutSeconds * 1000, stdoutFile: files.stdout, stderrFile: files.stderr });
     record.process = result;
     const stdoutText = await readFile(files.stdout, 'utf8'), stderrText = await readFile(files.stderr, 'utf8');
     const invocations = (await readLines(files.invocations)).filter((entry) => entry.startedAt >= result.startedAt);
 
-    const metadata = model === 'claude' ? parseClaude(stdoutText) : parseCodex(stdoutText);
+    const metadata = parseClaude(stdoutText);
     record.agent = metadata;
     const nativeModels = [...new Set(invocations.filter((entry) => entry.nativeEvent?.hook_event_name === 'PreToolUse')
       .map((entry) => entry.nativeEvent.model).filter((name) => typeof name === 'string' && name))];
@@ -535,23 +472,15 @@ async function main() {
       unexpected: models?.filter((name) => !name.startsWith(requestedModel)) ?? [] };
     if (result.spawnError) block(`Could not start ${command}: ${result.spawnError}`);
     if (result.timedOut) block(`${command} timed out after ${timeoutSeconds}s.`);
-    if (model === 'claude') {
-      if (!metadata) block('Claude produced no parseable JSON result.');
-      else {
-        if (metadata.isError) block(`Claude reported an error result (${metadata.subtype ?? 'unknown'}): ${metadata.message.slice(0, 300)}`);
-        if (models && !models.some((name) => name.startsWith(requestedModel))) block(`Claude did not run ${requestedModel}; actual models: ${models.join(', ')} (fallback or substitution).`);
-        if (!models) block('Claude result metadata names no model usage; the actual model cannot be verified.');
-        const refused = metadata.denials.filter((denial) => denial.tool_name === 'Bash' && deniedProductCommand(denial.tool_input?.command ?? '') !== null);
-        const unexercised = refused.filter((denial) => !productCommandExercised(denial.tool_input?.command ?? '', invocations));
-        record.permissionRecovery = { deniedProductCommands: refused.length, exercisedDespiteDenial: refused.length - unexercised.length };
-        if (unexercised.length) block(`Permission rules denied installed block-beaver commands that were never exercised ${unexercised.length} time(s).`);
-      }
-    } else {
-      if (!metadata.completed) block('Codex finished no model turn.');
-      if (metadata.failures.length) block(`Codex reported errors: ${metadata.failures.join('; ').slice(0, 300)}`);
-      if (/failed to initialize|Operation not permitted/.test(stderrText) && !metadata.completed) block('Codex could not start in this execution environment (sandbox or app-server error); rerun outside the restricted runner.');
-      if (models?.some((name) => !name.startsWith(requestedModel))) block(`Codex model evidence names ${models.join(', ')}, not only ${requestedModel}.`);
-      if (codexHookTrust && !models) block('actual-model-unverified: trusted Codex release gate received no model evidence from editor events or native hook envelopes.');
+    if (!metadata) block('Claude produced no parseable JSON result.');
+    else {
+      if (metadata.isError) block(`Claude reported an error result (${metadata.subtype ?? 'unknown'}): ${metadata.message.slice(0, 300)}`);
+      if (models && !models.some((name) => name.startsWith(requestedModel))) block(`Claude did not run ${requestedModel}; actual models: ${models.join(', ')} (fallback or substitution).`);
+      if (!models) block('Claude result metadata names no model usage; the actual model cannot be verified.');
+      const refused = metadata.denials.filter((denial) => denial.tool_name === 'Bash' && deniedProductCommand(denial.tool_input?.command ?? '') !== null);
+      const unexercised = refused.filter((denial) => !productCommandExercised(denial.tool_input?.command ?? '', invocations));
+      record.permissionRecovery = { deniedProductCommands: refused.length, exercisedDespiteDenial: refused.length - unexercised.length };
+      if (unexercised.length) block(`Permission rules denied installed block-beaver commands that were never exercised ${unexercised.length} time(s).`);
     }
 
     // Filesystem evidence, independent of the model's narrative.
@@ -584,7 +513,6 @@ async function main() {
     'pre-provisioned package metadata and instrumented local binary remain intact');
     const nativeCalls = invocations.filter((entry) => entry.tool === 'block-beaver' && entry.argv[0] === 'hook-check' && entry.argv.includes('--hook-id') && entry.nativeEvent?.hook_event_name === 'PreToolUse');
     record.evidence.nativeHookCalls = nativeCalls.map((entry) => ({ argv: entry.argv, nativeEvent: entry.nativeEvent, status: entry.status, stdout: entry.stdout, stderr: entry.stderr }));
-    if (codexHookTrust) check('native-hook-executed', nativeCalls.length > 0 && nativeCalls.every((entry) => entry.status === 0), `${nativeCalls.length} installed native hook invocation(s)`);
     const refsAfter = await refs();
     const workflowRefs = new Set(Object.entries(ledgers).flatMap(([roadmap, events]) => events.filter((event) => event.slice).map((event) => `refs/heads/block-beaver/${roadmap}/${event.slice}`)));
     const refsIntact = Object.entries(refsBefore).every(([name, hash]) => refsAfter[name] === hash) &&

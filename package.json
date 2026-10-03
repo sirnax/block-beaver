@@ -1,6 +1,6 @@
 {
   "name": "block-beaver",
-  "version": "0.7.0",
+  "version": "0.8.0",
   "description": "Local architecture workspace for JavaScript, TypeScript, and React repositories",
   "private": false,
   "license": "Apache-2.0",
@@ -15,7 +15,10 @@
   "type": "module",
   "exports": {
     ".": "./src/scanner.mjs",
-    "./view": "./src/view.mjs",
+    "./view": {
+      "types": "./src/view.d.ts",
+      "default": "./src/view.mjs"
+    },
     "./kernel": {
       "types": "./src/kernel/index.d.ts",
       "import": "./src/kernel/index.mjs",

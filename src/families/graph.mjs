@@ -75,8 +75,12 @@ const blockId = /^[A-Za-z0-9][A-Za-z0-9._-]*$/;
  * folder, block, then via. A folder reaches a block when one of its files
  * - `via: 'import'`: imports or re-exports a file that the block is `implemented-by`
  *   (its implementation module or a declared `files` entry), or
+ * - `via: 'registry'` (family contract `map.reach: 'registry'`): an ordinary, non-generated file imports the family's `registry.out`;
+ *   every block of the family is reached and the entry carries `evidence: [{ file, line, text }]` from the import edge.
+ *   Contract `map.unused: false` keeps a family's blocks out of `graph.unused`.
  * - `via: 'binding'`: calls `call(registry.<id>, …)`, `call(registry['<id>'], …)` or
- *   `call(registry["<id>"], …)` for a configured `map.bindings` entry `{ family, call, registry }`
+ *   `call(registry["<id>"], …)` for a configured `map.bindings` entry `{ family, call, registry }`, or
+ *   `call({ <argKey>: '<id>' })` for `{ family, call, argKey }`
  *   and `block:<family>:<id>` exists.
  * `app` is the file's app id or null; `folder` is the file's directory relative to its app
  * root ('.' at the root), the same grouping key as the map's ordinary-code slabs; `files` are
@@ -87,7 +91,7 @@ const blockId = /^[A-Za-z0-9][A-Za-z0-9._-]*$/;
  * family links or local `depends-on`) and no `codeReach` entry. Outgoing links do not count:
  * a block that only depends on others but that nothing links to or reaches is unused.
  */
-export function attachMapParity(graph, { bindings = [], sourceText } = {}) {
+export function attachMapParity(graph, { bindings = [], sourceText, families = [] } = {}) {
   const nodes = new Map(graph.nodes.map((node) => [node.id, node]));
   const appRoots = new Map((graph.apps || []).map((app) => [app.id, app.root]));
   const boundaries = new Map();
@@ -98,15 +102,16 @@ export function attachMapParity(graph, { bindings = [], sourceText } = {}) {
   }
   const excluded = (file) => !file || file.kind !== 'file' || file.generated === true || ['manifest', 'contract', 'generator'].includes(file.familyRole);
   const reach = new Map();
-  const add = (file, block, via) => {
+  const add = (file, block, via, evidence) => {
     if (excluded(file) || boundaries.get(block)?.has(file.id)) return;
     const root = appRoots.get(file.app);
     const relative = root && root !== '.' && file.path.startsWith(`${root}/`) ? file.path.slice(root.length + 1) : file.path;
     const folder = relative.split('/').slice(0, -1).join('/') || '.';
     const app = file.app ?? null;
     const key = `${app ?? ''}\0${folder}\0${block}\0${via}`;
-    if (!reach.has(key)) reach.set(key, { app, folder, block, via, files: new Set() });
+    if (!reach.has(key)) reach.set(key, { app, folder, block, via, files: new Set(), evidence: new Map() });
     reach.get(key).files.add(file.path);
+    if (evidence && !reach.get(key).evidence.has(file.path)) reach.get(key).evidence.set(file.path, { file: evidence.file ?? file.path, line: evidence.line, text: evidence.text });
   };
   const implementers = new Map();
   for (const [block, files] of boundaries) for (const file of files) {
@@ -117,13 +122,25 @@ export function attachMapParity(graph, { bindings = [], sourceText } = {}) {
     if (!['imports', 'reexports'].includes(edge.kind) || !edge.from.startsWith('file:')) continue;
     for (const block of implementers.get(edge.to) || []) add(nodes.get(edge.from), block, 'import');
   }
-  const valid = (Array.isArray(bindings) ? bindings : []).filter((entry) => entry && typeof entry.family === 'string' && typeof entry.call === 'string' && typeof entry.registry === 'string' && identifier.test(entry.call) && identifier.test(entry.registry));
+  // `map.reach: 'registry'`: an ordinary importer of the family's registry output reaches every block of the family.
+  for (const family of Array.isArray(families) ? families : []) {
+    if (family?.reach !== 'registry' || typeof family.registry !== 'string') continue;
+    const target = `file:${family.registry}`;
+    const members = graph.nodes.filter((node) => node.kind === 'block' && node.family === family.id);
+    if (!members.length) continue;
+    for (const edge of graph.edges) {
+      if (!['imports', 'reexports'].includes(edge.kind) || edge.to !== target || !edge.from.startsWith('file:')) continue;
+      for (const block of members) add(nodes.get(edge.from), block.id, 'registry', edge.evidence);
+    }
+  }
+  const valid = (Array.isArray(bindings) ? bindings : []).filter((entry) => entry && typeof entry.family === 'string' && typeof entry.call === 'string' && identifier.test(entry.call)
+    && (typeof entry.registry === 'string' ? identifier.test(entry.registry) && entry.argKey === undefined : typeof entry.argKey === 'string' && entry.argKey !== '' && entry.registry === undefined));
   if (valid.length && typeof sourceText === 'function') {
     for (const file of graph.nodes.filter((node) => node.kind === 'file').sort((a, b) => compare(a.path, b.path))) {
       if (excluded(file)) continue;
       const text = sourceText(file.path);
       if (typeof text !== 'string') continue;
-      const wanted = valid.filter((entry) => text.includes(entry.call) && text.includes(entry.registry));
+      const wanted = valid.filter((entry) => text.includes(entry.call) && text.includes(entry.registry ?? entry.argKey));
       for (const { family, id } of bindingCalls(file.path, text, wanted)) {
         const block = graphId(`${family}:${id}`);
         if (blockId.test(id) && nodes.get(block)?.kind === 'block') add(file, block, 'binding');
@@ -131,11 +148,12 @@ export function attachMapParity(graph, { bindings = [], sourceText } = {}) {
     }
   }
   graph.codeReach = [...reach.values()]
-    .map((entry) => ({ ...entry, files: sorted(entry.files) }))
+    .map(({ evidence, ...entry }) => ({ ...entry, files: sorted(entry.files), ...(evidence.size ? { evidence: sorted([...evidence.keys()]).map((file) => evidence.get(file)) } : {}) }))
     .sort((a, b) => compare(a.app ?? '', b.app ?? '') || compare(a.folder, b.folder) || compare(a.block, b.block) || compare(a.via, b.via));
   const touched = new Set(graph.codeReach.map((entry) => entry.block));
   for (const edge of graph.edges) if (edge.from !== edge.to && nodes.get(edge.from)?.kind === 'block' && nodes.get(edge.to)?.kind === 'block') touched.add(edge.to);
-  graph.unused = sorted(graph.nodes.filter((node) => node.kind === 'block' && !touched.has(node.id)).map((node) => node.id));
+  const exempt = new Set((Array.isArray(families) ? families : []).filter((family) => family?.unused === false).map((family) => family.id));
+  graph.unused = sorted(graph.nodes.filter((node) => node.kind === 'block' && !touched.has(node.id) && !exempt.has(node.family)).map((node) => node.id));
   return graph;
 }
 
@@ -268,7 +286,7 @@ export function attachFamilies(graph, { load, project, history, bindings, source
   graph.summary.relationships = graph.edges.length;
   // Map parity fields exist only for family projects, so other graphs keep their 0.5.1 bytes.
   const mapBindings = Array.isArray(bindings) ? bindings : [];
-  if (families.length) attachMapParity(graph, { bindings: mapBindings, sourceText });
+  if (families.length) attachMapParity(graph, { bindings: mapBindings, sourceText, families: families.map((family) => ({ id: family.id, unused: family.map?.unused, reach: family.map?.reach, registry: family.config?.registry?.out })) });
   if (families.length || diagnostics.length) {
     // The loader cache key includes absolute resolver paths and process identity.
     // Persist only project-relative content so audit snapshots agree across checkouts.
@@ -305,6 +323,13 @@ function bindingCalls(path, text, bindings) {
       const id = ts.isPropertyAccessExpression(arg) ? arg.name.text
         : ts.isElementAccessExpression(arg) && (ts.isStringLiteral(arg.argumentExpression) || ts.isNoSubstitutionTemplateLiteral(arg.argumentExpression)) ? arg.argumentExpression.text : null;
       if (callee && registry && id) for (const entry of bindings) if (entry.call === callee && entry.registry === registry) found.push({ family: entry.family, id });
+      // `call({ argKey: 'literal' })`: only a string literal property value names a block; anything else adds nothing.
+      if (callee && ts.isObjectLiteralExpression(arg)) for (const property of arg.properties) {
+        if (!ts.isPropertyAssignment(property) || !(ts.isIdentifier(property.name) || ts.isStringLiteral(property.name))) continue;
+        const value = property.initializer;
+        if (!ts.isStringLiteral(value) && !ts.isNoSubstitutionTemplateLiteral(value)) continue;
+        for (const entry of bindings) if (entry.call === callee && entry.argKey === property.name.text) found.push({ family: entry.family, id: value.text });
+      }
     }
     ts.forEachChild(node, visit);
   };

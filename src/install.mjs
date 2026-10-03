@@ -17,6 +17,7 @@ import { BASELINE_PATH, baselineSummary, parseBaseline, planBaselineLowering } f
 
 const json = (value) => `${JSON.stringify(value, null, 2)}\n`;
 const packageManagerFiles = ['package-lock.json', 'npm-shrinkwrap.json', 'pnpm-lock.yaml', 'pnpm-workspace.yaml', 'yarn.lock', 'bun.lock', 'bun.lockb'];
+const agentFolders = { claude: ['.claude'], codex: ['.codex', '.agents'], cursor: ['.cursor'], copilot: [] };
 const agentTargets = { claude: ['CLAUDE.md', '.claude'], codex: ['AGENTS.md', '.codex', '.agents'], cursor: ['.cursor'], copilot: ['.github/copilot-instructions.md'] };
 
 async function document(root, path) {
@@ -39,6 +40,33 @@ async function agentsFor(root, explicit, installed) {
     }
   }
   return agents.sort();
+}
+
+async function folderFiles(root, path) {
+  let entries;
+  try { entries = await readdir(join(root, path), { withFileTypes: true }); }
+  catch (error) { if (error.code === 'ENOENT' || error.code === 'ENOTDIR') return []; throw error; }
+  const paths = [];
+  for (const entry of entries.sort((a, b) => a.name.localeCompare(b.name))) {
+    const relative = `${path}/${entry.name}`;
+    if (entry.isDirectory()) paths.push(...await folderFiles(root, relative));
+    else paths.push(relative);
+  }
+  return paths;
+}
+
+async function pruneManagedExceptions(root, removed) {
+  const updates = [];
+  for (const path of (await folderFiles(root, '.blocks/exceptions')).filter((item) => item.endsWith('.json'))) {
+    const before = await readProjectFile(root, path);
+    let value;
+    try { value = JSON.parse(before); } catch { continue; }
+    if (value?.type !== 'exception' || !String(value.id).startsWith('block-beaver-setup-') || value.verification?.[0]?.command !== 'Block Beaver managed setup' || !Array.isArray(value.paths)) continue;
+    const kept = value.paths.filter((entry) => !removed.has(typeof entry === 'string' ? entry : entry?.path));
+    if (kept.length === value.paths.length) continue;
+    updates.push({ path, before, content: kept.length ? json({ ...value, paths: kept }) : null });
+  }
+  return updates.length ? writeProjectFiles(root, updates) : [];
 }
 
 async function dataFiles(root, path = '.blocks', { migrationOnly = false, directories } = {}) {
@@ -124,6 +152,10 @@ async function execute(root, operation, options) {
   const marker = await document(root, '.blocks/install.json');
   if (marker.before !== null && (!marker.value || typeof marker.value !== 'object' || Array.isArray(marker.value) || marker.value.schemaVersion !== 1 || !Array.isArray(marker.value.agents) || !Array.isArray(marker.value.paths))) throw new Error('Unsupported or invalid install marker schema; latest supported schemaVersion is 1.');
   const agents = await agentsFor(root, options.agents, marker.value);
+  // Only an explicit --agents list can drop agents; auto-detection never removes anything.
+  const dropped = operation === 'install' && options.agents !== undefined && marker.value
+    ? [...new Set(marker.value.agents.map((id) => id === 'agents' ? 'codex' : id))].filter((id) => Object.hasOwn(agentTargets, id) && !agents.includes(id)).sort()
+    : [];
   const diagnostics = [];
   if (!agents.length) diagnostics.push('No agents detected. Use --agents claude,codex,cursor,copilot to install agent guidance.');
   const configFile = await document(root, '.blocks/config.json');
@@ -149,11 +181,11 @@ async function execute(root, operation, options) {
   }
   config ??= { schemaVersion: 1, apps: [] };
   const manager = options.manager ?? await detectPackageManager(root);
-  const managed = await planManagedFiles({ root, version, config, agents, manager, operation, force: options.force ?? false });
+  const managed = await planManagedFiles({ root, version, config, agents, removeAgents: dropped, manager, operation, force: options.force ?? false });
   const host = await planHostSetup(root, { config, agents, version, operation, force: options.force ?? false, fixIgnores: options.fixIgnores ?? false, fixExcludes: options.fixExcludes ?? false });
   const conflicts = [...(managed.conflicts ?? []), ...(host.conflicts ?? [])];
   diagnostics.push(...(managed.diagnostics ?? []), ...(host.diagnostics ?? []));
-  const packagePlan = await planPackageChange(root, { manager, version, operation: operation === 'upgrade' ? 'install' : operation });
+  const packagePlan = await planPackageChange(root, { manager, version, operation: operation === 'upgrade' ? 'install' : operation, runtime: operation === 'install' && Boolean(options.runtime), keepPlacement: operation === 'upgrade' });
   diagnostics.push(...(packagePlan.diagnostics ?? []));
   const extra = [];
   const dataDirectories = new Set(['.blocks']);
@@ -175,7 +207,8 @@ async function execute(root, operation, options) {
       baselinePlan = planBaselineLowering(baselineBefore, auditCounts(view.graph));
       extra.push(baselinePlan.file);
     }
-    const paths = [...new Set([...(marker.value?.paths ?? []), ...[...managed.files, ...host.files, ...(host.hooks ?? [])].filter((file) => file.content !== null).map((file) => isAbsolute(file.path) ? '.git/hooks/pre-commit' : file.path)])].sort();
+    const droppedPaths = new Set(managed.dropped?.paths ?? []);
+    const paths = [...new Set([...(marker.value?.paths ?? []), ...[...managed.files, ...host.files, ...(host.hooks ?? [])].filter((file) => file.content !== null).map((file) => isAbsolute(file.path) ? '.git/hooks/pre-commit' : file.path)])].filter((path) => !droppedPaths.has(path)).sort();
     extra.push({ path: '.blocks/install.json', before: marker.before, content: json({ schemaVersion: 1, version, agents, paths }), kind: 'installation' });
   } else {
     extra.push({ path: '.blocks/install.json', before: marker.before, content: null, kind: 'installation' });
@@ -193,16 +226,24 @@ async function execute(root, operation, options) {
   await preflightHostHooks(root, hooks);
   await preflightProjectModes(root, host.files);
   const diff = [...files, ...hooks].filter((file) => file.before !== file.content);
-  const result = { operation, version, agents, changed: [], diff, diagnostics, conflicts, commands: packagePlan.commands, dryRun: Boolean(options.dryRun), complete: false, view: view && '.blocks/view/index.html' };
+  const removals = new Set(files.filter((file) => file.content === null && file.before !== null && (managed.dropped?.paths ?? []).includes(file.path)).map((file) => file.path));
+  const removed = [...removals].sort();
+  for (const root_ of dropped.flatMap((id) => agentFolders[id])) {
+    for (const path of await folderFiles(root, root_)) {
+      if (!removals.has(path)) diagnostics.push({ code: 'unmanaged-left', severity: 'warning', path, message: `${path} is not managed by Block Beaver and was left in place after dropping its agent.` });
+    }
+  }
+  const result = { operation, version, agents, changed: [], removed, diff, diagnostics, conflicts, commands: packagePlan.commands, dryRun: Boolean(options.dryRun || options.check), complete: false, view: view && '.blocks/view/index.html' };
   if (operation !== 'uninstall') Object.assign(result, enforcementSummary(config));
   if (baselinePlan) result.baseline = baselineSummary(baselinePlan);
-  if (options.dryRun || conflicts.length) return result;
+  if (options.check) result.check = { current: !conflicts.length && !diff.length && !packagePlan.commands?.length };
+  if (options.dryRun || options.check || conflicts.length) return result;
   const packageOwned = new Map();
   for (const path of packageManagerFiles) packageOwned.set(path, await readProjectFile(root, path).catch(() => undefined));
   result.executions = await runPackageChange(root, packagePlan, { runner: options.runner, dryRun: false });
   const pkg = (await document(root, 'package.json')).value;
   if (operation === 'uninstall' ? (pkg.devDependencies?.['block-beaver'] !== undefined || pkg.dependencies?.['block-beaver'] !== undefined)
-    : (pkg.devDependencies?.['block-beaver'] !== version || pkg.dependencies?.['block-beaver'] !== undefined)) throw new Error('Package manager did not apply the requested Block Beaver dependency change. Managed files were preserved.');
+    : (pkg[packagePlan.placement]?.['block-beaver'] !== version || pkg[packagePlan.placement === 'dependencies' ? 'devDependencies' : 'dependencies']?.['block-beaver'] !== undefined)) throw new Error('Package manager did not apply the requested Block Beaver dependency change. Managed files were preserved.');
   result.changed = await writeProjectFiles(root, files.filter((file) => !file.commandOwned));
   result.changed.push(...await applyProjectModes(root, host.files));
   result.changed.push(...await applyHostHooks(root, hooks));
@@ -210,6 +251,18 @@ async function execute(root, operation, options) {
   // The package manager also rewrites its lockfile and workspace file; the setup exception must cover them.
   for (const [path, before] of packageOwned) if (await readProjectFile(root, path).catch(() => undefined) !== before) result.changed.push(path);
   result.changed = [...new Set(result.changed)];
+  // Remove only directories that the removal left empty; rmdir refuses any that still hold files.
+  const emptied = new Set();
+  for (const path of removed) {
+    const segments = path.split('/');
+    for (let end = segments.length - 1; end >= 1; end--) emptied.add(segments.slice(0, end).join('/'));
+  }
+  for (const path of [...emptied].sort((a, b) => b.split('/').length - a.split('/').length)) {
+    try { await rmdir(join(root, path)); } catch (error) { if (!['ENOENT', 'ENOTEMPTY', 'EEXIST', 'ENOTDIR'].includes(error.code)) throw error; }
+  }
+  // Block Beaver's own setup exceptions may name files a narrower --agents just removed; an exception
+  // must name existing files, so drop those paths (and the exception once nothing is left).
+  if (removed.length) result.changed.push(...await pruneManagedExceptions(root, new Set(removed)));
   if (operation === 'uninstall' && options.removeData) {
     const directories = dataDirectories;
     for (const file of files.filter((item) => item.path.startsWith('.blocks/'))) {

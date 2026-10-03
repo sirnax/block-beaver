@@ -1,6 +1,7 @@
 import { constants } from 'node:fs';
 import { lstat, mkdir, open, realpath, unlink } from 'node:fs/promises';
 import { dirname, join, resolve } from 'node:path';
+import { gitScope } from './git-file-set.mjs';
 
 async function projectPath(root, relative) {
   if (!relative || relative.includes('\\') || relative.split('/').some((part) => !part || part === '.' || part === '..')) throw new Error('Invalid integration path.');
@@ -34,6 +35,8 @@ export async function writeProjectFiles(root, files) {
     const current = await readProjectFile(root, file.path);
     if (current !== file.before) throw new Error(`File changed during integration: ${file.path}`);
   }
+  // A changed ignore file invalidates this operation's cached Git listing.
+  if (files.some((file) => file.path === '.gitignore' || file.path.endsWith('/.gitignore'))) gitScope.getStore()?.clear();
   const changed = [];
   for (const file of files) {
     if (file.before === file.content) continue;

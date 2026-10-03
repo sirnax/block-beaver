@@ -76,6 +76,7 @@ export function parseFamiliesConfig(config) {
         if (!Array.isArray(floors) || floors.some((id) => typeof id !== 'string') || new Set(floors).size !== floors.length) issue('family-path-invalid', 'map.floors must list distinct family IDs', '$.map.floors');
         else for (const [index, id] of floors.entries()) if (!ids.has(id)) issue('family-path-invalid', `map.floors names unknown family ${id}`, `$.map.floors[${index}]`);
       }
+      if (config.map.railLimit !== undefined && !(Number.isInteger(config.map.railLimit) && config.map.railLimit > 0)) issue('family-path-invalid', 'map.railLimit must be a positive integer', '$.map.railLimit');
       if (config.map.groupBy !== undefined && (typeof config.map.groupBy !== 'string' || !/^[A-Za-z_$][\w$]*$/.test(config.map.groupBy))) issue('family-path-invalid', 'map.groupBy must name a manifest field', '$.map.groupBy');
       if (config.map.skins !== undefined) {
         const skins = config.map.skins, skinIds = new Set();
@@ -92,7 +93,11 @@ export function parseFamiliesConfig(config) {
         const binding = /^[A-Za-z_$][\w$]*$/;
         if (!Array.isArray(config.map.bindings)) issue('family-path-invalid', 'map.bindings must be an array', '$.map.bindings');
         else for (const [index, entry] of config.map.bindings.entries()) {
-          if (!object(entry) || !ids.has(entry.family) || typeof entry.call !== 'string' || typeof entry.registry !== 'string' || !binding.test(entry.call) || !binding.test(entry.registry)) issue('family-path-invalid', 'Each binding needs a configured family and identifier call and registry names', `$.map.bindings[${index}]`);
+          if (object(entry) && entry.argKey !== undefined) {
+            if (typeof entry.argKey !== 'string' || !entry.argKey) issue('family-path-invalid', 'binding argKey must be a non-empty string', `$.map.bindings[${index}].argKey`);
+            else if (entry.registry !== undefined) issue('family-path-invalid', 'A binding takes either registry or argKey, not both', `$.map.bindings[${index}]`);
+            else if (!ids.has(entry.family) || typeof entry.call !== 'string' || !binding.test(entry.call)) issue('family-path-invalid', 'Each binding needs a configured family and an identifier call name', `$.map.bindings[${index}]`);
+          } else if (!object(entry) || !ids.has(entry.family) || typeof entry.call !== 'string' || typeof entry.registry !== 'string' || !binding.test(entry.call) || !binding.test(entry.registry)) issue('family-path-invalid', 'Each binding needs a configured family and identifier call and registry names', `$.map.bindings[${index}]`);
         }
       }
     }
@@ -100,6 +105,7 @@ export function parseFamiliesConfig(config) {
   if (config.view !== undefined) {
     if (!object(config.view)) issue('family-path-invalid', 'view must be an object', '$.view');
     else if (config.view.detail !== undefined && !['full', 'map'].includes(config.view.detail)) issue('family-path-invalid', 'view.detail must be full or map', '$.view.detail');
+    else for (const key of ['title', 'eyebrow', 'heading', 'intro']) if (config.view[key] !== undefined && typeof config.view[key] !== 'string') issue('family-path-invalid', `view.${key} must be a string`, `$.view.${key}`);
   }
   return { families, generators, diagnostics, ...(loader ? { loader } : {}) };
 }
