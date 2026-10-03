@@ -8,7 +8,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { randomBytes } from 'node:crypto';
 import { checkKernelBudget, KERNEL_GZIP_BUDGET } from '../scripts/kernel-budget.mjs';
-import { s, validate, coerce, isSchema, assertSchema, defineFamily, defineGenerator, isFamily, isGenerator, coreManifestSchema, validateManifest, createRegistry, compose, KernelError } from '../src/kernel/index.mjs';
+import { s, validate, coerce, isSchema, assertSchema, defineFamily, defineGenerator, isFamily, isGenerator, coreManifestSchema, validateManifest, createRegistry, compose, composeSafe, read, KernelError } from '../src/kernel/index.mjs';
 
 const manifest = (id='one',extra={}) => ({id,family:'service',version:1,name:id,description:'Description',rationale:'Independent behavior',implementation:{kind:'none'},...extra});
 
@@ -193,4 +193,65 @@ test('core keys win over family-declared arm fields and families without arms ma
   assert.equal(validateManifest(manifest('one',{implementation:{kind:'module',module:'./a',loading:'eager'}}),{family:plain}).errors[0].path,'$.implementation.loading');
   assert.equal(validateManifest(manifest('one',{implementation:{kind:'module',module:'./a'}}),{family:plain}).valid,true);
   assert.equal(validateManifest(manifest('one',{implementation:{kind:'module',module:'./a',loading:'eager'}})).errors[0].path,'$.implementation.loading');
+});
+
+test('createRegistry keeps input order on request and still sorts by default', () => {
+  const input = [manifest('b'),manifest('a')];
+  assert.deepEqual(createRegistry('service',input,{order:'input'}).all.map(m=>m.id),['b','a']);
+  assert.deepEqual(createRegistry('service',input,{order:'sorted'}).all.map(m=>m.id),['a','b']);
+  assert.deepEqual(createRegistry('service',input).all.map(m=>m.id),['a','b']);
+  assert.throws(()=>createRegistry('service',[manifest('a'),manifest('a')],{order:'input'}),{code:'duplicate-id'});
+});
+
+test('composeSafe keeps valid manifests and reports rejected ones without throwing', () => {
+  const base = createRegistry('service',[manifest('b')]);
+  const bad = manifest('bad',{files:[]});
+  const { registry, rejected } = composeSafe(base,[manifest('x'),bad,null,manifest('b'),manifest('x'),manifest('other',{family:'else'}),manifest('y')]);
+  assert.deepEqual(registry.all.map(m=>m.id),['b','x','y']);
+  assert.deepEqual(rejected.map(r=>[r.index,r.id,r.errors[0].code]),[[1,'bad','runtime-files'],[2,undefined,'type'],[3,'b','duplicate-id'],[4,'x','duplicate-id'],[5,'other','family-mismatch']]);
+  assert.ok(!('id' in rejected[1]));
+  assert.deepEqual(composeSafe(base,[manifest('b'),manifest('a')],{order:'input'}).registry.all.map(m=>m.id),['b','a']);
+  assert.deepEqual(composeSafe(base,[]).rejected,[]);
+  assert.throws(()=>compose(base,[manifest('x'),bad]),{code:'manifest-invalid'});
+});
+
+test('read never fails: defaults, kept unknown keys, field-level repairs', () => {
+  const schema = s.object({name:s.withDefault(s.string(),'anon'),tags:s.withDefault(s.array(s.string()),[]),count:s.optional(s.integer()),must:s.string(),
+    nested:s.optional(s.object({level:s.withDefault(s.integer(),1)})),mode:s.withDefault(s.enum(['a','b']),'a')});
+  const out = read(schema,{name:5,tags:'x',count:'many',extra:true,mode:'z'});
+  assert.deepEqual(out.value,{name:'anon',tags:[],nested:{level:1},mode:'a',extra:true});
+  assert.deepEqual(out.repairs.map(r=>`${r.path}:${r.code}`),['$.name:type','$.tags:type','$.count:type','$.must:required','$.mode:enum']);
+  assert.ok(out.repairs.every(r=>typeof r.message==='string'));
+  const clean = read(schema,{must:'m',name:'n'});
+  assert.deepEqual(clean.repairs,[]); assert.deepEqual(clean.value,{name:'n',tags:[],nested:{level:1},mode:'a',must:'m'});
+  assert.deepEqual(read(s.object({a:s.optional(s.string())}),{}).value,{});
+  assert.deepEqual(read(s.array(s.integer()),[1,'x',2]).value,[1,2]);
+  assert.deepEqual(read(s.array(s.integer(),{min:2}),[1]).repairs.map(r=>r.code),['min']);
+  assert.deepEqual(read(s.union([s.string(),s.integer()]),true).repairs.map(r=>r.code),['union']);
+  assert.deepEqual(read(s.record(s.integer()),{a:1,b:'x'}).value,{a:1});
+  assert.deepEqual(read(s.object({n:s.nullable(s.string())}),{n:null}).value,{n:null});
+});
+
+test('read handles non-object and non-JSON roots and leaves coerce and validate strict', () => {
+  const schema = s.object({a:s.withDefault(s.integer(),3)});
+  for (const bad of [null,undefined,'x',5,[1]]) assert.deepEqual(read(schema,bad).value,{a:3});
+  assert.equal(read(schema,null).repairs[0].code,'type');
+  assert.deepEqual(read(s.string(),5).value,null);
+  assert.deepEqual(read(s.withDefault(s.string(),'d'),5).value,'d');
+  const circular = {}; circular.self = circular;
+  assert.deepEqual(read(schema,circular),{value:{a:3},repairs:[{path:'$.self',code:'not-json',message:'Value must be plain JSON'}]});
+  assert.throws(()=>read({type:'nope'},{}),TypeError);
+  assert.equal(coerce(schema,null).valid,false);
+  assert.equal(validate(schema,{a:'x'}).valid,false);
+});
+
+test('unknown implementation keys on a data kind name implementationFields as the fix', () => {
+  const family = defineFamily({id:'service',fields:s.object({}),implementation:['none','plan'],dataKinds:['plan']});
+  const result = validateManifest(manifest('one',{implementation:{kind:'plan',plan:{}}}),{family,mode:'runtime'});
+  assert.equal(result.errors[0].code,'unknown-key');
+  assert.match(result.errors[0].message,/declare `plan` in implementationFields\.plan/);
+  const declared = defineFamily({...family,implementationFields:{plan:s.object({plan:s.object({})})}});
+  assert.equal(validateManifest(manifest('one',{implementation:{kind:'plan',plan:{}}}),{family:declared,mode:'runtime'}).valid,true);
+  const none = validateManifest(manifest('one',{implementation:{kind:'none',x:1}}),{family});
+  assert.equal(none.errors[0].message,'Unknown key');
 });
