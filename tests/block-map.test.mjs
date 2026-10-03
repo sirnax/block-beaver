@@ -88,3 +88,14 @@ test('map detail keeps the page elements the script uses and drops evidence, fil
   assert.match(slim, /const search = document\.querySelector\('#search'\)/);
   assert.equal(renderBlockMap(graph, { detail: 'map' }), slim, 'deterministic');
 });
+
+test('page title, eyebrow, heading and intro are configurable, escaped, and default to the existing text', () => {
+  const plain = renderBlockMap(fixture());
+  assert.match(plain, /<title>Project block map · Block Beaver<\/title>/);
+  assert.match(plain, /<p class="eyebrow">Block Beaver \/ project workspace<\/p><h1>Software, in blocks\.<\/h1><p>Feature boundaries/);
+  assert.equal(renderBlockMap({ ...fixture(), view: {} }), plain);
+  const html = renderBlockMap({ ...fixture(), view: { title: 'A <b>"t"</b>', eyebrow: 'E & <i>', heading: '<script>x</script>', intro: 'Intro <em>"x"</em>' } });
+  assert.match(html, /<title>A &lt;b&gt;&quot;t&quot;&lt;\/b&gt;<\/title>/);
+  assert.match(html, /<p class="eyebrow">E &amp; &lt;i&gt;<\/p><h1>&lt;script&gt;x&lt;\/script&gt;<\/h1><p>Intro &lt;em&gt;&quot;x&quot;&lt;\/em&gt;<\/p><p>Feature boundaries/);
+  assert.doesNotMatch(plain, /<p><\/p>/);
+});

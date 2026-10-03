@@ -168,7 +168,7 @@ A project that already has hand-built typed blocks (manifests, codegen and a map
   - `graph.json` (still schema 2) adds `codeReach`: which ordinary folders import a block's implementation, or bind to it through a `map.bindings` registry call such as `{ "family": "node", "call": "withNode", "registry": "NODE_BY_ID" }`.
   - It also adds `unused`, the blocks that no other block links to and no ordinary code reaches.
   - Each history snapshot adds `gone`, the blocks that had been removed by that point.
-  - The map draws all of these. `map.groupBy` clusters blocks within a floor by a manifest field. `map.skins: [{ "id", "path", "tokens" }]` offers several skins with a viewer toggle; `map.skin` and `map.tokens` still work.
+  - The map draws all of these. `map.groupBy` clusters blocks within a floor by a manifest field. `map.skins: [{ "id", "path", "tokens" }]` offers several skins with a viewer toggle; `map.skin` and `map.tokens` still work. Skins can theme controls with the tokens `control-surface`, `control-border`, `control-text`, `control-hover` and `panel-surface`.
 - **Map drawing.** The map is an exploded isometric tower: one tilted floor plate per family, one solid brick per block (top, two shaded sides and a stud), packed in a near-square grid with a pill tag showing the family title and count.
   - Dotted risers up the left side carry the number of links between floors, by kind. Ordinary code is a rail of grey bars, one row per folder, longest reach first.
   - Selecting a brick lights it and its links and dims the rest. `Fit`, `+` and `-` zoom the map, Ctrl or ⌘ with the scroll wheel zooms, dragging pans when zoomed in, and `Play` steps through the history.
@@ -230,6 +230,8 @@ The runtime-only package entry point is `block-beaver/kernel`. It exports the JS
 | `checks` | Set-wide check modules run after all families load. |
 | `history.label` | Label for the current state in the history slider: a string, or `{ module }` naming a module whose default export `(ctx) => string \| null` is evaluated when an entry is appended. |
 | `view.detail` | `full` (default) or `map`: the detail for new exported view modules. |
+| `view.title`, `view.eyebrow`, `view.heading`, `view.intro` | Plain strings (HTML-escaped) for the page `<title>`, eyebrow, heading and an extra intro paragraph. Unset keys keep the default text; `intro` renders only when set. |
+| `map.railLimit` | Positive integer (default 20): the "Ordinary code" rail draws this many folders, the rest sit under a "Show all N folders" disclosure. |
 | `map.floors` | Family IDs in map floor order, top first. |
 | `map.groupBy` | Manifest field that clusters blocks within a floor. |
 | `map.skin`, `map.tokens` | A single skin stylesheet and CSS custom-property tokens. |
