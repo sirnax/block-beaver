@@ -573,3 +573,73 @@ test('auto-detected agents never remove anything', async (t) => {
   assert.deepEqual(result.agents, ['claude', 'codex']);
   assert.ok(await exists(root, '.claude/skills/block-beaver/SKILL.md'));
 });
+
+function placementRunner(root) {
+  return async (executable, args) => {
+    const pkg = JSON.parse(await readFile(join(root, 'package.json'), 'utf8'));
+    const version = args.find((arg) => arg.startsWith('block-beaver@'))?.slice('block-beaver@'.length);
+    const group = args.includes('--save-dev') ? 'devDependencies' : 'dependencies';
+    for (const name of ['dependencies', 'devDependencies']) if (pkg[name]) delete pkg[name]['block-beaver'];
+    pkg[group] = { ...pkg[group], 'block-beaver': version };
+    await writeFile(join(root, 'package.json'), JSON.stringify(pkg, null, 2) + '\n');
+    await writeFile(join(root, 'package-lock.json'), JSON.stringify({ name: 'host', lockfileVersion: 3, packages: { '': { [group]: pkg[group] }, 'node_modules/block-beaver': { version } } }, null, 2) + '\n');
+    return { exitCode: 0 };
+  };
+}
+
+test('install --runtime pins under dependencies, upgrade keeps it, and audit accepts either placement', async (t) => {
+  const root = await installationFixture(t);
+  const runner = placementRunner(root);
+  await installProject(root, { version: '0.3.0', runtime: true, runner });
+  let pkg = JSON.parse(await readFile(join(root, 'package.json'), 'utf8'));
+  assert.equal(pkg.dependencies['block-beaver'], '0.3.0');
+  assert.equal(pkg.devDependencies, undefined);
+  await upgradeProject(root, { version: '0.3.1', runner });
+  pkg = JSON.parse(await readFile(join(root, 'package.json'), 'utf8'));
+  assert.equal(pkg.dependencies['block-beaver'], '0.3.1');
+  assert.equal(pkg.devDependencies, undefined);
+});
+
+async function runtimeImportFixture(t, files) {
+  const root = await installationFixture(t);
+  const { version } = JSON.parse(await readFile(new URL('../package.json', import.meta.url), 'utf8'));
+  for (const [path, source] of Object.entries(files)) {
+    await mkdir(join(root, path, '..'), { recursive: true });
+    await writeFile(join(root, path), source);
+  }
+  await installProject(root, { version, runner: packageRunner(root) });
+  execFileSync('git', ['-C', root, 'add', '-A']);
+  execFileSync('git', ['-C', root, '-c', 'user.name=Fixture', '-c', 'user.email=fixture@example.test', 'commit', '-qnm', 'base']);
+  const audit = () => auditProject(root, { mode: 'working' });
+  const advisory = async () => (await audit()).rules.flatMap((rule) => rule.advisories ?? []).find((item) => item.code === 'runtime-import-dev-dependency');
+  return { root, audit, advisory };
+}
+
+test('runtime-import-dev-dependency ignores type-only imports and test files', async (t) => {
+  const { advisory } = await runtimeImportFixture(t, {
+    'src/types-only.ts': "import type { Family } from 'block-beaver/kernel';\nexport type T = Family;\n",
+    'tests/uses.ts': "import { defineFamily } from 'block-beaver/kernel';\nexport const f = defineFamily;\n",
+    'src/a.test.ts': "import { defineFamily } from 'block-beaver/kernel';\nexport const g = defineFamily;\n",
+  });
+  assert.equal(await advisory(), undefined);
+});
+
+test('runtime-import-dev-dependency warns for a generated registry, keeps the audit passing, and clears under dependencies', async (t) => {
+  const { root, audit, advisory } = await runtimeImportFixture(t, {
+    'src/generated/registry.ts': "import { defineFamily } from 'block-beaver/kernel';\nexport const r = defineFamily;\n",
+    'tests/uses.ts': "import { defineFamily } from 'block-beaver/kernel';\nexport const f = defineFamily;\n",
+  });
+  const found = await advisory();
+  assert.equal(found.severity, 'warning');
+  assert.match(found.message, /src\/generated\/registry\.ts:1/);
+  assert.doesNotMatch(found.message, /tests\/uses/);
+  assert.match(found.remediation, /install --runtime/);
+  const result = await audit();
+  assert.equal(result.pass, true, JSON.stringify(result.rules.filter((rule) => !rule.pass)));
+  const pkg = JSON.parse(await readFile(join(root, 'package.json'), 'utf8'));
+  pkg.dependencies = { 'block-beaver': pkg.devDependencies['block-beaver'] };
+  delete pkg.devDependencies;
+  await writeFile(join(root, 'package.json'), JSON.stringify(pkg));
+  assert.equal(await advisory(), undefined);
+  assert.equal((await audit()).rules.find((rule) => rule.id === 'managed-current').pass, true);
+});

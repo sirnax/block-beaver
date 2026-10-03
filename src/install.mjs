@@ -171,7 +171,7 @@ async function execute(root, operation, options) {
   const host = await planHostSetup(root, { config, agents, version, operation, force: options.force ?? false, fixIgnores: options.fixIgnores ?? false, fixExcludes: options.fixExcludes ?? false });
   const conflicts = [...(managed.conflicts ?? []), ...(host.conflicts ?? [])];
   diagnostics.push(...(managed.diagnostics ?? []), ...(host.diagnostics ?? []));
-  const packagePlan = await planPackageChange(root, { manager, version, operation: operation === 'upgrade' ? 'install' : operation });
+  const packagePlan = await planPackageChange(root, { manager, version, operation: operation === 'upgrade' ? 'install' : operation, runtime: operation === 'install' && Boolean(options.runtime), keepPlacement: operation === 'upgrade' });
   diagnostics.push(...(packagePlan.diagnostics ?? []));
   const extra = [];
   const dataDirectories = new Set(['.blocks']);
@@ -229,7 +229,7 @@ async function execute(root, operation, options) {
   result.executions = await runPackageChange(root, packagePlan, { runner: options.runner, dryRun: false });
   const pkg = (await document(root, 'package.json')).value;
   if (operation === 'uninstall' ? (pkg.devDependencies?.['block-beaver'] !== undefined || pkg.dependencies?.['block-beaver'] !== undefined)
-    : (pkg.devDependencies?.['block-beaver'] !== version || pkg.dependencies?.['block-beaver'] !== undefined)) throw new Error('Package manager did not apply the requested Block Beaver dependency change. Managed files were preserved.');
+    : (pkg[packagePlan.placement]?.['block-beaver'] !== version || pkg[packagePlan.placement === 'dependencies' ? 'devDependencies' : 'dependencies']?.['block-beaver'] !== undefined)) throw new Error('Package manager did not apply the requested Block Beaver dependency change. Managed files were preserved.');
   result.changed = await writeProjectFiles(root, files.filter((file) => !file.commandOwned));
   result.changed.push(...await applyProjectModes(root, host.files));
   result.changed.push(...await applyHostHooks(root, hooks));

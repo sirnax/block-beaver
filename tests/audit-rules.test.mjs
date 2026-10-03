@@ -497,3 +497,9 @@ test('view-fresh checks exported modules at their recorded detail and names --de
   assert.equal(mismatch.pass, false, 'a full-detail module under a map-detail entry is stale');
   assert.equal(mismatch.findings.find((entry) => entry.path === 'snapshot.mjs').remediation, 'block-beaver view --format module --detail map');
 });
+
+test('test-file detection covers folders and test/spec names', async () => {
+  const { isTestFile } = await import('../src/test-files.mjs');
+  for (const path of ['test/a.ts', 'src/__tests__/a.ts', 'packages/x/tests/a.ts', 'src/fixtures/a.ts', 'src/a.test.tsx', 'src/a.spec.ts']) assert.equal(isTestFile(path), true, path);
+  for (const path of ['src/a.ts', 'src/testing.ts', 'src/generated/registry.ts', 'src/contest/a.ts']) assert.equal(isTestFile(path), false, path);
+});
