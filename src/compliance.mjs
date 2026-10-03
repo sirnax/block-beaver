@@ -4,6 +4,7 @@ import { readFile, readdir, mkdir, mkdtemp, rm, symlink, writeFile, lstat, open,
 import { join, resolve, dirname, relative, isAbsolute, basename } from 'node:path';
 import { createHash } from 'node:crypto';
 import { tmpdir } from 'node:os';
+import { isTestFile } from './test-files.mjs';
 import { evaluateAuditRules } from './audit-rules.mjs';
 import { scanRepository } from './scanner.mjs';
 import { attachProjectRegistry } from './adapter.mjs';
@@ -337,8 +338,22 @@ async function structuralRules(root, { strict, familyDrift, mode, priorBaseline,
   if (installed) {
     const { version } = JSON.parse(await readFile(new URL('../package.json', import.meta.url), 'utf8'));
     const hostPackage = await readJson(root, 'package.json');
-    const pinned = hostPackage.value?.devDependencies?.['block-beaver'];
-    if (pinned !== version) managedFindings.push({ path: 'package.json', message: `Installed devDependency ${pinned || 'missing'} must match package ${version} exactly.`, remediation: 'block-beaver upgrade' });
+    const devPin = hostPackage.value?.devDependencies?.['block-beaver'];
+    const prodPin = hostPackage.value?.dependencies?.['block-beaver'];
+    // Either placement is valid; install --runtime pins under dependencies.
+    if (devPin !== version && prodPin !== version) managedFindings.push({ path: 'package.json', message: `Installed dependency ${prodPin || devPin || 'missing'} must match package ${version} exactly (in dependencies or devDependencies).`, remediation: 'block-beaver upgrade' });
+    // Uses the root package.json: the project model has no per-file package.json mapping.
+    if (devPin !== undefined && prodPin === undefined) {
+      // Family contracts and generators run only in Block Beaver's build tooling, never in the app.
+      const tooling = new Set((scanned.nodes || []).filter((node) => node.kind === 'file' && ['contract', 'generator'].includes(node.familyRole)).map((node) => node.path));
+      const importers = (scanned.packageImports || []).filter((record) => record.package === 'block-beaver' && !record.typeOnly && /^block-beaver(?:\/(?:kernel|view))?$/.test(record.specifier) && !isTestFile(record.file) && !tooling.has(record.file));
+      if (importers.length) {
+        const places = [...new Set(importers.map((record) => `${record.file}:${record.line}`))];
+        managedAdvisories.push({ code: 'runtime-import-dev-dependency', severity: 'warning', path: 'package.json',
+          message: `block-beaver is a devDependency but non-test code imports it at runtime: ${places.slice(0, 5).join(', ')}${places.length > 5 ? `, and ${places.length - 5} more` : ''}.`,
+          remediation: 'Run block-beaver install --runtime to pin it under dependencies, or ignore this if the app bundles block-beaver at build time.' });
+      }
+    }
     if (installDocument.value?.version !== version) managedFindings.push({ path: '.blocks/install.json', message: `Installed files are from ${installDocument.value?.version || 'unknown'}, package is ${version} — run block-beaver upgrade`, remediation: 'block-beaver upgrade' });
     try {
       const { planManagedFiles } = await import('./managed-files.mjs');

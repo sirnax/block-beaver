@@ -710,7 +710,7 @@ test('0.7.0: the managed pre-commit prints one line when a staged audit passes a
   const passed = hookCommit(root, env, 'add notes');
   assert.equal(passed.status, 0, passed.lines.join('\n'));
   assert.equal(passed.lines.length, 1, passed.lines.join('\n'));
-  assert.match(passed.lines[0], /^block-beaver audit: pass \(\d+ files?, 0 errors\)$/);
+  assert.match(passed.lines[0], /^block-beaver audit: pass \(\d+ files?, 0 errors(?:, 1 warning - run block-beaver audit for the full report)?\)$/);
   assert.equal(git(root, 'log', '--format=%s', '-1').trim(), 'add notes');
 
   // A failing one: kind "audio" is served by no model, so the cross-family check fails in the staged snapshot.

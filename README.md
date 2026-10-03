@@ -80,7 +80,7 @@ For setup without a live session, use `block-beaver init --root /path/to/your-pr
 
 ## Install, upgrade and audit
 
-For a repository-local installation, run `npx block-beaver@0.7.0 install`. Installation pins Block Beaver as a development dependency, detects npm, pnpm, Yarn or Bun, and plans managed editor skills, native hooks, Git hooks, CI and generated views. Use `--agents claude,codex` to select editors and `--dry-run` to inspect planned changes first.
+For a repository-local installation, run `npx block-beaver@0.7.0 install`. Installation pins Block Beaver as a development dependency (add `--runtime` to pin it exactly under `dependencies` instead, for apps whose production code imports `block-beaver/kernel` or `block-beaver/view` without bundling; `upgrade` keeps whichever placement exists, and `audit` warns with `runtime-import-dev-dependency` when runtime code imports it while it is only a devDependency), detects npm, pnpm, Yarn or Bun, and plans managed editor skills, native hooks, Git hooks, CI and generated views. Use `--agents claude,codex` to select editors and `--dry-run` to inspect planned changes first.
 
 `block-beaver upgrade` preserves owner content and refuses edited managed sections; `--force` repairs the owned sections. `block-beaver uninstall` removes owned integration while preserving project data. Removing `.blocks/` requires `--remove-data --yes`. Ignore/exclusion adjustments are opt-in through `--fix-ignores` and `--fix-excludes`.
 
