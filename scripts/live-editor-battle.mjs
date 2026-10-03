@@ -15,7 +15,7 @@ const cli = fileURLToPath(new URL('../bin/block-beaver.mjs', import.meta.url));
 const repository = fileURLToPath(new URL('..', import.meta.url));
 const usage = 'Usage: node scripts/live-editor-battle.mjs codex|claude normal|bypass|failed|drift [--timeout SECONDS] [--codex-hook-trust]\n';
 const scenarios = ['normal', 'bypass', 'failed', 'drift'];
-// Roster from AGENTS.md: GPT work uses gpt-6.1-sol at medium effort; Claude work uses Sonnet 5.5 at high effort.
+// Roster (formerly in AGENTS.md): GPT work uses gpt-6.1-sol at medium effort; Claude work uses Sonnet 5.5 at high effort.
 const roster = {
   codex: { command: 'codex', model: 'gpt-6.1-sol', effort: 'medium', helpArgs: ['exec', '--help'],
     flags: ['--ephemeral', '--ignore-user-config', '--sandbox', '--cd', '--add-dir', '--model', '--config', '--color', '--json', '--output-last-message'] },
@@ -363,7 +363,7 @@ async function main() {
       const probe = await runProcess(command, ['-p', '--model', requestedModel, '--effort', effort,
         '--tools', '', '--disallowedTools', 'mcp__*', '--strict-mcp-config', '--setting-sources', '',
         '--permission-mode', 'dontAsk', '--output-format', 'json', '--no-session-persistence',
-        '--append-system-prompt-file', join(repository, 'AGENTS.md')], {
+        '--append-system-prompt-file', join(repository, 'CLAUDE.md')], {
         cwd: paths.run, env: process.env, input: 'Reply exactly OK. Do not delegate or change files.',
         timeoutMs: 60_000, stdoutFile: files.preflightStdout, stderrFile: files.preflightStderr,
       });
