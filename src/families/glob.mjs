@@ -1,5 +1,6 @@
 import { readdir } from 'node:fs/promises';
 import { join } from 'node:path';
+import { gitFileSet } from '../git-file-set.mjs';
 
 const ignoredDirectories = new Set(['node_modules', '.git', '.next', 'dist', 'build', 'coverage', '.turbo', '.vercel', 'vendor', '.worktrees', 'worktrees']);
 const escape = (value) => value.replace(/[\\^$.*+?()[\]{}|]/g, '\\$&');
@@ -85,8 +86,10 @@ export function captureManifestId(path, pattern) {
 export function hasManifestCapture(pattern) { return !compile(pattern).negative && compile(pattern).captures > 0; }
 
 /** Discover all input kinds; configured manifests may live inside .blocks. */
-export async function discoverFiles(root, { maxFiles = 20000 } = {}) {
+export async function discoverFiles(root, { maxFiles = 20000, gitCache } = {}) {
   const paths = [];
+  // Inside Git, gitignored files are not inputs; the staged snapshot and non-Git trees walk plainly.
+  const tracked = await gitFileSet(root, gitCache);
   async function walk(directory, prefix = '') {
     const entries = await readdir(directory, { withFileTypes: true });
     entries.sort((a, b) => a.name < b.name ? -1 : a.name > b.name ? 1 : 0);
@@ -95,6 +98,7 @@ export async function discoverFiles(root, { maxFiles = 20000 } = {}) {
       if (entry.isDirectory()) {
         if (!ignoredDirectories.has(entry.name) && path !== '.blocks/cache' && path !== '.blocks/view') await walk(join(directory, entry.name), `${path}/`);
       } else if (entry.isFile()) {
+        if (tracked && !tracked.has(path)) continue;
         paths.push(path);
         if (paths.length > maxFiles) {
           const error = new Error(`Family input limit exceeded (${maxFiles} files)`);

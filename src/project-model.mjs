@@ -5,6 +5,7 @@ import { resolve, relative, dirname, basename, join, isAbsolute } from 'node:pat
 import { createHash } from 'node:crypto';
 import { readProjectFile, writeProjectFiles } from './project-files.mjs';
 import { builtinModules } from 'node:module';
+import { gitFileSet } from './git-file-set.mjs';
 
 const excluded = new Set(['node_modules', '.git', '.blocks', '.next', 'dist', 'build', 'coverage', 'vendor', '.turbo', '.vercel']);
 const slash = (path) => path.replaceAll('\\', '/');
@@ -86,12 +87,13 @@ export function ignoreMatcher(patterns) {
   return (path) => matches(path, list);
 }
 async function json(path, fallback = null) { try { return JSON.parse(await readFile(path, 'utf8')); } catch (error) { if (error.code === 'ENOENT') return fallback; throw error; } }
-async function inventory(root) {
+async function inventory(root, gitCache) {
   const configs = [], packages = [];
+  const tracked = await gitFileSet(root, gitCache);
   async function walk(dir) {
     for (const entry of await readdir(dir, { withFileTypes: true })) {
       if (entry.isDirectory() && !entry.name.startsWith('.') && !excluded.has(entry.name)) await walk(join(dir, entry.name));
-      else if (entry.isFile()) { const path = slash(relative(root, join(dir, entry.name))); if (entry.name === 'tsconfig.json') configs.push(path); if (entry.name === 'package.json') packages.push(path); }
+      else if (entry.isFile()) { const path = slash(relative(root, join(dir, entry.name))); if (tracked && !tracked.has(path)) continue; if (entry.name === 'tsconfig.json') configs.push(path); if (entry.name === 'package.json') packages.push(path); }
     }
   }
   await walk(root); return { configs: configs.sort(), packages: packages.sort() };
@@ -119,8 +121,8 @@ function parseConfig(root, path) {
     return { options: parsed.options, fileNames: parsed.fileNames, errors: [...parsed.errors.filter((error) => error.code !== 18003).map(message), ...new Set(boundaryErrors)], references: parsed.projectReferences };
   } catch (error) { return { options: defaults, fileNames: [], errors: [`Cannot parse tsconfig: ${error.message}`] }; }
 }
-async function detect(root, paths) {
-  const { configs, packages } = await inventory(root);
+async function detect(root, paths, gitCache) {
+  const { configs, packages } = await inventory(root, gitCache);
   const rootPackage = await json(join(root, 'package.json'), {});
   let workspacePatterns = Array.isArray(rootPackage?.workspaces) ? rootPackage?.workspaces : rootPackage?.workspaces?.packages || [];
   try {
@@ -161,7 +163,7 @@ async function detect(root, paths) {
 }
 
 /** Propose additive app detection; existing entries remain owner controlled. */
-export async function detectProjectApps(inputRoot, { paths = [], write = false } = {}) {
+export async function detectProjectApps(inputRoot, { paths = [], write = false, gitCache } = {}) {
   const root = realpathSync.native(resolve(inputRoot)), configPath = join(root, '.blocks/config.json'), statePath = join(root, '.blocks/detection.json');
   const diagnostics = [];
   let original, before;
@@ -173,7 +175,7 @@ export async function detectProjectApps(inputRoot, { paths = [], write = false }
   const invalidApp = config.apps.findIndex((app) => !app || typeof app !== 'object' || Array.isArray(app));
   if (invalidApp !== -1) return { config, added: [], disappeared: [], diagnostics: [{ app: null, field: `apps[${invalidApp}]`, message: 'App entry must be an object' }] };
   const existingConfig = structuredClone(config);
-  const { apps: detected, parsedConfigs, metadata } = await detect(root, paths);
+  const { apps: detected, parsedConfigs, metadata } = await detect(root, paths, gitCache);
   const stateBefore = await readProjectFile(root, '.blocks/detection.json');
   let state; try { state = stateBefore ? JSON.parse(stateBefore) : { schemaVersion: 1, apps: {} }; } catch { state = { schemaVersion: 1, apps: {} }; }
   const disappeared = [];
@@ -217,10 +219,10 @@ async function detectEntries(root, app, paths) {
 }
 
 /** Parse each app once and resolve imports using the owning app's compiler options. */
-export async function loadProjectModel(inputRoot, { paths = [], writeConfig = true, strict = false } = {}) {
+export async function loadProjectModel(inputRoot, { paths = [], writeConfig = true, strict = false, gitCache } = {}) {
   const root = realpathSync.native(resolve(inputRoot));
   const initial = !existsSync(join(root, '.blocks/config.json'));
-  const result = await detectProjectApps(root, { paths, write: writeConfig && initial });
+  const result = await detectProjectApps(root, { paths, write: writeConfig && initial, gitCache });
   // An existing config only grows through the explicit detect --write command.
   if (!initial && result.existingConfig) result.config = result.existingConfig;
   const config = result.config, diagnostics = [...result.diagnostics], apps = [], ownerByFile = new Map(paths.map((path) => [path, null]));
