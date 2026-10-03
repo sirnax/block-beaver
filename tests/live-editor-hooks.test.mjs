@@ -28,8 +28,10 @@ test('live hook shim preserves native stdin and records actual PreToolUse envelo
   } finally { await rm(root, { recursive: true, force: true }); }
 });
 
-test('native trust option rejects other editors without launching them', () => {
-  const result = spawnSync(process.execPath, [harness, 'claude', 'normal', '--codex-hook-trust'], { encoding: 'utf8' });
-  assert.equal(result.status, 2);
-  assert.match(result.stderr, /Usage:/);
+test('harness rejects unsupported models and flags without launching an editor', () => {
+  for (const args of [['codex', 'normal'], ['claude', 'normal', '--codex-hook-trust'], []]) {
+    const result = spawnSync(process.execPath, [harness, ...args], { encoding: 'utf8' });
+    assert.equal(result.status, 2, args.join(' '));
+    assert.match(result.stderr, /Usage: .* claude normal\|bypass\|failed\|drift/);
+  }
 });
