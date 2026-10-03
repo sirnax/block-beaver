@@ -55,6 +55,20 @@ async function folderFiles(root, path) {
   return paths;
 }
 
+async function pruneManagedExceptions(root, removed) {
+  const updates = [];
+  for (const path of (await folderFiles(root, '.blocks/exceptions')).filter((item) => item.endsWith('.json'))) {
+    const before = await readProjectFile(root, path);
+    let value;
+    try { value = JSON.parse(before); } catch { continue; }
+    if (value?.type !== 'exception' || !String(value.id).startsWith('block-beaver-setup-') || value.verification?.[0]?.command !== 'Block Beaver managed setup' || !Array.isArray(value.paths)) continue;
+    const kept = value.paths.filter((entry) => !removed.has(typeof entry === 'string' ? entry : entry?.path));
+    if (kept.length === value.paths.length) continue;
+    updates.push({ path, before, content: kept.length ? json({ ...value, paths: kept }) : null });
+  }
+  return updates.length ? writeProjectFiles(root, updates) : [];
+}
+
 async function dataFiles(root, path = '.blocks', { migrationOnly = false, directories } = {}) {
   let entries;
   try { entries = await readdir(join(root, path), { withFileTypes: true }); }
@@ -246,6 +260,9 @@ async function execute(root, operation, options) {
   for (const path of [...emptied].sort((a, b) => b.split('/').length - a.split('/').length)) {
     try { await rmdir(join(root, path)); } catch (error) { if (!['ENOENT', 'ENOTEMPTY', 'EEXIST', 'ENOTDIR'].includes(error.code)) throw error; }
   }
+  // Block Beaver's own setup exceptions may name files a narrower --agents just removed; an exception
+  // must name existing files, so drop those paths (and the exception once nothing is left).
+  if (removed.length) result.changed.push(...await pruneManagedExceptions(root, new Set(removed)));
   if (operation === 'uninstall' && options.removeData) {
     const directories = dataDirectories;
     for (const file of files.filter((item) => item.path.startsWith('.blocks/'))) {

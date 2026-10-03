@@ -643,3 +643,25 @@ test('runtime-import-dev-dependency warns for a generated registry, keeps the au
   assert.equal(await advisory(), undefined);
   assert.equal((await audit()).rules.find((rule) => rule.id === 'managed-current').pass, true);
 });
+
+test('narrowing --agents prunes removed files from Block Beaver setup exceptions so exception-valid still passes', async (t) => {
+  const root = await installationFixture(t), runner = packageRunner(root);
+  const commit = (message) => { execFileSync('git', ['add', '-A'], { cwd: root }); execFileSync('git', ['-c', 'user.name=t', '-c', 'user.email=t@example.com', 'commit', '-qm', message, '--no-verify'], { cwd: root }); };
+  await writeFile(join(root, 'AGENTS.md'), '# Owner rules\n');
+  commit('seed');
+  await installProject(root, { agents: ['claude', 'codex'], runner });
+  commit('install');
+  const exceptions = async () => {
+    const { readdir } = await import('node:fs/promises');
+    const names = await readdir(join(root, '.blocks/exceptions')).catch(() => []);
+    return Promise.all(names.map(async (name) => JSON.parse(await readFile(join(root, '.blocks/exceptions', name), 'utf8'))));
+  };
+  const named = (list) => list.flatMap((value) => value.paths.map((entry) => entry.path ?? entry));
+  assert.ok(named(await exceptions()).includes('.codex/hooks.json'), 'the setup exception covered the codex files');
+  await installProject(root, { agents: ['claude'], runner });
+  const after = named(await exceptions());
+  assert.ok(!after.some((path) => path.startsWith('.codex/') || path.startsWith('.agents/')), after.join(', '));
+  for (const path of after) assert.ok(await exists(root, path), path);
+  const audit = await auditProject(root, { mode: 'working' });
+  assert.equal(audit.rules.find((rule) => rule.id === 'exception-valid').pass, true);
+});
